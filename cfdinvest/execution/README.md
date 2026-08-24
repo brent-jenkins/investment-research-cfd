@@ -301,8 +301,13 @@ with a warning if the ATR panel is missing.
 
 **`max_slippage_bps`** caps `slippage_bps`, so a stress run cannot accidentally
 be given a slippage assumption larger than any real fill. It defaults to 50
-bps, which means `slippage_bps=100` silently becomes 50 — raise the cap
-deliberately when that is what you want.
+bps, which means `slippage_bps=100` silently becomes 50.
+
+It clamps rather than raising **because that is what the broker does** — a
+guaranteed-fill ceiling is applied to the order, not a reason to reject it, so
+the simulator behaves the same way. The cost is that an over-ambitious
+assumption is quietly ignored instead of flagged; raise the ceiling
+deliberately when a stress run needs it.
 
 **`record_recommended_fill`** keeps `recommended_fill` populated on every
 event. Left `True`, because these trades are placed by hand.

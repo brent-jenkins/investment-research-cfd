@@ -135,6 +135,13 @@ class StopConfig:
     max_slippage_bps:
         Ceiling on the slippage actually applied, so a configuration error
         or a violent gap cannot compound into an absurd assumed fill.
+
+        It **clamps silently** rather than raising: ``slippage_bps=100`` with
+        the default ceiling behaves as 50. That mirrors the broker, which
+        applies its own guaranteed-fill ceiling and does not reject the order
+        for asking for more. The cost of the choice is that an over-ambitious
+        slippage assumption is quietly ignored, so raise the ceiling
+        deliberately when a stress run needs it.
     record_recommended_fill:
         Whether every event carries a ``recommended_fill`` for manual
         execution. ``True`` always, for this deployment.
