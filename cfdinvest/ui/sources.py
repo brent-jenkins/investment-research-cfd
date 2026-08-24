@@ -59,6 +59,8 @@ __all__ = [
     "load_scheduler_log",
     "load_log_files",
     "disk_usage",
+    "load_run_analytics",
+    "load_stored_analytics",
 ]
 
 #: Files a run directory may contain, and what each holds.
@@ -697,6 +699,119 @@ def load_scheduler_log(config: AppConfig, lines: int = 200) -> Source:
         "no scheduler log found; a cron or systemd wrapper usually writes one",
         value=[],
     )
+
+
+def load_run_analytics(config: AppConfig, output_dir: str = "runs") -> Source:
+    """Metrics and attribution for the last run, computed from what it wrote.
+
+    **Computed here rather than read.** The analytics command-line tool
+    stores its results, but nobody should have to run it before the P&L page
+    shows a Sharpe ratio. These functions are pure and cheap — they operate
+    on a trade log and an equity curve that are already in memory — so the
+    dashboard computes them on the spot.
+
+    The attribution is the reconstruction from trades and equity, not the
+    engine's own per-bar decomposition: the pipeline does not persist the
+    latter. Costs are exact either way, because a cost is only ever charged
+    on a trade; what is lost is the split between the overnight gap and the
+    intraday move.
+    """
+    from cfdinvest.analytics import attribution as attribution_module
+    from cfdinvest.analytics import metrics as metrics_module
+    from cfdinvest.execution.frame import ExecutionFrame
+
+    execution = load_execution_frame(config, output_dir)
+    if not execution.ok:
+        return Source(
+            value={}, available=False, error=execution.error, note=execution.note
+        )
+
+    parts = execution.value or {}
+    trades = parts.get("trades", pd.DataFrame())
+    equity_frame = parts.get("equity", pd.DataFrame())
+    positions = parts.get("positions", pd.DataFrame())
+
+    if equity_frame is None or equity_frame.empty:
+        return Source.missing("the last run wrote no equity curve", value={})
+
+    equity = pd.to_numeric(
+        equity_frame.iloc[:, 0], errors="coerce"
+    ).rename("equity")
+
+    summary = load_last_pipeline_summary(config, output_dir)
+    metadata = dict((summary.value or {}).get("metrics") or {})
+
+    try:
+        frame = ExecutionFrame(
+            positions=positions if positions is not None else pd.DataFrame(),
+            trades=trades if trades is not None else pd.DataFrame(),
+            equity_curve=equity,
+            metadata=metadata,
+        )
+        computed = metrics_module.compute_all_metrics(frame)
+        attribution = attribution_module.attribution_from_trades(trades, equity)
+        costs = attribution_module.cost_breakdown_from_trades(trades, equity)
+        per_instrument = attribution_module.compute_instrument_attribution(frame)
+    except Exception as error:  # noqa: BLE001 - a dashboard must not crash
+        logger.warning("Could not compute analytics: %s", error)
+        return Source.broken(f"analytics could not be computed: {error}", value={})
+
+    return Source(
+        value={
+            "metrics": computed,
+            "attribution": attribution,
+            "costs": costs,
+            "per_instrument": per_instrument,
+            "run_id": (summary.value or {}).get("run_id"),
+        }
+    )
+
+
+def load_stored_analytics(config: AppConfig, run_id: str | None = None) -> Source:
+    """Sweeps, walk-forward and Monte Carlo written by the analytics tool.
+
+    Unlike :func:`load_run_analytics` these cannot be computed on demand —
+    each one re-runs the pipeline many times — so they exist only if
+    ``cfdinvest-analytics`` has been run. Falls back to the newest analytics
+    directory when the requested run has none, because the common case is
+    scoring the latest run without pinning an identifier.
+    """
+    from cfdinvest.analytics import store as analytics_store
+
+    try:
+        available = analytics_store.list_analytics_runs(config)
+    except Exception as error:  # noqa: BLE001
+        return Source.broken(f"analytics directory unreadable: {error}", value={})
+
+    if not available:
+        return Source.missing(
+            "no analytics have been written yet; run `cfdinvest-analytics "
+            "sweep`, `walkforward` or `montecarlo` to populate this",
+            value={},
+        )
+
+    chosen = run_id if run_id in available else available[0]
+    try:
+        payload = {
+            "run_id": chosen,
+            "available_runs": available,
+            "is_fallback": chosen != run_id,
+            "metrics": analytics_store.load_run_metrics(config, chosen),
+            "attribution": analytics_store.load_run_attribution(config, chosen),
+            "costs": analytics_store.load_cost_breakdown(config, chosen),
+            "warnings": analytics_store.load_run_warnings(config, chosen),
+            "sweep": analytics_store.load_sweep(config, chosen),
+            "walkforward": analytics_store.load_walkforward_windows(config, chosen),
+            "walkforward_summary": analytics_store.load_walkforward_summary(
+                config, chosen
+            ),
+            "montecarlo": analytics_store.load_montecarlo_summary(config, chosen),
+            "montecarlo_paths": analytics_store.load_montecarlo_paths(config, chosen),
+        }
+    except Exception as error:  # noqa: BLE001
+        return Source.broken(f"stored analytics unreadable: {error}", value={})
+
+    return Source(value=payload, path=str(analytics_store.analytics_root(config)))
 
 
 def disk_usage(path: str | os.PathLike[str]) -> Source:

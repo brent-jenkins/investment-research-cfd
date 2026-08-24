@@ -160,6 +160,7 @@ def read_everything(
             "errors": sources.load_error_log(config),
             "disk": sources.disk_usage(config.paths.data_root),
             "market": sources.market_status(universe, now=now),
+            "analytics": sources.load_run_analytics(config),
         }
 
     stamp = st.session_state.get("cfd_refresh_stamp", "initial")

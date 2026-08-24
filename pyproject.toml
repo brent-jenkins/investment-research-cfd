@@ -15,6 +15,9 @@ dependencies = [
     "yfinance>=0.2.40",
 ]
 
+[project.scripts]
+cfdinvest-analytics = "cfdinvest.analytics.cli:main"
+
 [project.optional-dependencies]
 # The dashboard is optional: nothing in the pipeline imports it.
 ui = ["streamlit>=1.49"]

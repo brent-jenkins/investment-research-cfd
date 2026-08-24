@@ -54,6 +54,9 @@ def scaled(key):
     return None if value is None else float(value) * factor
 
 
+analytics = data["analytics"]
+computed = (analytics.value or {}).get("metrics") or {}
+
 cells = st.columns(5)
 cells[0].metric("Closing account value", components.money(scaled("final_equity")))
 cells[1].metric("Total profit & loss", components.money(scaled("total_pnl")))
@@ -64,6 +67,37 @@ cells[3].metric(
 cells[4].metric(
     "Trades placed", len(trades) if isinstance(trades, pd.DataFrame) else 0
 )
+
+# -- risk-adjusted measures, computed from what the run persisted ----------- #
+if computed:
+    ratios = st.columns(5)
+    ratios[0].metric(
+        "Sharpe ratio",
+        components.number(computed.get("sharpe_ratio"), 2),
+        help="Annualised excess return over annualised volatility. Above 3 on "
+        "a daily strategy usually means a look-ahead bug, not an edge.",
+    )
+    ratios[1].metric(
+        "Sortino ratio",
+        components.number(computed.get("sortino_ratio"), 2),
+        help="As Sharpe, but penalising only downside deviation.",
+    )
+    ratios[2].metric(
+        "Calmar ratio",
+        components.number(computed.get("calmar_ratio"), 2),
+        help="Compound annual growth over the maximum drawdown.",
+    )
+    ratios[3].metric(
+        "Win rate", components.percent(computed.get("win_rate"), 1)
+    )
+    ratios[4].metric(
+        "Expectancy per trade",
+        components.money(
+            (computed.get("expectancy") or {}).get("expectancy", None)
+        ),
+        help="Average profit or loss per completed round trip, at the "
+        "simulated account size.",
+    )
 
 st.divider()
 
@@ -150,6 +184,78 @@ if isinstance(trades, pd.DataFrame) and not trades.empty and "timestamp" in trad
         components.render_frame(st, trades, height=380)
 else:
     components.render_note(st, "No trades were recorded, so there is nothing to split.")
+
+st.divider()
+
+# --------------------------------------------------------------------------- #
+# Attribution
+# --------------------------------------------------------------------------- #
+st.subheader("Attribution")
+
+attribution = (analytics.value or {}).get("attribution") or {}
+per_instrument = (analytics.value or {}).get("per_instrument")
+
+if not attribution:
+    components.render_absent(st, analytics, "Attribution")
+else:
+    from cfdinvest.analytics.attribution import ATTRIBUTION_TERMS  # noqa: E402
+
+    labels = {
+        "instrument_pnl": "Market move",
+        "fx_pnl": "Exchange rate move",
+        "spread_pnl": "Spread",
+        "slippage_pnl": "Slippage",
+        "financing_pnl": "Overnight financing",
+        "fees_pnl": "Currency conversion",
+    }
+    total = attribution.get("total_pnl", 0.0)
+    table = pd.DataFrame(
+        [
+            {
+                "component": labels[term],
+                "amount": float(attribution.get(term, 0.0)) * factor,
+                "share_of_total": (
+                    attribution.get(term, 0.0) / total if total else float("nan")
+                ),
+            }
+            for term in ATTRIBUTION_TERMS
+        ]
+    ).set_index("component")
+
+    left, right = st.columns([1.2, 1])
+    with left:
+        components.render_frame(st, table)
+    with right:
+        st.bar_chart(table["amount"], height=280)
+
+    split = attribution.get("currency_split") or {}
+    if not split.get("available"):
+        components.render_note(
+            st,
+            f"**Market move and exchange rate move are combined.** "
+            f"{split.get('reason', '')} The engine restates every price into "
+            "the account currency before the simulation begins, so by the "
+            "time profit and loss exists the two are already added together.",
+        )
+
+    if attribution.get("reconstructed"):
+        components.render_note(
+            st,
+            "Reconstructed from the trade log and the equity curve, because "
+            "the pipeline does not persist the per-bar decomposition. Costs "
+            "are exact — a cost is only ever charged on a trade — and the "
+            "market leg is the remainder, so the total is exact too.",
+        )
+
+    if isinstance(per_instrument, pd.DataFrame) and not per_instrument.empty:
+        st.subheader("By instrument")
+        components.render_note(
+            st,
+            "Realised profit and loss only: an open position has realised "
+            "nothing yet, so the unrealised part of the book is absent here "
+            "by construction rather than by omission.",
+        )
+        components.render_frame(st, per_instrument * factor, height=280)
 
 st.divider()
 
