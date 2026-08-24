@@ -109,6 +109,11 @@ def test_load_dotenv_parses_quotes_comments_and_export(tmp_path, monkeypatch):
     parsed = load_dotenv(env_file)
     assert parsed == {"FRED_API_KEY": "quoted", "CFD_INTERVAL": "1h"}
 
+    # load_dotenv writes into os.environ, so the values it set outlive the
+    # delenv calls above and would leak into every later test in the session.
+    for name in parsed:
+        monkeypatch.delenv(name, raising=False)
+
 
 def test_load_dotenv_missing_file_is_noop(tmp_path):
     assert load_dotenv(tmp_path / "nope.env") == {}
