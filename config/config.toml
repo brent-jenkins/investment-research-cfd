@@ -58,26 +58,36 @@ observation_start = "1990-01-01"
 
 # How the series are sourced with respect to revisions. One of:
 #
-#   "latest"           newest revision of every observation (DEFAULT).
-#                      Look-ahead biased: 2008 GDP as restated today is not
-#                      what a trader saw in 2008. Fine for daily rate series
-#                      (DGS10, T10Y2Y, VIXCLS) which are never revised.
+#   "publication_lag"  DEFAULT. Every observation carries a real publication
+#                      date, obtained the best way available for that series:
+#                      FRED's first prints where it serves them, otherwise the
+#                      latest values stamped observation_date + release lag.
+#                      Safe as a global default because only high-vintage
+#                      DAILY series ever take the fallback, and those are not
+#                      revised.
+#
+#   "initial_release"  strictly first prints. Falls back to publication_lag
+#                      when FRED refuses the vintage span, and warns loudly.
+#
+#   "latest"           newest revision of every observation. Look-ahead
+#                      biased: 2008 GDP as restated today is not what a trader
+#                      saw in 2008. Opt in deliberately.
 #
 #   "vintage"          ALFRED snapshot as of a fixed date. Requires
 #                      realtime_start / realtime_end below, which are sent to
 #                      FRED exactly as written here.
 #
-#   "initial_release"  each observation's FIRST print, stamped with its true
-#                      publication date. The point-in-time correct choice for
-#                      revised series (GDP, CPI, UNRATE, INDPRO). FRED rejects
-#                      this for series with >2000 vintages, i.e. daily ones.
-#
-# Leave unset to derive: "vintage" if realtime bounds are set, else "latest".
-# The mode used is recorded per series in data/metadata/macro_manifest.json
-# and readable via DataRepository.macro_vintage_mode(). Modes are never mixed
-# inside one file -- changing it requires ingest(allow_mode_change=True),
-# which replaces the file.
-# vintage_mode = "initial_release"
+# Leave unset to derive: "vintage" if realtime bounds are set, else
+# "publication_lag". The mode ACTUALLY used (after any fallback) is recorded
+# per series in data/metadata/macro_manifest.json and readable via
+# DataRepository.macro_vintage_mode(). Modes are never mixed inside one file
+# -- changing one requires ingest(allow_mode_change=True), which replaces it.
+# vintage_mode = "publication_lag"
+
+# Publication lag applied when first prints are unavailable and a synthetic
+# publication date must be derived. 1 day suits daily rate series, which are
+# the only ones that ever fall back.
+fallback_release_lag_days = 1
 
 # realtime_start = "2020-04-01"
 # realtime_end   = "2020-04-01"
@@ -85,6 +95,20 @@ refetch_overlap_days = 45   # macro prints are revised for months
 max_workers = 6
 min_request_interval = 0.55 # FRED allows 120 requests/minute
 fetch_metadata = true
+
+# --- Per-series overrides -------------------------------------------------
+# Any macro setting can be pinned for a single series. Sub-tables must come
+# after every plain key in [macro] above.
+#
+# Daily rate series are never revised, so latest costs nothing and skips the
+# fallback round-trip entirely:
+#
+# [macro.series_overrides.DGS10]
+# vintage_mode = "latest"
+# release_lag_days = 1
+#
+# [macro.series_overrides.T10Y2Y]
+# vintage_mode = "latest"
 
 [network]
 timeout = 30.0

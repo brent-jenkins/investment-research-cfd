@@ -25,6 +25,10 @@ def config(tmp_path) -> AppConfig:
             api_key="test-key",
             observation_start="2020-01-01",
             min_request_interval=0.0,
+            # Pinned: these fixtures predate publication_lag becoming the
+            # default and exercise unrelated behaviour. Vintage-specific
+            # tests build their own config.
+            vintage_mode="latest",
         ),
     )
 

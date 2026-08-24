@@ -16,19 +16,24 @@ backtest that trades on 2008 GDP using today's revised figure is cheating:
 that number did not exist in 2008. Three sourcing modes are supported, and
 every file records which one produced it in ``macro_manifest.json``:
 
-``latest`` (default)
+``publication_lag`` (default)
+    Every observation carries a real publication date, obtained the best way
+    available for that series: FRED's first prints where it serves them,
+    otherwise the latest values stamped ``observation_date + release lag``.
+    Safe as a global default because only high-vintage *daily* series ever
+    take the fallback, and those are not revised.
+``initial_release``
+    Strictly first prints. Falls back to ``publication_lag`` when FRED
+    refuses the vintage span (>2000 vintages), and warns when it does.
+``latest``
     Newest revision. Convenient, look-ahead biased. FRED stamps
     ``publication_date`` with *today*, which makes the bias detectable.
 ``vintage``
     ALFRED snapshot as of a fixed ``realtime`` date. Real-time bounds are
     forwarded exactly as configured.
-``initial_release``
-    Each observation's first print, carrying its true publication date.
-    This is the point-in-time correct mode, and the one whose stored
-    ``publication_date`` column lets preprocessing forward-fill without
-    look-ahead. Note FRED rejects this mode for series with more than 2000
-    vintage dates (daily rate series); those are effectively unrevised
-    anyway, so ``latest`` is appropriate for them.
+
+Any of these can be pinned for a single series via
+:attr:`MacroDataConfig.series_overrides`; see :func:`series_settings`.
 
 Modes are never mixed inside one file: :meth:`MacroDataIngestor.ingest`
 refuses to append vintage rows onto a latest-revision file unless the
@@ -41,6 +46,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -51,7 +57,9 @@ from cfdinvest import storage
 from cfdinvest.config import AppConfig, MacroDataConfig, NetworkConfig
 from cfdinvest.retry import retry_call
 from cfdinvest.schema import (
+    DEFAULT_VINTAGE_MODE,
     MACRO_VALUE,
+    POINT_IN_TIME_MODES,
     PUBLICATION_DATE,
     SERIES_ID,
     TIMESTAMP,
@@ -90,6 +98,15 @@ class FredError(RuntimeError):
 
 class FredRateLimitError(FredError):
     """Raised on a throttled or transiently failing FRED response."""
+
+
+class FredVintageLimitError(FredError):
+    """Raised when a series has too many vintages for a first-print request.
+
+    Distinct from :class:`FredError` because it is *recoverable*: the
+    ingestor answers it by falling back to a synthetic publication lag
+    rather than failing the series.
+    """
 
 
 class RateLimiter:
@@ -199,6 +216,65 @@ def empty_macro_frame() -> pd.DataFrame:
     return frame
 
 
+def series_settings(settings: MacroDataConfig, series_id: str) -> MacroDataConfig:
+    """Return ``settings`` with any per-series override applied.
+
+    Pure. Per-series overrides live in
+    :attr:`MacroDataConfig.series_overrides` and may set any field of the
+    macro config -- in practice ``vintage_mode`` and ``release_lag_days``.
+    Resolving them into a normal config object means every downstream
+    function keeps working on a plain :class:`MacroDataConfig` and never
+    has to know overrides exist.
+
+    Unknown keys are ignored with a warning rather than raising, so a typo
+    in one series' table cannot abort a 50-series run.
+    """
+    override = (settings.series_overrides or {}).get(series_id)
+    if not override:
+        return settings
+
+    known = {f.name for f in dataclass_fields(MacroDataConfig)}
+    changes = {}
+    for key, value in override.items():
+        if key == "release_lag_days":
+            # Friendlier per-series spelling of the run-level field.
+            changes["fallback_release_lag_days"] = int(value)
+        elif key in known:
+            changes[key] = value
+        else:
+            logger.warning(
+                "Ignoring unknown override %r for series %s", key, series_id
+            )
+    return replace(settings, **changes) if changes else settings
+
+
+def release_lag(settings: MacroDataConfig) -> pd.Timedelta:
+    """Publication lag used when a real first-print date is unavailable."""
+    return pd.Timedelta(days=max(int(settings.fallback_release_lag_days), 0))
+
+
+def apply_synthetic_publication_dates(
+    frame: pd.DataFrame, lag: pd.Timedelta
+) -> pd.DataFrame:
+    """Stamp ``publication_date = observation_date + lag`` on every row.
+
+    Pure -- returns a new frame. Used only on the fallback path, where FRED
+    refused to serve first prints. Overwrites whatever ``realtime_start``
+    the latest-revision response carried, because in that mode FRED stamps
+    it with *today*, which is not a publication date at all.
+
+    The result is honest for unrevised series (the value really was public
+    ``lag`` after the observation period) and is the only reason the
+    fallback is safe: only near-daily series can breach FRED's vintage cap,
+    and those are not revised.
+    """
+    if frame.empty:
+        return frame
+    result = frame.copy()
+    result[PUBLICATION_DATE] = result.index + lag
+    return result
+
+
 def resolve_vintage_mode(settings: MacroDataConfig) -> str:
     """Return the effective vintage mode for ``settings``.
 
@@ -211,7 +287,8 @@ def resolve_vintage_mode(settings: MacroDataConfig) -> str:
     Returns
     -------
     str
-        One of ``"latest"``, ``"vintage"`` or ``"initial_release"``.
+        One of ``"publication_lag"`` (the default), ``"initial_release"``,
+        ``"latest"`` or ``"vintage"``.
 
     Raises
     ------
@@ -226,7 +303,9 @@ def resolve_vintage_mode(settings: MacroDataConfig) -> str:
                 f"expected one of {sorted(VINTAGE_MODES)}"
             )
         return mode
-    return "vintage" if (settings.realtime_start or settings.realtime_end) else "latest"
+    if settings.realtime_start or settings.realtime_end:
+        return "vintage"
+    return DEFAULT_VINTAGE_MODE
 
 
 def build_observation_params(
@@ -234,6 +313,7 @@ def build_observation_params(
     settings: MacroDataConfig,
     *,
     observation_start: str | None = None,
+    mode: str | None = None,
 ) -> dict[str, str]:
     """Build the query string for ``/fred/series/observations``.
 
@@ -248,10 +328,18 @@ def build_observation_params(
         ``realtime_start``/``realtime_end`` are forwarded **exactly** as
         configured -- never defaulted, never widened. A vintage file must
         mean precisely what the config said or it is mislabelled.
-    ``initial_release``
+    ``initial_release`` / ``publication_lag``
         ``output_type=4`` plus a real-time window wide enough to span every
         vintage, so FRED returns each observation's first print stamped with
-        its true publication date. Explicit bounds still win.
+        its true publication date. Explicit bounds still win. Both modes make
+        the same request; they differ only in how the ingestor reacts when
+        FRED refuses it.
+
+    Parameters
+    ----------
+    mode:
+        Override the mode derived from ``settings``. The ingestor passes
+        ``"latest"`` here on the fallback path.
     """
     params: dict[str, str] = {
         "series_id": series_id,
@@ -262,8 +350,8 @@ def build_observation_params(
     if settings.observation_end:
         params["observation_end"] = settings.observation_end
 
-    mode = resolve_vintage_mode(settings)
-    if mode == "initial_release":
+    mode = mode or resolve_vintage_mode(settings)
+    if mode in POINT_IN_TIME_MODES:
         params["output_type"] = OUTPUT_TYPE_INITIAL_RELEASE
         # Widen only where the caller left a bound unset.
         params["realtime_start"] = settings.realtime_start or FRED_REALTIME_MIN
@@ -314,13 +402,12 @@ def _check_response(response: requests.Response, description: str) -> dict[str, 
         except ValueError:
             detail = response.text[:200]
         if VINTAGE_LIMIT_HINT in detail:
-            # Seen on daily series in initial_release mode. The cryptic
-            # vendor message hides an actionable choice, so spell it out.
-            raise FredError(
-                f"{description}: too many vintage dates for initial_release "
-                f"mode. Daily FRED series are essentially never revised -- "
-                f"ingest them with vintage_mode='latest', and reserve "
-                f"initial_release for monthly/quarterly series. ({detail})"
+            # Recoverable: the caller falls back to a synthetic publication
+            # lag. Only near-daily series can breach the vintage cap, and
+            # those are not revised, so the fallback is sound for them.
+            raise FredVintageLimitError(
+                f"{description}: too many vintage dates for a first-print "
+                f"request ({detail})"
             )
         raise FredError(f"{description}: HTTP {response.status_code} {detail}")
 
@@ -433,6 +520,8 @@ class MacroDataIngestor:
         self.paths.ensure()
         mode = resolve_vintage_mode(settings)
         stored_modes = self.stored_vintage_modes()
+        support = self.stored_initial_release_support()
+        per_series = {s: series_settings(settings, s) for s in symbols}
         use_incremental = incremental and observation_start is None
         logger.info(
             "Ingesting %d FRED series in %s mode (%s)",
@@ -440,12 +529,21 @@ class MacroDataIngestor:
             mode,
             "incremental" if use_incremental else "full refetch",
         )
-        if mode == "latest":
-            logger.warning(
-                "vintage_mode=latest returns the newest revision of every "
-                "observation; values are NOT what a trader saw at the time. "
-                "Use initial_release for point-in-time backtests."
-            )
+        overridden = {
+            s: resolve_vintage_mode(cfg)
+            for s, cfg in per_series.items()
+            if resolve_vintage_mode(cfg) != mode
+        }
+        if overridden:
+            logger.info("Per-series mode overrides: %s", overridden)
+        for series_id, cfg in per_series.items():
+            if resolve_vintage_mode(cfg) == "latest":
+                logger.warning(
+                    "%s: vintage_mode=latest returns the newest revision of "
+                    "every observation; values are NOT what a trader saw at "
+                    "the time.",
+                    series_id,
+                )
 
         # FRED work is I/O-bound and independent per series, so a small thread
         # pool is the right shape; the shared RateLimiter keeps us compliant.
@@ -455,10 +553,10 @@ class MacroDataIngestor:
                 pool.map(
                     lambda s: self._ingest_series(
                         s,
-                        settings,
+                        per_series[s],
                         use_incremental,
-                        mode=mode,
                         stored_mode=stored_modes.get(s),
+                        initial_release_supported=support.get(s),
                         allow_mode_change=allow_mode_change,
                     ),
                     symbols,
@@ -490,14 +588,21 @@ class MacroDataIngestor:
         settings: MacroDataConfig,
         *,
         observation_start: str | None = None,
+        mode: str | None = None,
     ) -> pd.DataFrame:
         """Fetch one series and return it in the canonical schema.
 
         Public because it is useful on its own (ad-hoc exploration, tests)
         and because it performs no writes.
+
+        Parameters
+        ----------
+        mode:
+            Override the mode derived from ``settings``; the fallback path
+            passes ``"latest"``.
         """
         params = build_observation_params(
-            series_id, settings, observation_start=observation_start
+            series_id, settings, observation_start=observation_start, mode=mode
         )
         description = f"FRED observations [{series_id}]"
 
@@ -518,6 +623,77 @@ class MacroDataIngestor:
             retry_on=(FredRateLimitError, requests.RequestException),
         )
         return normalize_fred_observations(payload.get("observations", []), series_id)
+
+    def fetch_point_in_time(
+        self,
+        series_id: str,
+        settings: MacroDataConfig,
+        *,
+        mode: str,
+        observation_start: str | None = None,
+        initial_release_supported: bool | None = None,
+    ) -> tuple[pd.DataFrame, str, bool]:
+        """Fetch a series, falling back when first prints are unavailable.
+
+        FRED refuses ``output_type=4`` for series with more than ~2000
+        vintage dates. Only near-daily series reach that count, and those
+        are not revised -- so rather than failing, we refetch the latest
+        values (identical to the first prints, for an unrevised series)
+        and stamp ``observation_date + release_lag`` as the publication
+        date. The result still satisfies the point-in-time contract.
+
+        Parameters
+        ----------
+        mode:
+            Requested mode.
+        initial_release_supported:
+            Cached answer from a previous run. ``False`` skips the request
+            that is known to fail; ``None`` means unknown, so try it.
+
+        Returns
+        -------
+        tuple
+            ``(frame, effective_mode, initial_release_supported)``.
+        """
+        if mode not in POINT_IN_TIME_MODES:
+            frame = self.fetch_observations(
+                series_id, settings, observation_start=observation_start,
+                mode=mode,
+            )
+            return frame, mode, True
+
+        if initial_release_supported is not False:
+            try:
+                frame = self.fetch_observations(
+                    series_id,
+                    settings,
+                    observation_start=observation_start,
+                    mode="initial_release",
+                )
+                return frame, mode, True
+            except FredVintageLimitError as exc:
+                logger.info(
+                    "%s has too many vintages for first prints (%s)",
+                    series_id,
+                    exc,
+                )
+
+        lag = release_lag(settings)
+        log = logger.warning if mode == "initial_release" else logger.info
+        log(
+            "%s: first prints unavailable from FRED; falling back to "
+            "publication_lag with a %d-day release lag. This is sound "
+            "because only near-daily series exceed the vintage cap and "
+            "those are not revised -- but the publication dates are "
+            "DERIVED, not vendor-reported.",
+            series_id,
+            lag.days,
+        )
+
+        frame = self.fetch_observations(
+            series_id, settings, observation_start=observation_start, mode="latest"
+        )
+        return apply_synthetic_publication_dates(frame, lag), "publication_lag", False
 
     def fetch_series_metadata(
         self, series_id: str, settings: MacroDataConfig
@@ -581,20 +757,34 @@ class MacroDataIngestor:
         settings: MacroDataConfig,
         incremental: bool,
         *,
-        mode: str = "latest",
         stored_mode: str | None = None,
+        initial_release_supported: bool | None = None,
         allow_mode_change: bool = False,
     ) -> SymbolResult:
-        """Fetch, persist and report on a single series."""
+        """Fetch, persist and report on a single series.
+
+        ``settings`` must already have this series' overrides applied --
+        see :func:`series_settings`.
+        """
         path = storage.macro_path(self.paths, series_id)
+        mode = resolve_vintage_mode(settings)
+
+        # Resolve the mode the request will actually PRODUCE before the
+        # guardrail runs, so a series known to fall back is not reported
+        # as a conflict against the publication_lag file it wrote last time.
+        if mode == "initial_release" and initial_release_supported is False:
+            mode = "publication_lag"
 
         if stored_mode is not None and stored_mode != mode and path.is_file():
             if not allow_mode_change:
                 message = (
                     f"{series_id} was ingested in {stored_mode!r} mode but this "
                     f"run is {mode!r}. Mixing revision vintages in one file "
-                    f"would make it unusable for point-in-time work. Re-run "
-                    f"with allow_mode_change=True to replace the file."
+                    f"would make it unusable for point-in-time work. Either "
+                    f"pin this series with a per-series override "
+                    f"([macro.series_overrides.{series_id}] vintage_mode = "
+                    f"{stored_mode!r}), or re-run with allow_mode_change=True "
+                    f"to replace the file."
                 )
                 logger.error("%s", message)
                 return SymbolResult(
@@ -615,10 +805,23 @@ class MacroDataIngestor:
         )
 
         try:
-            frame = self.fetch_observations(series_id, settings, observation_start=start)
+            frame, effective_mode, supported = self.fetch_point_in_time(
+                series_id,
+                settings,
+                mode=mode,
+                observation_start=start,
+                initial_release_supported=initial_release_supported,
+            )
         except Exception as exc:  # noqa: BLE001 - isolate per-series failures
             logger.error("Fetch failed for %s: %s", series_id, exc)
-            return SymbolResult(symbol=series_id, status="failed", error=str(exc))
+            return SymbolResult(
+                symbol=series_id, status="failed", error=str(exc),
+                vintage_mode=mode,
+            )
+
+        fell_back = effective_mode != mode or (
+            mode in POINT_IN_TIME_MODES and not supported
+        )
 
         if frame.empty:
             logger.warning("No observations returned for %s", series_id)
@@ -627,13 +830,18 @@ class MacroDataIngestor:
                 status="empty",
                 error="no observations in range",
                 path=str(path),
+                vintage_mode=effective_mode,
+                fell_back=fell_back,
             )
 
         try:
             merged = storage.upsert_parquet(frame, path, self.config.storage)
         except storage.StorageError as exc:
             logger.error("Persist failed for %s: %s", series_id, exc)
-            return SymbolResult(symbol=series_id, status="failed", error=str(exc))
+            return SymbolResult(
+                symbol=series_id, status="failed", error=str(exc),
+                vintage_mode=effective_mode,
+            )
 
         if settings.fetch_metadata:
             metadata = self.fetch_series_metadata(series_id, settings)
@@ -650,6 +858,8 @@ class MacroDataIngestor:
             first_timestamp=merged.index.min(),
             last_timestamp=merged.index.max(),
             path=str(path),
+            vintage_mode=effective_mode,
+            fell_back=fell_back,
         )
 
     def _write_manifest(self, report: IngestionReport) -> None:
@@ -665,6 +875,11 @@ class MacroDataIngestor:
                     "last_timestamp": r.last_timestamp,
                     "updated_at": report.finished_at,
                     "params": report.params,
+                    # Per-series truth, which can differ from the run-level
+                    # params when an override or a fallback applied.
+                    "vintage_mode": r.vintage_mode,
+                    "fell_back": r.fell_back,
+                    "initial_release_supported": not r.fell_back,
                     "error": r.error,
                 }
                 for r in report.results
@@ -674,6 +889,24 @@ class MacroDataIngestor:
             storage.write_json(existing, manifest_path)
         except storage.StorageError as exc:
             logger.warning("Could not write manifest: %s", exc)
+
+    def stored_initial_release_support(self) -> dict[str, bool]:
+        """Return ``{series_id: first_prints_available}`` from the manifest.
+
+        Lets a later run skip the ``output_type=4`` request that is already
+        known to be refused, saving one wasted round-trip per daily series.
+        """
+        manifest = storage.read_json(
+            storage.metadata_path(self.paths, "macro_manifest"), default={}
+        ) or {}
+        support: dict[str, bool] = {}
+        for series_id, entry in manifest.items():
+            if not isinstance(entry, dict):
+                continue
+            flag = entry.get("initial_release_supported")
+            if isinstance(flag, bool):
+                support[series_id] = flag
+        return support
 
     def stored_vintage_modes(self) -> dict[str, str]:
         """Return ``{series_id: vintage_mode}`` recorded in the manifest.
@@ -688,8 +921,14 @@ class MacroDataIngestor:
         for series_id, entry in manifest.items():
             if not isinstance(entry, dict):
                 continue
+            # Per-series value first; fall back to the run-level params
+            # written by older versions, then to what those versions did.
             params = entry.get("params") or {}
-            modes[series_id] = params.get("vintage_mode") or "latest"
+            modes[series_id] = (
+                entry.get("vintage_mode")
+                or params.get("vintage_mode")
+                or "latest"
+            )
         return modes
 
     def available_series(self) -> tuple[str, ...]:

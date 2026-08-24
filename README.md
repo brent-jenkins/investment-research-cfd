@@ -65,6 +65,7 @@ key at all.
 | [ingestion/macro.py](cfdinvest/ingestion/macro.py) | FRED REST → canonical macro series. |
 | [repository.py](cfdinvest/repository.py) | The single read API everything downstream depends on. |
 | [docs/ingestion-hardening-note.md](docs/ingestion-hardening-note.md) | Engineering note: vintage modes, publication dates, anomaly flags. |
+| [docs/publication-lag-note.md](docs/publication-lag-note.md) | Engineering note: the publication_lag default and daily-series fallback. |
 | [logging_utils.py](cfdinvest/logging_utils.py) | Handler setup for entry points only; libraries just `getLogger`. |
 
 ### Design decisions worth knowing
@@ -144,12 +145,12 @@ information that did not exist. Set `vintage_mode` in `[macro]`:
 
 | Mode | What you get | Use for |
 | --- | --- | --- |
-| `latest` (default) | Newest revision. Look-ahead biased. | Daily rate series, which are never revised |
+| **`publication_lag`** (default) | A real publication date on every observation: first prints where FRED serves them, otherwise latest values stamped `observation_date + lag`. | Almost everything |
+| `initial_release` | Strictly first prints. Falls back to `publication_lag` when FRED refuses, and warns. | When you want to know if first prints were unavailable |
+| `latest` | Newest revision. Look-ahead biased. | Opt in deliberately |
 | `vintage` | ALFRED snapshot as of a fixed date. Bounds forwarded verbatim. | Reproducing a specific historical run |
-| `initial_release` | Each observation's **first print**, with its true publication date. | Point-in-time backtests of revised series |
 
-`initial_release` is the one that matters. It gives you the publication
-calendar straight from the vendor:
+The default gives you the publication calendar straight from the vendor:
 
 ```
 UNRATE 2020-01-01 = 3.6    published 2020-02-07
@@ -158,8 +159,15 @@ UNRATE 2020-04-01 = 14.7   published 2020-05-08
 ```
 
 ```python
+# Tidy calendar across every series -- what preprocessing consumes.
+repo.publication_calendar()
+#   series_id  observation_date  publication_date  vintage_mode
+#   CPIAUCSL   2019-01-01        2019-02-13        publication_lag
+#   ...   sorted by (series_id, observation_date), always
+
+# Or the panel form, aligned element-wise with load_macro():
 values = repo.load_macro(["UNRATE"])["UNRATE"]
-published = repo.publication_calendar(["UNRATE"])["UNRATE"]
+published = repo.publication_calendar(["UNRATE"], wide=True)["UNRATE"]
 
 # What was genuinely knowable on 2020-04-05:
 as_of = pd.Timestamp("2020-04-05", tz="UTC")
@@ -167,14 +175,37 @@ knowable = values[published <= as_of].iloc[-1]     # 4.4  (March, published 04-0
 leaky = values.dropna().iloc[-1]                   # 14.7 (April, published 05-08!)
 ```
 
-**FRED rejects `initial_release` for series with >2000 vintages** — i.e. daily
-ones like DGS10. Those are effectively unrevised, so `latest` is correct for
-them; the error message says so rather than passing the vendor's along.
+### The daily-series fallback
+
+FRED refuses first prints for series with more than 2000 vintages — DGS10
+has 5092. Rather than failing those series, ingestion refetches the latest
+values (which, for an unrevised daily series, *are* the first prints) and
+stamps `observation_date + release_lag`. Measured live over 2019–2021:
+
+```
+series      mode              lag (min/median/max days)   source
+DGS10       publication_lag     1 /   1 /   1             derived (fell back)
+UNRATE      publication_lag    31 /  34 /  40             vendor first prints
+CPIAUCSL    publication_lag    37 /  41 /  44             vendor first prints
+GDPC1       publication_lag   115 / 119 / 121             vendor first prints
+```
+
+The fallback is announced in the log and recorded as `fell_back` in the
+manifest, and the answer is cached so later runs skip the doomed request.
+
+### Per-series overrides
+
+```toml
+[macro.series_overrides.DGS10]
+vintage_mode = "latest"     # this series only
+release_lag_days = 1
+```
 
 ### Guardrails
 
-- Every file's mode is recorded and readable:
-  `repo.macro_vintage_mode("UNRATE")`, `repo.macro_coverage()`.
+- Every file's mode — the one that *actually* produced it, after any
+  fallback — is recorded and readable: `repo.macro_vintage_mode("UNRATE")`,
+  `repo.macro_vintage_modes()`, `repo.macro_coverage()`.
 - **Modes are never mixed inside one file.** Merging first prints into a
   latest-revision file yields a series that is neither, with no way to tell
   which row came from where. Changing mode requires
@@ -183,8 +214,11 @@ them; the error message says so rather than passing the vendor's along.
   publication date equal to the ingest date is a detectable signature of a
   biased file, not a silent one.
 
-**`latest` is still the default.** Changing it would silently alter behaviour
-for an existing lake. Worth an explicit decision before signals are built.
+**Upgrading an existing `latest` lake.** The default changed, so the first
+ingest after upgrading will be *refused* for series already stored as
+`latest` — deliberately, rather than silently mixing vintages. Either pin
+them with a per-series override, or re-ingest with
+`ingest(allow_mode_change=True)` to replace the files.
 
 ---
 
@@ -252,8 +286,8 @@ Sized for 20–50 assets, verified against the live vendor:
 ## Testing
 
 ```bash
-pytest              # 192 tests, ~4.5s, no network
-pytest -m live      # 11 tests against the real FRED API (needs a key)
+pytest              # 267 tests, ~8s, no network
+pytest -m live      # 14 tests against the real FRED API (needs a key)
 pytest -m ""        # everything
 ```
 
@@ -263,6 +297,9 @@ pytest -m ""        # everything
 | `test_publication_lag.py` | No forward-fill, publication dates stored, as-of boundaries |
 | `test_contract.py` | What downstream layers may rely on; multi-exchange alignment |
 | `test_utc_normalization.py` | DST transitions, holidays, mixed-frequency joins |
+| `test_vintage_default.py` | The publication_lag default and per-series overrides |
+| `test_fallback.py` | initial_release -> publication_lag fallback |
+| `test_publication_calendar.py` | The unified calendar's shape and determinism |
 | `test_live_fred.py` | The real API (excluded by default) |
 
 Both ingestors take an injected downloader / `requests.Session`. The FRED stub

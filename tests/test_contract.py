@@ -88,7 +88,7 @@ def test_panel_index_is_tz_aware_utc(lake):
 
 def test_macro_index_is_tz_aware_utc(lake):
     assert str(lake.load_macro().index.tz) == "UTC"
-    assert str(lake.publication_calendar().index.tz) == "UTC"
+    assert str(lake.publication_calendar(wide=True).index.tz) == "UTC"
 
 
 def test_bundle_indexes_share_one_clock(lake):

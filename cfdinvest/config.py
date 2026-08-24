@@ -127,13 +127,21 @@ class MacroDataConfig:
     #: point-in-time correctness.
     realtime_start: str | None = None
     realtime_end: str | None = None
-    #: ``"latest"``, ``"vintage"`` or ``"initial_release"``. Leaving this
-    #: ``None`` derives the mode from ``realtime_start``/``realtime_end``, so
-    #: existing configs keep their current behaviour. Set
-    #: ``"initial_release"`` to fetch each observation's *first print* along
-    #: with its true publication date -- the point-in-time correct choice.
+    #: ``"publication_lag"`` (default), ``"initial_release"``, ``"latest"``
+    #: or ``"vintage"``. Leaving this ``None`` resolves to
+    #: ``"vintage"`` when ALFRED real-time bounds are set, otherwise to
+    #: :data:`cfdinvest.schema.DEFAULT_VINTAGE_MODE`.
     #: See :func:`cfdinvest.ingestion.macro.resolve_vintage_mode`.
     vintage_mode: str | None = None
+    #: Per-series overrides, e.g.
+    #: ``{"DGS10": {"vintage_mode": "latest", "release_lag_days": 1}}``.
+    #: In TOML: ``[macro.series_overrides.DGS10]``. A series not listed here
+    #: uses the run-level settings above.
+    series_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: Publication lag applied when first prints are unavailable and a
+    #: synthetic publication date must be derived. The default of 1 day
+    #: suits daily rate series, which are the only ones that ever fall back.
+    fallback_release_lag_days: int = 1
     #: Macro series are revised for months after first publication, so an
     #: incremental update re-reads a generous trailing window.
     refetch_overlap_days: int = 45
@@ -201,6 +209,9 @@ def _coerce(value: Any, target_type: Any) -> Any:
 
     if value is None:
         return None
+    if "dict" in type_name:
+        # Nested mapping (e.g. series_overrides); copied, never stringified.
+        return {str(k): v for k, v in dict(value).items()}
     if "Path" in type_name:
         return Path(value)
     if "tuple" in type_name:

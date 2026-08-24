@@ -73,7 +73,14 @@ def test_build_params_includes_key_and_range(config):
 def test_build_params_passes_alfred_vintages(config):
     from dataclasses import replace
 
-    settings = replace(config.macro, realtime_start="2010-01-01", realtime_end="2010-01-01")
+    # vintage_mode=None so the bounds themselves derive "vintage"; the shared
+    # fixture pins "latest", which deliberately sends no realtime params.
+    settings = replace(
+        config.macro,
+        vintage_mode=None,
+        realtime_start="2010-01-01",
+        realtime_end="2010-01-01",
+    )
     params = build_observation_params("DGS10", settings)
     assert params["realtime_start"] == "2010-01-01"
     assert params["realtime_end"] == "2010-01-01"

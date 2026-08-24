@@ -152,7 +152,12 @@ def test_live_vintage_differs_from_latest(live_config):
     latest = replace(
         as_of,
         paths=replace(as_of.paths, data_root=as_of.paths.data_root / "latest"),
-        macro=replace(as_of.macro, realtime_start=None, realtime_end=None),
+        macro=replace(
+            as_of.macro,
+            realtime_start=None,
+            realtime_end=None,
+            vintage_mode="latest",   # explicit: the default is no longer latest
+        ),
     )
 
     assert resolve_vintage_mode(as_of.macro) == "vintage"
@@ -194,21 +199,124 @@ def test_live_initial_release_carries_true_publication_dates(live_config):
     assert january["value"] == pytest.approx(3.6, abs=0.05)
     assert january[PUBLICATION_DATE] == pd.Timestamp("2020-02-07", tz="UTC")
 
-    calendar = repo.publication_calendar(["UNRATE"])["UNRATE"]
+    calendar = repo.publication_calendar(["UNRATE"], wide=True)["UNRATE"]
     lag = calendar - calendar.index
     assert (lag > pd.Timedelta(days=1)).all()
     assert lag.max() < pd.Timedelta(days=60)
 
 
 @requires_key
-def test_live_initial_release_rejects_high_vintage_daily_series(live_config):
-    """DGS10 has >2000 vintages; the error must name the fix, not the vendor's."""
-    config = live_config(series_ids=("DGS10",), vintage_mode="initial_release")
+def test_live_initial_release_falls_back_for_daily_series(live_config):
+    """DGS10 has >2000 vintages, so first prints are refused -- but the
+    series must still land, via a synthetic publication lag.
+    """
+    config = live_config(
+        series_ids=("DGS10",),
+        vintage_mode="initial_release",
+        observation_start="2020-01-01",
+        observation_end="2020-06-30",
+    )
     with MacroDataIngestor(config) as ingestor:
         report = ingestor.ingest(["DGS10"])
 
-    assert report.results[0].status == "failed"
-    assert "vintage_mode='latest'" in report.results[0].error
+    result = report.results[0]
+    assert result.status == "ok"          # fell back, did not fail
+    assert result.fell_back is True
+    assert result.vintage_mode == "publication_lag"
+
+    repo = DataRepository(config)
+    stacked = repo.load_macro(["DGS10"], wide=False)
+    # Synthetic dates: observation + the configured 1-day lag.
+    assert (
+        stacked[PUBLICATION_DATE] == stacked.index + pd.Timedelta(days=1)
+    ).all()
+    # And the gaps are still gaps.
+    assert stacked["value"].isna().sum() > 0
+
+
+@requires_key
+def test_live_default_mode_is_publication_lag(live_config):
+    """A config that says nothing about vintages gets the safe default."""
+    config = live_config(
+        series_ids=("UNRATE",),
+        observation_start="2020-01-01",
+        observation_end="2020-06-30",
+    )
+    assert resolve_vintage_mode(config.macro) == "publication_lag"
+
+    with MacroDataIngestor(config) as ingestor:
+        report = ingestor.ingest(["UNRATE"])
+
+    assert report.results[0].status == "ok"
+    assert report.results[0].fell_back is False   # UNRATE supports first prints
+
+    repo = DataRepository(config)
+    stacked = repo.load_macro(["UNRATE"], wide=False)
+    # First print, with FRED's own publication date.
+    assert stacked.loc["2020-01-01", "value"] == pytest.approx(3.6, abs=0.05)
+    assert stacked.loc["2020-01-01", PUBLICATION_DATE] == pd.Timestamp(
+        "2020-02-07", tz="UTC"
+    )
+
+
+@requires_key
+def test_live_per_series_overrides(live_config):
+    """A daily series pinned to latest alongside a default monthly one."""
+    config = live_config(
+        series_ids=("DGS10", "UNRATE"),
+        observation_start="2020-01-01",
+        observation_end="2020-06-30",
+        series_overrides={"DGS10": {"vintage_mode": "latest"}},
+    )
+    with MacroDataIngestor(config) as ingestor:
+        report = ingestor.ingest(["DGS10", "UNRATE"])
+
+    assert len(report.succeeded) == 2
+    repo = DataRepository(config)
+    assert repo.macro_vintage_mode("DGS10") == "latest"
+    assert repo.macro_vintage_mode("UNRATE") == "publication_lag"
+
+
+@requires_key
+def test_live_publication_calendar(live_config):
+    """The unified calendar over a mixed-frequency, mixed-provenance lake."""
+    config = live_config(
+        series_ids=("DGS10", "UNRATE", "GDPC1"),
+        observation_start="2020-01-01",
+        observation_end="2020-12-31",
+    )
+    with MacroDataIngestor(config) as ingestor:
+        ingestor.ingest(["DGS10", "UNRATE", "GDPC1"])
+
+    calendar = DataRepository(config).publication_calendar()
+
+    assert list(calendar.columns) == [
+        "series_id", "observation_date", "publication_date", "vintage_mode",
+    ]
+    assert set(calendar["series_id"].unique()) == {"DGS10", "UNRATE", "GDPC1"}
+    # Deterministic ordering.
+    assert calendar.equals(
+        calendar.sort_values(
+            ["series_id", "observation_date"], kind="stable"
+        ).reset_index(drop=True)
+    )
+    # Publication always follows observation, at every frequency.
+    assert (calendar["publication_date"] > calendar["observation_date"]).all()
+
+    # UNRATE's real release calendar, straight from output_type=4.
+    unrate = calendar[calendar["series_id"] == "UNRATE"].set_index(
+        "observation_date"
+    )
+    assert unrate.loc[pd.Timestamp("2020-01-01", tz="UTC"), "publication_date"] == (
+        pd.Timestamp("2020-02-07", tz="UTC")
+    )
+    assert unrate["vintage_mode"].iloc[0] == "publication_lag"
+
+    # DGS10 fell back, so its lag is the configured synthetic one.
+    dgs = calendar[calendar["series_id"] == "DGS10"]
+    assert (dgs["publication_date"] - dgs["observation_date"]).max() == (
+        pd.Timedelta(days=1)
+    )
 
 
 @requires_key

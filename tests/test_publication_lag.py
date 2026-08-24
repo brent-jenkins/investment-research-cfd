@@ -114,7 +114,7 @@ def test_publication_dates_are_persisted(pit_repo):
 
 def test_publication_dates_match_the_real_release_calendar(pit_repo):
     repo, _ = pit_repo
-    calendar = repo.publication_calendar(["UNRATE"])["UNRATE"]
+    calendar = repo.publication_calendar(["UNRATE"], wide=True)["UNRATE"]
 
     for observation, (_, published) in UNRATE_INITIAL_RELEASE.items():
         assert calendar.loc[observation] == pd.Timestamp(published, tz="UTC")
@@ -122,7 +122,7 @@ def test_publication_dates_match_the_real_release_calendar(pit_repo):
 
 def test_publication_lag_is_positive_and_realistic(pit_repo):
     repo, _ = pit_repo
-    calendar = repo.publication_calendar(["UNRATE"])["UNRATE"]
+    calendar = repo.publication_calendar(["UNRATE"], wide=True)["UNRATE"]
 
     lag = calendar - calendar.index
     # Every value is published after the period it describes, by 3-6 weeks.
@@ -137,12 +137,15 @@ def test_latest_mode_publication_date_reveals_the_bias(config):
         macro=MacroDataConfig(
             series_ids=("UNRATE",), api_key="test-key",
             observation_start="2019-01-01", min_request_interval=0.0,
+            vintage_mode="latest",
         ),
     )
     with MacroDataIngestor(cfg, session=FredStub()) as ingestor:
         ingestor.ingest(["UNRATE"])
 
-    calendar = DataRepository(cfg).publication_calendar(["UNRATE"])["UNRATE"]
+    calendar = DataRepository(cfg).publication_calendar(
+        ["UNRATE"], wide=True
+    )["UNRATE"]
 
     # Publication date == fetch date for every row: these are revised values,
     # not first prints. A point-in-time check can assert against exactly this.
@@ -166,7 +169,7 @@ def test_latest_mode_publication_date_reveals_the_bias(config):
 def test_only_published_values_are_visible(pit_repo, as_of, expected):
     repo, _ = pit_repo
     values = repo.load_macro(["UNRATE"])["UNRATE"]
-    published = repo.publication_calendar(["UNRATE"])["UNRATE"]
+    published = repo.publication_calendar(["UNRATE"], wide=True)["UNRATE"]
 
     result = value_available_at(values, published, as_of)
     if expected is None:
@@ -178,7 +181,7 @@ def test_only_published_values_are_visible(pit_repo, as_of, expected):
 def test_publication_boundary_is_inclusive_on_release_day(pit_repo):
     repo, _ = pit_repo
     values = repo.load_macro(["UNRATE"])["UNRATE"]
-    published = repo.publication_calendar(["UNRATE"])["UNRATE"]
+    published = repo.publication_calendar(["UNRATE"], wide=True)["UNRATE"]
 
     assert value_available_at(values, published, "2020-04-02") == pytest.approx(3.5)
     assert value_available_at(values, published, "2020-04-03") == pytest.approx(4.4)
@@ -188,7 +191,7 @@ def test_observation_date_fill_would_leak_the_future(pit_repo):
     """Demonstrates the bug the publication calendar exists to prevent."""
     repo, _ = pit_repo
     values = repo.load_macro(["UNRATE"])["UNRATE"]
-    published = repo.publication_calendar(["UNRATE"])["UNRATE"]
+    published = repo.publication_calendar(["UNRATE"], wide=True)["UNRATE"]
 
     as_of = "2020-04-05"
     naive = values[values.index <= pd.Timestamp(as_of, tz="UTC")].iloc[-1]
@@ -209,7 +212,7 @@ def test_calendar_and_values_share_an_index(pit_repo):
     """Preprocessing can align the two frames without a join."""
     repo, _ = pit_repo
     values = repo.load_macro(["UNRATE"])
-    calendar = repo.publication_calendar(["UNRATE"])
+    calendar = repo.publication_calendar(["UNRATE"], wide=True)
 
     assert values.index.equals(calendar.index)
     assert list(values.columns) == list(calendar.columns)
@@ -217,6 +220,9 @@ def test_calendar_and_values_share_an_index(pit_repo):
 
 def test_publication_calendar_is_empty_when_lake_is(config):
     assert DataRepository(config).publication_calendar(["UNRATE"]).empty
+    assert DataRepository(config).publication_calendar(
+        ["UNRATE"], wide=True
+    ).empty
 
 
 # --------------------------------------------------------------------------- #

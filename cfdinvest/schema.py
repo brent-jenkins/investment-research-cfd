@@ -47,14 +47,32 @@ PUBLICATION_DATE = "publication_date"
 
 #: How a macro file was sourced with respect to revisions.
 #:
+#: ``publication_lag`` (default)
+#:     Every observation carries a real publication date, obtained the best
+#:     way available for that series: first prints where FRED serves them,
+#:     otherwise latest values stamped ``observation_date + release lag``.
+#:     Safe as a global default because the fallback only ever applies to
+#:     high-vintage daily series, which are not revised.
+#: ``initial_release``
+#:     Strictly first prints. Falls back to ``publication_lag`` when FRED
+#:     refuses the vintage span, and says so loudly.
 #: ``latest``
 #:     Newest revision of every observation. Convenient, look-ahead biased.
 #: ``vintage``
 #:     ALFRED snapshot as it stood on a fixed ``realtime`` date.
-#: ``initial_release``
-#:     First print of each observation, carrying its true publication date.
-#:     This is the mode a point-in-time backtest wants.
-VINTAGE_MODES: frozenset[str] = frozenset({"latest", "vintage", "initial_release"})
+VINTAGE_MODES: frozenset[str] = frozenset(
+    {"latest", "vintage", "initial_release", "publication_lag"}
+)
+
+#: The default sourcing mode. Chosen over ``latest`` because a macro-aware
+#: backtest reading revised values is trading on numbers that did not exist
+#: at the time.
+DEFAULT_VINTAGE_MODE = "publication_lag"
+
+#: Modes that guarantee a usable publication calendar.
+POINT_IN_TIME_MODES: frozenset[str] = frozenset(
+    {"initial_release", "publication_lag"}
+)
 
 #: yfinance field name -> canonical name.
 YFINANCE_COLUMN_MAP: dict[str, str] = {
@@ -94,6 +112,14 @@ class SymbolResult:
     anomalies: dict[str, int] = field(default_factory=dict)
     """Data-quality flag counts. Recorded, never repaired -- see
     :func:`cfdinvest.ingestion.market.validate_ohlcv`."""
+
+    vintage_mode: str | None = None
+    """Macro only: the mode that ACTUALLY produced the file, after any
+    fallback. May differ from the mode requested."""
+
+    fell_back: bool = False
+    """Macro only: ``True`` when first prints were unavailable and a
+    synthetic publication lag was used instead."""
 
     @property
     def ok(self) -> bool:

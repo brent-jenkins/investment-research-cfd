@@ -264,11 +264,28 @@ class DataRepository:
             return pd.DataFrame()
 
         frame = pd.DataFrame(manifest).T.sort_index()
-        frame["vintage_mode"] = [
-            (entry.get("params") or {}).get("vintage_mode", "latest")
-            for entry in frame.to_dict(orient="records")
-        ]
+        modes = self.macro_vintage_modes()
+        frame["vintage_mode"] = [modes.get(s, "latest") for s in frame.index]
+        if "fell_back" not in frame.columns:
+            frame["fell_back"] = False
+        frame["fell_back"] = frame["fell_back"].fillna(False).astype(bool)
         return frame
+
+    def macro_vintage_modes(self) -> dict[str, str]:
+        """Return ``{series_id: vintage_mode}`` for every series in the lake."""
+        manifest = storage.read_json(
+            storage.metadata_path(self.paths, "macro_manifest"), default={}
+        ) or {}
+        modes: dict[str, str] = {}
+        for series_id, entry in manifest.items():
+            if not isinstance(entry, dict):
+                continue
+            modes[series_id] = (
+                entry.get("vintage_mode")
+                or (entry.get("params") or {}).get("vintage_mode")
+                or "latest"
+            )
+        return modes
 
     def macro_vintage_mode(self, series_id: str) -> str | None:
         """Return the vintage mode a series was ingested under.
@@ -282,7 +299,13 @@ class DataRepository:
         entry = manifest.get(series_id)
         if not isinstance(entry, dict):
             return None
-        return (entry.get("params") or {}).get("vintage_mode", "latest")
+        # Per-series value first: it reflects overrides and fallbacks, which
+        # the run-level params cannot.
+        return (
+            entry.get("vintage_mode")
+            or (entry.get("params") or {}).get("vintage_mode")
+            or "latest"
+        )
 
     def anomalies(self, interval: str | None = None) -> pd.DataFrame:
         """Return per-ticker data-quality flag counts recorded at ingest.
@@ -473,20 +496,76 @@ class DataRepository:
         *,
         start: str | pd.Timestamp | None = None,
         end: str | pd.Timestamp | None = None,
+        wide: bool = False,
     ) -> pd.DataFrame:
-        """Return ``timestamp x series_id`` of each observation's publish date.
+        """Return the unified publication calendar across all macro series.
 
-        Cell ``[t, s]`` is the date series ``s``'s observation for period
-        ``t`` first became public. This is what lets the preprocessing layer
-        forward-fill without look-ahead: a value may enter the feature set
-        from its publication date onward, never from its observation date.
+        This is the contract the preprocessing layer forward-fills against: a
+        value may enter the feature set from its ``publication_date`` onward,
+        never from its ``observation_date``.
 
-        Meaningful only for series ingested in ``initial_release`` mode; in
-        ``latest`` mode FRED stamps every row with the ingest date, which is
-        precisely the signature of a revised (look-ahead biased) file.
+        Parameters
+        ----------
+        series_ids:
+            Series to include. Defaults to every series in the lake.
+        start, end:
+            Inclusive bounds on the *observation* date.
+        wide:
+            ``False`` (default) returns the tidy four-column form below.
+            ``True`` returns the ``timestamp x series_id`` panel of
+            publication dates, which aligns element-wise with
+            :meth:`load_macro`.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns ``series_id``, ``observation_date``, ``publication_date``,
+            ``vintage_mode``; one row per observation, sorted by
+            ``(series_id, observation_date)`` with a clean ``RangeIndex``.
+            Deterministic: the same lake always yields the same row order,
+            regardless of the order series were requested or ingested in.
+
+        Notes
+        -----
+        ``vintage_mode`` is carried per row so a caller can tell, without a
+        second lookup, whether a given publication date is vendor-reported
+        (``initial_release``), derived from a release lag
+        (``publication_lag`` after a fallback), or meaningless because the
+        series was ingested biased (``latest``, where FRED stamps the ingest
+        date). Mixed frequencies coexist happily: rows are per observation,
+        so a daily and a quarterly series simply contribute different counts.
         """
         stacked = self.load_macro(series_ids, start=start, end=end, wide=False)
-        return macro_to_panel(stacked, values=PUBLICATION_DATE)
+        if wide:
+            return macro_to_panel(stacked, values=PUBLICATION_DATE)
+
+        if stacked.empty or PUBLICATION_DATE not in stacked.columns:
+            return pd.DataFrame(
+                {
+                    SERIES_ID: pd.Series(dtype="object"),
+                    "observation_date": pd.Series(dtype="datetime64[ns, UTC]"),
+                    PUBLICATION_DATE: pd.Series(dtype="datetime64[ns, UTC]"),
+                    "vintage_mode": pd.Series(dtype="object"),
+                }
+            )
+
+        modes = self.macro_vintage_modes()
+        calendar = pd.DataFrame(
+            {
+                SERIES_ID: stacked[SERIES_ID].astype(str).to_numpy(),
+                "observation_date": stacked.index,
+                PUBLICATION_DATE: stacked[PUBLICATION_DATE].to_numpy(),
+            }
+        )
+        calendar["vintage_mode"] = (
+            calendar[SERIES_ID].map(modes).fillna("latest").astype(str)
+        )
+        calendar = calendar.sort_values(
+            [SERIES_ID, "observation_date"], kind="stable"
+        ).reset_index(drop=True)
+        return calendar[
+            [SERIES_ID, "observation_date", PUBLICATION_DATE, "vintage_mode"]
+        ]
 
     def load_bundle(
         self,

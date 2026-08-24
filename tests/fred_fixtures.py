@@ -45,6 +45,20 @@ UNRATE_INITIAL_RELEASE: dict[str, tuple[str, str]] = {
     "2020-04-01": ("14.7", "2020-05-08"),
 }
 
+#: Series with more than FRED's 2000-vintage cap. A first-print request for
+#: these is refused live (DGS10 has 5092 vintages), which is exactly what
+#: drives the publication_lag fallback -- so the stub refuses them too.
+HIGH_VINTAGE_SERIES: frozenset[str] = frozenset(
+    {"DGS10", "DGS2", "T10Y2Y", "T10Y3M", "DFF", "FEDFUNDS", "VIXCLS"}
+)
+
+#: The vendor's message when the vintage cap is breached, verbatim.
+VINTAGE_LIMIT_MESSAGE = (
+    "Bad Request.  There are 5092 vintage dates in the specified real-time "
+    "period: 1776-07-04 to 9999-12-31.  This exceeds the maximum number of "
+    "vintage dates allowed for this file type (2000)."
+)
+
 #: DGS10 latest, including FRED's "." missing-value sentinel on a holiday.
 DGS10_LATEST: dict[str, str] = {
     "2020-01-01": ".",      # New Year's Day: market shut, no print
@@ -138,7 +152,16 @@ class FredStub:
             entry = SERIES_METADATA.get(series_id)
             return StubResponse({"seriess": [entry] if entry else []})
 
-        return StubResponse({"observations": self._observations(params or {})})
+        request = params or {}
+        if str(request.get("output_type", "1")) == "4" and request.get(
+            "series_id"
+        ) in HIGH_VINTAGE_SERIES:
+            # Mirror the live 400 that triggers the fallback path.
+            return StubResponse(
+                {"error_message": VINTAGE_LIMIT_MESSAGE}, 400, "Bad Request"
+            )
+
+        return StubResponse({"observations": self._observations(request)})
 
     # -- payload selection -------------------------------------------------- #
     def _observations(self, params: dict[str, Any]) -> list[dict[str, str]]:

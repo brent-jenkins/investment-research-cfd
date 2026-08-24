@@ -18,7 +18,7 @@ from cfdinvest.ingestion.macro import (
     resolve_vintage_mode,
 )
 from cfdinvest.repository import DataRepository
-from cfdinvest.schema import PUBLICATION_DATE
+from cfdinvest.schema import DEFAULT_VINTAGE_MODE, PUBLICATION_DATE
 from tests.fred_fixtures import (
     GDPC1_INITIAL_RELEASE,
     GDPC1_LATEST,
@@ -47,8 +47,15 @@ def macro_cfg(**changes) -> MacroDataConfig:
 # --------------------------------------------------------------------------- #
 # Mode resolution
 # --------------------------------------------------------------------------- #
-def test_default_mode_is_latest():
-    assert resolve_vintage_mode(macro_cfg()) == "latest"
+def test_default_mode_is_publication_lag():
+    """The global default is point-in-time, not the biased latest."""
+    assert resolve_vintage_mode(macro_cfg()) == "publication_lag"
+    assert DEFAULT_VINTAGE_MODE == "publication_lag"
+
+
+def test_default_holds_for_a_bare_config():
+    # Not just for the test helper: a plain MacroDataConfig too.
+    assert resolve_vintage_mode(MacroDataConfig()) == "publication_lag"
 
 
 @pytest.mark.parametrize(
@@ -85,7 +92,7 @@ def test_unknown_mode_is_rejected():
 # Parameters are applied EXACTLY as configured
 # --------------------------------------------------------------------------- #
 def test_latest_mode_sends_no_realtime_parameters():
-    params = build_observation_params("GDPC1", macro_cfg())
+    params = build_observation_params("GDPC1", macro_cfg(vintage_mode="latest"))
     assert "realtime_start" not in params
     assert "realtime_end" not in params
     assert "output_type" not in params
@@ -139,7 +146,10 @@ def _ingest(config, stub, series, **kwargs):
 
 
 def test_biased_mode_returns_revised_values(config):
-    cfg = replace(config, macro=macro_cfg(series_ids=("GDPC1",)))
+    cfg = replace(
+        config,
+        macro=macro_cfg(series_ids=("GDPC1",), vintage_mode="latest"),
+    )
     _ingest(cfg, FredStub(), ["GDPC1"])
 
     values = DataRepository(cfg).load_macro(["GDPC1"])["GDPC1"]
@@ -185,7 +195,7 @@ def test_the_three_modes_disagree(config):
     """The whole point: mode choice changes the numbers a backtest sees."""
     seen = {}
     for mode_kwargs, label in [
-        ({}, "latest"),
+        ({"vintage_mode": "latest"}, "latest"),
         ({"realtime_start": "2020-04-01", "realtime_end": "2020-04-01"}, "vintage"),
         ({"vintage_mode": "initial_release"}, "initial_release"),
     ]:
@@ -215,7 +225,10 @@ def test_repository_exposes_the_vintage_mode_of_each_file(config):
 
 
 def test_vintage_mode_is_recorded_for_latest_too(config):
-    cfg = replace(config, macro=macro_cfg(series_ids=("DGS10",)))
+    cfg = replace(
+        config,
+        macro=macro_cfg(series_ids=("DGS10",), vintage_mode="latest"),
+    )
     _ingest(cfg, FredStub(), ["DGS10"])
     assert DataRepository(cfg).macro_vintage_mode("DGS10") == "latest"
 
@@ -225,7 +238,10 @@ def test_unknown_series_has_no_vintage_mode(config):
 
 
 def test_changing_mode_is_refused_by_default(config):
-    latest_cfg = replace(config, macro=macro_cfg(series_ids=("GDPC1",)))
+    latest_cfg = replace(
+        config,
+        macro=macro_cfg(series_ids=("GDPC1",), vintage_mode="latest"),
+    )
     _ingest(latest_cfg, FredStub(), ["GDPC1"])
 
     pit_cfg = replace(
@@ -241,7 +257,10 @@ def test_changing_mode_is_refused_by_default(config):
 
 
 def test_allow_mode_change_replaces_the_file(config):
-    latest_cfg = replace(config, macro=macro_cfg(series_ids=("GDPC1",)))
+    latest_cfg = replace(
+        config,
+        macro=macro_cfg(series_ids=("GDPC1",), vintage_mode="latest"),
+    )
     _ingest(latest_cfg, FredStub(), ["GDPC1"])
 
     pit_cfg = replace(
@@ -261,7 +280,10 @@ def test_allow_mode_change_replaces_the_file(config):
 
 
 def test_same_mode_reingest_is_not_blocked(config):
-    cfg = replace(config, macro=macro_cfg(series_ids=("DGS10",)))
+    cfg = replace(
+        config,
+        macro=macro_cfg(series_ids=("DGS10",), vintage_mode="latest"),
+    )
     _ingest(cfg, FredStub(), ["DGS10"])
     second = _ingest(cfg, FredStub(), ["DGS10"])
     assert second.results[0].status == "ok"
@@ -270,7 +292,10 @@ def test_same_mode_reingest_is_not_blocked(config):
 def test_mode_guardrail_ignores_series_with_no_file(config):
     # A manifest entry can exist for a failed series; without a file there is
     # nothing to corrupt, so the run must proceed.
-    cfg = replace(config, macro=macro_cfg(series_ids=("GDPC1",)))
+    cfg = replace(
+        config,
+        macro=macro_cfg(series_ids=("GDPC1",), vintage_mode="latest"),
+    )
     _ingest(cfg, FredStub(), ["GDPC1"])
     storage.macro_path(cfg.paths, "GDPC1").unlink()
 
