@@ -22,6 +22,7 @@ import pandas as pd
 from cfdinvest.execution import engine as engine_module
 from cfdinvest.execution import pnl as pnl_module
 from cfdinvest.execution.state import HysteresisThresholds
+from cfdinvest.execution.stops import StopConfig, recommended_orders
 from cfdinvest.schema import TIMESTAMP
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,15 @@ class ExecutionConfig:
     day_count: float = 365.0
     #: Per-asset ``{ticker: (long_rate, short_rate)}`` overrides.
     financing_rates: dict[str, tuple[float, float]] | None = None
+
+    # -- stops and targets -------------------------------------------------- #
+    #: Intrabar stop-loss and take-profit policy. **Disabled by default.**
+    #: Enabling it changes the result of every backtest -- positions that
+    #: previously rode through a spike now exit -- so it is opt-in rather
+    #: than a silent revision of numbers already recorded. Turn it on for
+    #: realism: without it, reported drawdowns are smaller than the ones that
+    #: actually happened.
+    stops: StopConfig = field(default_factory=StopConfig)
 
     # -- risk ------------------------------------------------------------- #
     #: Cap on gross notional divided by equity.
@@ -126,6 +136,12 @@ class ExecutionFrame:
     pnl: pd.DataFrame = field(default_factory=pd.DataFrame)
     equity_curve: pd.Series = field(default_factory=lambda: pd.Series(dtype="float64"))
     exposure: pd.Series = field(default_factory=lambda: pd.Series(dtype="float64"))
+    stop_events: pd.DataFrame = field(default_factory=pd.DataFrame)
+    stop_levels: pd.Series = field(default_factory=lambda: pd.Series(dtype="float64"))
+    take_profit_levels: pd.Series = field(
+        default_factory=lambda: pd.Series(dtype="float64")
+    )
+    entry_prices: pd.Series = field(default_factory=lambda: pd.Series(dtype="float64"))
     metadata: dict[str, Any] = field(default_factory=dict)
 
     # -- views ------------------------------------------------------------ #
@@ -137,6 +153,65 @@ class ExecutionFrame:
     def drawdown(self) -> pd.DataFrame:
         """Running peak, drawdown and drawdown fraction."""
         return pnl_module.drawdown(self.equity_curve)
+
+    def working_orders(self) -> pd.DataFrame:
+        """The stop and take-profit orders to place, for the current book.
+
+        **Nothing is sent anywhere.** The simulator assumes a resting order
+        exists; a manually traded account only has one if you place it. This
+        is the list to place, and the gap between the two is the difference
+        between the backtest and the account.
+
+        Empty when stops are disabled, or when nothing is open.
+        """
+        if self.positions.empty:
+            return recommended_orders(
+                pd.Series(dtype="float64"), pd.Series(dtype="float64"),
+                pd.Series(dtype="float64"), pd.Series(dtype="float64"),
+                pd.Series(dtype="float64"),
+            )
+
+        latest = self.positions.iloc[-1]
+        last_price = (
+            self.notionals.iloc[-1] / latest.where(latest != 0)
+            if not self.notionals.empty
+            else pd.Series(float("nan"), index=latest.index)
+        )
+        return recommended_orders(
+            latest,
+            self.entry_prices,
+            self.stop_levels,
+            self.take_profit_levels,
+            last_price,
+            timestamp=self.index[-1] if len(self.index) else None,
+        )
+
+    def stop_summary(self) -> pd.DataFrame:
+        """Counts and average slippage per breach kind and type.
+
+        The row that matters is ``gap``: it is where a stop cost more than
+        its level, and a strategy whose exits are mostly gaps is one whose
+        backtested stop distances are fiction.
+        """
+        if self.stop_events.empty:
+            return pd.DataFrame(
+                columns=["events", "mean_slippage", "total_units_closed", "ambiguous"]
+            )
+
+        # abs() before grouping: a SeriesGroupBy has no .abs(), and summing
+        # signed units would net a long exit against a short one.
+        events = self.stop_events.assign(
+            units_closed=self.stop_events["units_closed"].abs()
+        )
+        grouped = events.groupby(["kind", "breach_type"])
+        return pd.DataFrame(
+            {
+                "events": grouped.size(),
+                "mean_slippage": grouped["slippage_applied"].mean(),
+                "total_units_closed": grouped["units_closed"].sum(),
+                "ambiguous": grouped["ambiguous"].sum(),
+            }
+        ).sort_index()
 
     def active_positions(self) -> pd.DataFrame:
         """Boolean panel of bars holding a position."""
@@ -236,6 +311,21 @@ def run_backtest(
         "fill_mode": settings.fill_mode,
         "max_leverage": settings.max_leverage,
         "stop_out_level": settings.stop_out_level,
+        "stops_enabled": settings.stops.enabled,
+        "stop_mode": settings.stops.stop_mode,
+        "stop_distance": settings.stops.stop_distance,
+        "stop_distance_mode": settings.stops.stop_distance_mode,
+        "tp_distance": settings.stops.tp_distance,
+        "tp_distance_mode": settings.stops.tp_distance_mode,
+        "tp_priority": settings.stops.tp_priority,
+        "slippage_bps": settings.stops.slippage_bps,
+        "max_slippage_bps": settings.stops.max_slippage_bps,
+        "stop_events": len(result["stop_events"]),
+        "gap_through_exits": int(
+            (result["stop_events"]["breach_type"] == "gap").sum()
+        )
+        if not result["stop_events"].empty
+        else 0,
         "thresholds": {
             "entry_size": settings.thresholds.entry_size,
             "exit_size": settings.thresholds.exit_size,
@@ -256,5 +346,9 @@ def run_backtest(
         pnl=result["pnl"],
         equity_curve=equity,
         exposure=result["exposure"],
+        stop_events=result["stop_events"],
+        stop_levels=result["stop_levels"],
+        take_profit_levels=result["take_profit_levels"],
+        entry_prices=result["entry_prices"],
         metadata=metadata,
     )

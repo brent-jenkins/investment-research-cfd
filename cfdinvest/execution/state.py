@@ -57,6 +57,11 @@ ACTIONS: tuple[str, ...] = (
     "flip_long_to_short",
     "flip_short_to_long",
     "resize",
+    # Exits the position did not choose: a resting level was reached
+    # intrabar. Named separately so a trade log distinguishes "the model
+    # changed its mind" from "the market took me out".
+    "stop_loss",
+    "take_profit",
 )
 
 #: Direction label -> internal code, for reading a SignalFrame.

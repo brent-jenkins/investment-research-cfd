@@ -19,6 +19,15 @@ from cfdinvest.execution.fills import fill_prices, shift_for_execution, transact
 from cfdinvest.execution.financing import financing_cost, financing_rates, nights_between
 from cfdinvest.execution.frame import ExecutionConfig, ExecutionFrame, run_backtest
 from cfdinvest.execution.pnl import PNL_COMPONENTS, bar_pnl, drawdown, equity_curve
+from cfdinvest.execution.stops import (
+    StopConfig,
+    StopEvent,
+    TakeProfitEvent,
+    detect_breaches,
+    recommended_orders,
+    resolve_breach,
+    stop_levels,
+)
 from cfdinvest.execution.state import (
     ACTIONS,
     HysteresisThresholds,
@@ -33,6 +42,13 @@ __all__ = [
     "run_backtest",
     "run_execution",
     "HysteresisThresholds",
+    "StopConfig",
+    "StopEvent",
+    "TakeProfitEvent",
+    "stop_levels",
+    "detect_breaches",
+    "resolve_breach",
+    "recommended_orders",
     "transition_table",
     "classify_actions",
     "next_direction",

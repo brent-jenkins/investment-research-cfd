@@ -171,6 +171,239 @@ something a cap could have prevented. Use `notionals` for that view.
 
 ---
 
+## Intrabar stops and take-profits
+
+**Disabled by default** (`ExecutionConfig().stops.enabled is False`). Turning
+them on changes the result of every backtest — positions that previously rode
+through a spike now exit — so it is opt-in rather than a silent revision of
+numbers already recorded.
+
+```python
+from cfdinvest.execution import ExecutionConfig, StopConfig, run_backtest
+
+execution = run_backtest(
+    signal_frame, analysis_frame,
+    ExecutionConfig(stops=StopConfig(enabled=True, stop_distance=2.0)),
+)
+
+execution.stop_events      # one row per breach: level, fill, gap flag
+execution.stop_summary()   # counts and mean slippage per kind and type
+execution.working_orders() # the orders to place by hand, for the open book
+```
+
+Levels are placed from the **entry price and the ATR at entry**, and stay put
+until the position changes. They do not trail; see *Known limitations*.
+
+### Part 1 — The gap-through design note
+
+Close-to-close marking cannot see a stop. A bar that opened at 100, traded
+down to 94 and closed at 101 records a gain, and the drawdown that actually
+happened is invisible. Checking `low <= stop` fixes the detection. It does
+not fix the **fill**, and the fill is where the money is.
+
+A resting stop is not a price you are owed. It is an instruction to sell at
+market once a level trades. If the level trades *inside* the bar, the two are
+close enough to treat as equal. If the market **gapped past** the level
+between the previous close and this open, the level never traded at all, and
+the first price available was the open.
+
+```
+   level 95, bar opens at 88            level 95, bar trades 100 -> 94
+
+   prev close ●102                      prev close ●102
+                                                    ●100  open
+        95 ┄┄┄┄┄┄┄┄┄┄┄  <- never             95 ┄┄┄┄┄┼┄┄┄┄  <- traded
+                ●88  open     traded                 ●94
+
+   fill = 88, breach_type = "gap"       fill = 95, breach_type = "intrabar"
+```
+
+**A level is worth what you can get, not what you asked for.** Filling a
+gapped stop at its level books a price the market never offered — over a long
+backtest that is a systematic, one-directional overstatement of every losing
+trade, concentrated in exactly the bars that matter most.
+
+Four rules follow, and each is pinned by a test:
+
+1. **Opening beyond the level is a gap.** `open <= stop` for a long,
+   `open >= stop` for a short. Opening *exactly on* the level counts as a gap
+   too: the level was reached at the open, so the open is the fill.
+2. **A gap resolves the ordering of events for free.** If the bar opened past
+   a level, that level was crossed at the open — before anything else in the
+   bar could happen. `ambiguous` is `False` on a gapped bar by construction.
+3. **Only an intrabar bar can be ambiguous.** If both the stop and the target
+   trade within the same bar and neither gapped, daily OHLC does not record
+   which came first. That is genuinely unknowable, `ambiguous` is set to
+   `True`, and `tp_priority` decides — a policy, flagged as one.
+4. **If both levels gap through, the level nearer the open decides the
+   label.** Both were crossed before any trading, so the fill is the open
+   either way; the only open question is which order name goes in the log,
+   and the nearer level is the one price was still adjacent to when the bar
+   opened. This is only reachable with an inverted pair — a long whose stop
+   sits above its target — which is pathological, but the resolution has to
+   be defined rather than arbitrary.
+
+Slippage is applied **after** the fill price is chosen, and always adversely:
+a long sells lower, a short buys higher. A take-profit is a *limit* order, so
+it does not slip by default (`take_profit_slippage_bps` defaults to 0) — you
+either get your price or you do not get filled.
+
+**A stopped bar does not re-enter.** Re-entering at that bar's open would be
+entering at a price that occurred *before* the exit. `reenter_same_bar` exists
+for experiments and defaults to `False`.
+
+### Part 2 — Configuration spec
+
+```python
+StopConfig(
+    enabled=False,                  # opt-in: enabling moves every number
+
+    stop_mode="hybrid",             # "breach" | "gap" | "hybrid"
+    tp_priority=True,               # take-profit wins an ambiguous bar
+
+    stop_distance_mode="atr",       # "atr" | "fixed" | "percent"
+    stop_distance=2.0,              # 2 x ATR at entry
+    tp_distance_mode="atr",
+    tp_distance=4.0,                # None disables the target entirely
+
+    slippage_bps=0.0,               # applied after the fill price, adverse
+    take_profit_slippage_bps=0.0,   # a limit order does not slip
+    max_slippage_bps=50.0,          # cap, and it binds on slippage_bps
+
+    record_recommended_fill=True,   # always true for manual execution
+    reenter_same_bar=False,
+)
+```
+
+**`stop_mode`** — what price a breach fills at:
+
+| Mode | Fill | Reading |
+| --- | --- | --- |
+| `"breach"` | The level, always | **Optimistic.** Books fills the market never offered on gapped bars |
+| `"gap"` | The bar open, always | **Conservative.** Charges gap risk even on bars that traded through cleanly |
+| `"hybrid"` (default) | Level if it traded, open if it gapped | **Realistic.** What a resting order would actually have done |
+
+`breach_type` is reported honestly in all three: even in `"breach"` mode a
+gapped bar is logged as `"gap"`, so the event log tells you how much the mode
+is flattering the result.
+
+**`tp_priority`** — only consulted on an ambiguous bar (both levels traded
+intrabar, neither gapped). `True` takes the profit; `False` takes the loss.
+The pair brackets the truth rather than pretending to know it: run both, and
+the difference is the size of the unknowable. A test asserts the optimistic
+setting finishes richer on identical data, which is why it is flagged rather
+than assumed harmless.
+
+**Distance modes** — `atr` multiplies the ATR at entry, `fixed` is an absolute
+price distance, `percent` is a fraction of the entry price. `fixed` and
+`percent` work on a close-only lake; `atr` does not, and stops are disabled
+with a warning if the ATR panel is missing.
+
+**`max_slippage_bps`** caps `slippage_bps`, so a stress run cannot accidentally
+be given a slippage assumption larger than any real fill. It defaults to 50
+bps, which means `slippage_bps=100` silently becomes 50 — raise the cap
+deliberately when that is what you want.
+
+**`record_recommended_fill`** keeps `recommended_fill` populated on every
+event. Left `True`, because these trades are placed by hand.
+
+### Part 3 — Test matrix
+
+`tests/test_execution_stops.py`, 81 tests, no network. The eleven specified
+cases are named after their number:
+
+| # | Case | Expected |
+| --- | --- | --- |
+| 1 | Stop hit, no gap | `breach_type="intrabar"`, fill at the level |
+| 2 | Stop gapped through | `breach_type="gap"`, fill at the open |
+| 3 | Stop hit exactly at the open | `breach_type="gap"`, fill at the open (= the level) |
+| 4 | Stop breached intrabar, price recovers by the close | Still stopped — the case close-to-close marking misses |
+| 5 | Take-profit hit | `TakeProfitEvent`, fill at the target |
+| 6 | Both hit intrabar | `ambiguous=True`; `tp_priority` decides which |
+| 7 | Both gap through | `breach_type="gap"`, fill at the open, nearer level labels it |
+| 8 | Neither hit | `None` — no event, no trade |
+| 9 | Slippage applied | Fill adjusted adversely, capped by `max_slippage_bps` |
+| 10 | Short mirrors long | Every case above, with the inequalities reversed |
+| 11 | Manual execution | `recommended_fill` returned; nothing is sent anywhere |
+
+On top of those: every `stop_mode` and every distance mode end to end;
+vectorised detection across a mixed universe; determinism (same inputs, same
+events); flat positions and missing levels never breaching; and the
+integration properties that matter more than any single case —
+
+- the five P&L components still sum to `total`, and equity still equals
+  `initial + cumsum(total)`, with mid-bar exits in the path;
+- a stopped bar holds zero units and zero notional afterwards;
+- `stops.enabled=False` reproduces the previous behaviour exactly;
+- a tighter stop distance produces strictly more exits.
+
+The fill modes are compared **per event, not on the equity curve**. A
+different fill changes equity, which changes the next position size, which
+changes which bars breach at all — so `breach` mode can finish poorer than
+`gap` mode on the same data even though every individual fill was better.
+
+Two bugs these tests caught during the build, both now pinned:
+
+- **A level was never placed if the ATR had not warmed up at entry.** A
+  position opened on bar 3 of a 14-bar ATR window kept a `NaN` stop for its
+  entire life. Levels are now also placed on the first bar the ATR becomes
+  available.
+- **`stop_summary()` called `.abs()` on a `SeriesGroupBy`**, which has no such
+  method; taking the absolute value before grouping also stops a long exit
+  netting against a short one.
+
+### Part 4 — Risk-model note
+
+**Exposure at trade time.** A stop does not cap exposure, it removes it: the
+position goes to zero units on the breach bar, and the `exposure` series
+reflects that from the same bar. What a stop bounds is the *loss per
+position*, not the size of the book — the leverage cap is still what limits
+how much can be on at once, and the two are independent. A tighter stop with
+an unchanged `exposure_per_unit_size` means smaller losses per trade and more
+of them, not a smaller book.
+
+**Margin interaction.** Margin is still not modelled explicitly; the leverage
+cap stands in for it. That matters here because the two protections fail in
+opposite conditions. A stop is a per-position instruction that works when one
+instrument moves against you. A margin call is an account-level event that
+arrives when *everything* moves at once — precisely the correlated-breakdown
+regime, where stops across the book gap through together and the sum of their
+fills is worse than any single one suggested. Stops make a margin call less
+likely; they do not make the account immune to one, and this simulator will
+not show you the difference.
+
+**Gap-through risk is the residual, and it is not symmetric.** A stop bounds
+the loss at the level *only if the level trades*. Overnight gaps, weekend gaps
+and event risk are exactly the cases where it does not, and they are also
+where the largest losses live — so the bound fails hardest at the moment it
+matters most. `stop_summary()` reports gap exits as their own row for this
+reason: a strategy whose exits are mostly `gap` is one whose backtested stop
+distances are fiction, and `hybrid` mode is what stops that being invisible.
+The residual is unhedgeable within the position; the only controls are
+position size and not holding into known events.
+
+**Overnight financing.** Financing accrues per night on the position carried
+*into* a bar, so a position stopped out during bar *t* still pays for the
+night before it. That is correct — it was financed overnight and the exit
+happened afterwards — and it means tight stops do not reduce carry as much as
+the shorter average holding period suggests. The interaction runs the other
+way too: a wide stop on a financed long pays carry for the privilege of a
+larger loss, while on a short that *receives* carry (benchmark above markup)
+the same width is partly funded. That trade-off is not reduced to a single
+number anywhere; read `pnl["financing"]` alongside `stop_summary()`.
+
+**Multi-currency.** Every instrument is assumed denominated in the account
+currency, so a stop level is compared against a price in the same units the
+P&L is booked in. For an instrument quoted in another currency this is wrong
+in two places: the level is a foreign-currency price, and the loss it bounds
+is a foreign-currency loss, which converts at a rate that has itself moved —
+most likely in the same crisis that triggered the stop. **A stop bounds the
+local loss, not the account loss.** Converting properly needs an FX panel and
+a decision about whether the currency exposure is hedged, which is a layer of
+its own.
+
+---
+
 ## Why there is a loop
 
 Every layer upstream is vectorised over the whole panel because each bar's
@@ -221,13 +454,14 @@ ExecutionConfig(
 ## Testing
 
 ```bash
-pytest tests/test_execution_*.py     # 111 tests, no network
+pytest tests/test_execution_*.py     # 192 tests, no network
 ```
 
 | File | Covers |
 | --- | --- |
 | `test_execution_components.py` | State machine, fills, financing, P&L decomposition |
 | `test_execution_engine.py` | Accounting identities, lag, hysteresis, risk, costs |
+| `test_execution_stops.py` | Intrabar stops: the eleven-case matrix, fill modes, manual orders |
 
 The accounting tests matter most: if the components stop summing to the
 change in equity, every number the analytics layer eventually reports
@@ -247,11 +481,14 @@ Two bugs the tests caught during the build, both now pinned:
 
 ## Known limitations
 
-**No intrabar stop-losses.** The stop-out is checked once per bar on equity,
-not per position against its low. A position that traded through a stop and
-recovered by the close is not stopped out here. Modelling that properly
-needs the ATR-based stop distance from the signal layer and a decision about
-gap-throughs, which is a real piece of work rather than a parameter.
+**Stop levels do not trail.** A level is placed from the entry price and the
+ATR at entry and stays there until the position changes. A trailing stop
+would ratchet on every bar; that is a separate behaviour with its own
+parameters, not a mode of this one.
+
+**Sub-bar ordering is unknowable from OHLC.** When both levels trade within
+one bar and neither gapped, the bar does not record which came first. The
+`tp_priority` pair brackets it; nothing recovers it short of intraday data.
 
 **Margin is not modelled explicitly.** The leverage cap stands in for it. A
 real CFD account posts margin per position at instrument-specific rates and
