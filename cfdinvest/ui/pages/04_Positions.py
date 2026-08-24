@@ -15,7 +15,17 @@ import streamlit as st  # noqa: E402
 
 from cfdinvest.ui import components  # noqa: E402
 
-data = components.page_setup(st, "Positions", icon="📦")
+data = components.page_setup(
+    st,
+    "Positions",
+    icon="📦",
+    subtitle="What is open, what it is carrying, and what it would be at your account size.",
+)
+mode = data["mode"]
+balance = float(
+    st.session_state.get(components.BALANCE_KEY, components.DEFAULT_BALANCE)
+)
+factor = components.scale_factor(data, balance)
 execution = data["execution"]
 
 if components.render_absent(st, execution, "Execution output"):
@@ -74,7 +84,15 @@ last_price = pd.Series(dtype="float64")
 if isinstance(trades, pd.DataFrame) and "price" in trades.columns:
     last_price = trades.sort_values("timestamp").groupby("asset")["price"].last()
 
-st.subheader(f"{len(held)} open position(s)")
+st.subheader(
+    f"{len(held)} open position" + ("s" if len(held) != 1 else "")
+)
+components.render_note(
+    st,
+    f"Sizes and money figures are scaled to an account of "
+    f"{components.money(balance)} (×{factor:,.4g}). Prices and levels are "
+    "not scaled — a price is a price at any account size.",
+)
 
 rows = []
 for ticker, units in held.items():
@@ -114,29 +132,45 @@ for ticker, row in book.iterrows():
         with head:
             st.markdown(f"### {ticker}")
             st.markdown(
-                components.direction_badge(row["direction"]), unsafe_allow_html=True
+                components.direction_badge(row["direction"], mode),
+                unsafe_allow_html=True,
             )
-            st.caption(f"{row['units']:,.4f} units")
+            st.caption(
+                f"{row['units'] * factor:,.4f} units  \n"
+                f"simulated {row['units']:,.4f}"
+            )
         with body:
             top = st.columns(4)
-            top[0].metric("Entry", components.number(row["entry_price"], 4))
-            top[1].metric("Stop", components.number(row["stop_level"], 4))
-            top[2].metric("Take-profit", components.number(row["take_profit_level"], 4))
+            top[0].metric("Entry price", components.number(row["entry_price"], 4))
+            top[1].metric("Stop-loss level", components.number(row["stop_level"], 4))
+            top[2].metric(
+                "Take-profit level", components.number(row["take_profit_level"], 4)
+            )
             top[3].metric(
-                "Unrealised P&L",
-                components.money(row["unrealized_pnl"]),
+                "Unrealised profit & loss",
+                components.money(row["unrealized_pnl"] * factor),
                 delta_color="off",
             )
             bottom = st.columns(4)
-            bottom[0].metric("Exposure", components.money(row["notional"]))
-            bottom[1].metric("Leverage", components.number(row["leverage"], 2))
-            bottom[2].metric("Financing", components.money(row["financing_accrued"]))
-            bottom[3].metric("FX costs", components.money(row["fx_costs"]))
+            bottom[0].metric("Exposure", components.money(row["notional"] * factor))
+            bottom[1].metric(
+                "Leverage",
+                components.number(row["leverage"], 2),
+                help="A ratio, so it does not change with account size.",
+            )
+            bottom[2].metric(
+                "Overnight financing",
+                components.money(row["financing_accrued"] * factor),
+            )
+            bottom[3].metric(
+                "Currency costs", components.money(row["fx_costs"] * factor)
+            )
 
         if not np.isfinite(row["stop_level"]):
             st.caption(
-                "⚠ No stop level recorded for this position — either stops "
-                "are disabled, or the ATR had not warmed up when it opened."
+                "⚠ No stop-loss level recorded for this position — either "
+                "stop-losses are disabled, or the average true range had not "
+                "warmed up when it opened."
             )
 
 st.divider()
@@ -144,17 +178,24 @@ st.divider()
 # --------------------------------------------------------------------------- #
 # Book totals
 # --------------------------------------------------------------------------- #
-st.subheader("Book")
+st.subheader("Whole book")
 totals = st.columns(4)
-totals[0].metric("Gross exposure", components.money(book["notional"].sum()))
+totals[0].metric("Total exposure", components.money(book["notional"].sum() * factor))
 totals[1].metric(
     "Gross leverage",
     components.number(book["notional"].sum() / equity if equity else np.nan, 2),
 )
-totals[2].metric("Unrealised P&L", components.money(book["unrealized_pnl"].sum()))
-totals[3].metric("Equity", components.money(equity))
+totals[2].metric(
+    "Unrealised profit & loss",
+    components.money(book["unrealized_pnl"].sum() * factor),
+)
+totals[3].metric("Account value", components.money(balance))
 
-components.render_frame(st, book)
+scaled = book.copy()
+for name in ("units", "unrealized_pnl", "financing_accrued", "fx_costs", "notional"):
+    if name in scaled.columns:
+        scaled[name] = scaled[name] * factor
+components.render_frame(st, scaled)
 
 components.render_note(
     st,

@@ -1,4 +1,4 @@
-"""P&L — the equity curve and where the money went."""
+"""Profit & Loss — the equity curve and where the money went."""
 
 from __future__ import annotations
 
@@ -15,7 +15,17 @@ import streamlit as st  # noqa: E402
 
 from cfdinvest.ui import components  # noqa: E402
 
-data = components.page_setup(st, "P&L", icon="💷")
+data = components.page_setup(
+    st,
+    "Profit & Loss",
+    icon="💷",
+    subtitle="How the simulated account performed, and what it paid to do so. "
+    "Money figures are scaled to your account balance.",
+)
+balance = float(
+    st.session_state.get(components.BALANCE_KEY, components.DEFAULT_BALANCE)
+)
+factor = components.scale_factor(data, balance)
 execution = data["execution"]
 summary = data["summary"]
 
@@ -39,21 +49,28 @@ components.render_note(
 # --------------------------------------------------------------------------- #
 # Headline
 # --------------------------------------------------------------------------- #
+def scaled(key):
+    value = metrics.get(key)
+    return None if value is None else float(value) * factor
+
+
 cells = st.columns(5)
-cells[0].metric("Final equity", components.money(metrics.get("final_equity")))
-cells[1].metric("Total P&L", components.money(metrics.get("total_pnl")))
+cells[0].metric("Closing account value", components.money(scaled("final_equity")))
+cells[1].metric("Total profit & loss", components.money(scaled("total_pnl")))
 cells[2].metric("Return", components.percent(metrics.get("total_return")))
 cells[3].metric(
-    "Max drawdown", components.percent(metrics.get("max_drawdown_fraction"))
+    "Maximum drawdown", components.percent(metrics.get("max_drawdown_fraction"))
 )
-cells[4].metric("Trades", len(trades) if isinstance(trades, pd.DataFrame) else 0)
+cells[4].metric(
+    "Trades placed", len(trades) if isinstance(trades, pd.DataFrame) else 0
+)
 
 st.divider()
 
 # --------------------------------------------------------------------------- #
 # Equity curve
 # --------------------------------------------------------------------------- #
-st.subheader("Equity curve")
+st.subheader("Account value")
 
 if isinstance(equity_frame, pd.DataFrame) and not equity_frame.empty:
     curve = equity_frame.copy()
@@ -76,11 +93,11 @@ st.divider()
 st.subheader("Where the money went")
 
 TOTALS = (
-    ("Realised P&L", "total_pnl", "realized_pnl"),
-    ("Spread", "total_spread", "spread_cost"),
+    ("Realised profit & loss", "total_pnl", "realized_pnl"),
+    ("Spread paid", "total_spread", "spread_cost"),
     ("Slippage", "total_slippage", "slippage"),
-    ("Financing", "total_financing", "financing"),
-    ("FX", "total_fx", "fx_conversion_fee"),
+    ("Overnight financing", "total_financing", "financing"),
+    ("Currency conversion", "total_fx", "fx_conversion_fee"),
 )
 
 cost_cells = st.columns(len(TOTALS))
@@ -88,7 +105,9 @@ for position, (label, metric_key, trade_column) in enumerate(TOTALS):
     value = metrics.get(metric_key)
     if value is None and isinstance(trades, pd.DataFrame) and trade_column in trades:
         value = float(pd.to_numeric(trades[trade_column], errors="coerce").sum())
-    cost_cells[position].metric(label, components.money(value))
+    cost_cells[position].metric(
+        label, components.money(None if value is None else float(value) * factor)
+    )
 
 components.render_note(
     st,
@@ -111,7 +130,9 @@ if isinstance(trades, pd.DataFrame) and not trades.empty and "timestamp" in trad
     ]
     if available:
         by_day = daily.groupby("date")[available].sum()
-        tabs = st.tabs(["Daily costs", "Cumulative", "Daily summary", "Trade history"])
+        tabs = st.tabs(
+            ["Costs by day", "Cumulative costs", "Daily summary", "Trade history"]
+        )
 
         with tabs[0]:
             st.bar_chart(by_day, height=300)
@@ -135,7 +156,7 @@ st.divider()
 # --------------------------------------------------------------------------- #
 # Run metrics
 # --------------------------------------------------------------------------- #
-with st.expander("Every metric the run recorded", expanded=False):
+with st.expander("Every measure the run recorded", expanded=False):
     if metrics:
         flat = {
             key: value

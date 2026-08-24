@@ -40,8 +40,14 @@ cfdinvest/ui/
     components.py     page setup, the banner, formatting
     configview.py     flattening config, spotting overrides and unknown keys
     pages/
-        01_status.py … 07_config.py
+        01_Status.py            02_Signals.py       03_Execution.py
+        04_Positions.py         05_Profit_and_Loss.py
+        06_Logs.py              07_Configuration.py
 ```
+
+Page names come from the filenames, which is why they are capitalised and
+spelled out: Streamlit turns `05_Profit_and_Loss.py` into "Profit and Loss"
+in the sidebar. Renaming a page renames its nav entry.
 
 `sources.py`, `health.py`, `components.py` and `configview.py` are not in the
 original outline. They exist because seven pages otherwise duplicate the same
@@ -143,13 +149,14 @@ editing the checks.
 
 | Page | Shows |
 | --- | --- |
-| **Status** | Lake freshness, series and anomaly counts, vintage mode, coverage tables; scheduler last/next/duration/exit; market sessions and holidays; the last 10 error lines; every health check expanded |
+| **Overview** | Account value at your balance, system health, last and next run, and the open book |
+| **System status** | Lake freshness, series and anomaly counts, vintage mode, coverage tables; scheduler last/next/duration/exit; market sessions and holidays; the last 10 error lines; every health check expanded |
 | **Signals** | Per instrument: direction, size, confidence, reason, stop and take-profit distance (absolute and %), timestamp; full signal history |
 | **Execution** | Per instrument: recommended trade and fill, stop/TP levels, notional; spread, slippage, FX fee and rate; gap-through flags; per-bar leverage |
 | **Positions** | Per open position: entry, stop, TP, unrealised P&L, financing accrued, FX costs, exposure, leverage; book totals |
-| **P&L** | Equity curve and drawdown; realised P&L, spread, slippage, financing and FX totals; daily and cumulative cost charts; daily summary and trade history |
+| **Profit & Loss** | Account value and drawdown; realised P&L, spread, slippage, financing and FX totals; daily and cumulative cost charts; daily summary and trade history |
 | **Logs** | Errors, scheduler, pipeline, ingestion, execution, and the run-summary history; tail length and substring filter |
-| **Config** | Global config from disk, per-instrument settings, and the stop/FX/execution/scheduler/run configs, each with overrides, unset values and unrecognised keys called out |
+| **Configuration** | Global config from disk, per-instrument settings, and the stop/FX/execution/scheduler/run configs, each with overrides, unset values and unrecognised keys called out |
 
 **Credentials are redacted** on the Config page. Anything whose name looks
 like a key, token, secret or password renders as `<redacted, N chars>` — this
@@ -160,22 +167,68 @@ log between the server and the viewer.
 
 ## Theme
 
-The palette matches example.com and is defined once, in `theme.py`:
+**Two palettes, and the app follows whichever mode Streamlit is in.** The
+viewer's own light/dark toggle works; so does `theme.base` in the config.
 
-| Role | Colour |
-| --- | --- |
-| background | `#0B0C10` |
-| panel | `#1F2833` |
-| text | `#C5C6C7` |
-| accent | `#66FCF1` |
-| accent2 | `#45A29E` |
+| Role | Dark | Light |
+| --- | --- | --- |
+| background | `#0B0C10` | `#FFFFFF` |
+| panel | `#1F2833` | `#F3F5F6` |
+| text | `#C5C6C7` | `#1F2833` |
+| accent | `#66FCF1` | `#0E7C77` |
+| accent2 | `#45A29E` | `#45A29E` |
+
+The dark set is an existing site's palette verbatim. **The light set is not the
+same five colours on a white background**, and cannot be: `#66FCF1` on white
+is about 1.3:1 contrast, which is unreadable. Light mode keeps the hue and
+drops the luminance until it passes; a test computes the contrast ratio and
+fails below 3:1. The brand navy `#1F2833` is reused as the light-mode text
+colour, so the two modes are recognisably the same design rather than two.
+
+Status colours are deliberately **not** drawn from the brand palette in
+either mode. A warning that shares a hue with the accent is a warning nobody
+sees.
 
 Applied by injecting a stylesheet with `st.markdown`, because Streamlit's own
-theming covers the chrome but not the widgets this app leans on.
+theming covers the chrome but not the widgets this app leans on. Only the
+app's own furniture is styled — banners, notes, badges, metric cards, table
+chrome — so switching modes in the browser gives a coherent page rather than
+half of one.
 
-Status colours (`#FF4B4B` critical, `#F5A623` warning) are deliberately
-**not** drawn from those five. A warning that shares a hue with the accent is
-a warning nobody sees.
+---
+
+## Times
+
+**Everything is displayed in the operator's local zone, not UTC.** Storage
+and comparison stay in UTC — that never changes — but a person reading
+"22:30" wants to know whether that is tonight, and a UTC timestamp during
+British Summer Time is an hour off the clock on the wall.
+
+The zone is `Europe/London` unless `CFD_DISPLAY_TZ` says otherwise, and the
+abbreviation is always printed (`BST` in summer, `GMT` in winter) so an
+offset cannot be misread. Table timestamps are converted too, not just the
+headline figures.
+
+---
+
+## Account balance
+
+The simulator runs at its own starting equity — £100,000 by default. A real
+Trading 212 account rarely matches it, and **a recommendation in units is
+meaningless at the wrong account size**: 10 units sized for £100,000 is a
+catastrophic position in a £2,000 account.
+
+The sidebar carries an **Account balance** control. Every recommended size,
+exposure and money figure is scaled by `balance ÷ simulated starting equity`
+and labelled with the factor. Prices, levels, rates and leverage are *not*
+scaled — a price is a price at any account size, and leverage is a ratio.
+
+This is a **display transform and nothing more**. No config is written, no
+position is resized anywhere but on the screen, and the backtest is
+untouched. The default is £2,000, matching the virtual account this was built
+against; `CFD_ACCOUNT_BALANCE` changes it. When the run does not record its
+starting equity the factor is 1.0 — an unscaled number is at least honestly
+the simulator's, whereas a guessed factor is nobody's.
 
 ---
 
@@ -201,6 +254,9 @@ scripts from their own directory.
 | `CFD_LOG_FILE` | Enables file logging, and gives the Logs page something to read |
 | `CFD_LOG_LEVEL` | `DEBUG` for verbose pipeline logs |
 | `CFD_INTERVAL` | Bar interval, which selects the market manifest |
+| `CFD_ACCOUNT_BALANCE` | Default account balance for size scaling (£2,000) |
+| `CFD_DISPLAY_TZ` | Zone times render in (`Europe/London`) |
+| `CFD_CURRENCY_SYMBOL` | Symbol for money figures (`£`) |
 
 ```bash
 CFD_DATA_ROOT=/srv/cfdinvest/data \
@@ -255,15 +311,24 @@ serverAddress = "cfd.example.com"
 gatherUsageStats = false
 
 [theme]
-base = "dark"
+base = "dark"                  # the default mode; viewers can still switch
+
+[theme.dark]
 backgroundColor = "#0B0C10"
 secondaryBackgroundColor = "#1F2833"
 textColor = "#C5C6C7"
 primaryColor = "#66FCF1"
+
+[theme.light]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F5F6"
+textColor = "#1F2833"
+primaryColor = "#0E7C77"
 ```
 
-The `[theme]` block styles the chrome Streamlit draws before any page code
-runs, so the app does not flash white on load. `theme.py` still does the rest.
+The `[theme.*]` blocks style the chrome Streamlit draws before any page code
+runs, so the app does not flash the wrong colour on load. `theme.py` still
+does the rest, and follows whichever mode is active.
 
 ### 2. systemd unit
 
@@ -405,7 +470,7 @@ showing you an empty table.
 ## Testing
 
 ```bash
-pytest tests/test_ui.py -q      # 115 tests, no network
+pytest tests/test_ui.py -q      # 146 tests, no network
 ```
 
 The pages are executed by Streamlit's own `AppTest` runner — against a real

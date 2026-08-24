@@ -24,11 +24,14 @@ from cfdinvest.schedule.runner import RunConfig  # noqa: E402
 from cfdinvest.schedule.scheduler import SchedulerConfig  # noqa: E402
 from cfdinvest.ui import components, configview  # noqa: E402
 
-data = components.page_setup(st, "Config", icon="⚙")
+data = components.page_setup(
+    st,
+    "Configuration",
+    icon="⚙",
+    subtitle="Every setting, read-only. Nothing on this page is editable.",
+)
 config = data["config"]
 config_source = data["config_source"]
-
-st.markdown('<span class="cfd-readonly">read-only</span>', unsafe_allow_html=True)
 
 if config_source.failed:
     st.error(
@@ -58,11 +61,15 @@ def render(title: str, obj, default, *, payload=None, prefix: str = "") -> None:
     missing = frame[frame["missing"] == True]  # noqa: E712
     deprecated = frame[frame["deprecated"] == True]  # noqa: E712
 
-    cells = st.columns(4)
-    cells[0].metric("Settings", len(frame))
-    cells[1].metric("Overridden", len(overridden))
-    cells[2].metric("Unset", len(missing))
-    cells[3].metric("Deprecated", len(deprecated))
+    components.render_kv(
+        st,
+        {
+            "Settings": len(frame),
+            "Changed from default": len(overridden),
+            "Left unset": len(missing),
+            "Deprecated": len(deprecated),
+        },
+    )
 
     if not deprecated.empty:
         for _, row in deprecated.iterrows():
@@ -75,7 +82,7 @@ def render(title: str, obj, default, *, payload=None, prefix: str = "") -> None:
             "ignored by the loader:** " + ", ".join(f"`{key}`" for key in unknown)
         )
 
-    tabs = st.tabs(["Overridden", "All settings", "Unset"])
+    tabs = st.tabs(["Changed from default", "All settings", "Left unset"])
     with tabs[0]:
         if overridden.empty:
             components.render_note(st, "Everything is at its default.")
@@ -167,11 +174,11 @@ st.divider()
 # Layer configs
 # --------------------------------------------------------------------------- #
 sections = (
-    ("Stop / take-profit", StopConfig(), StopConfig()),
-    ("FX", FXConfig(), FXConfig()),
+    ("Stop-loss and take-profit", StopConfig(), StopConfig()),
+    ("Currency conversion", FXConfig(), FXConfig()),
     ("Execution", ExecutionConfig(), ExecutionConfig()),
     ("Scheduler", SchedulerConfig(), SchedulerConfig()),
-    ("Run", RunConfig(), RunConfig()),
+    ("Scheduled run", RunConfig(), RunConfig()),
 )
 
 for title, obj, default in sections:

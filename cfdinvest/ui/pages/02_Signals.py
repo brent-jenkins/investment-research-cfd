@@ -16,7 +16,14 @@ import streamlit as st  # noqa: E402
 from cfdinvest.schema import TICKER, TIMESTAMP  # noqa: E402
 from cfdinvest.ui import components  # noqa: E402
 
-data = components.page_setup(st, "Signals", icon="🧭")
+data = components.page_setup(
+    st,
+    "Signals",
+    icon="🧭",
+    subtitle="What the model wants to hold, and why. A signal is not yet "
+    "a position — see Execution for the trades it implies.",
+)
+mode = data["mode"]
 signals = data["signals"]
 summary = data["summary"]
 
@@ -98,7 +105,7 @@ else:
                     f"### {ticker}", unsafe_allow_html=False
                 )
                 st.markdown(
-                    components.direction_badge(row.get("direction")),
+                    components.direction_badge(row.get("direction"), mode),
                     unsafe_allow_html=True,
                 )
             with body:
@@ -108,20 +115,20 @@ else:
                     "Confidence", components.number(row.get("confidence"), 3)
                 )
                 cells[2].metric(
-                    "Stop distance",
+                    "Stop-loss distance",
                     components.number(row.get("stop_distance"), 4),
                     delta=components.percent(row.get("stop_distance_pct")),
                     delta_color="off",
                 )
                 cells[3].metric(
-                    "TP distance",
+                    "Take-profit distance",
                     components.number(row.get("tp_distance"), 4),
                     delta=components.percent(row.get("tp_distance_pct")),
                     delta_color="off",
                 )
             st.caption(
                 f"**Reason:** {row.get('reason', components.DASH)}  ·  "
-                f"{components.moment(row.get(TIMESTAMP))}"
+                f"{components.short_moment(row.get(TIMESTAMP))}"
             )
 
 st.divider()

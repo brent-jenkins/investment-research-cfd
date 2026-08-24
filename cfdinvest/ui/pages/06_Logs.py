@@ -14,7 +14,12 @@ import streamlit as st  # noqa: E402
 
 from cfdinvest.ui import components, sources  # noqa: E402
 
-data = components.page_setup(st, "Logs", icon="📜")
+data = components.page_setup(
+    st,
+    "Logs",
+    icon="📜",
+    subtitle="Tailed from disk, never streamed from a running process.",
+)
 config = data["config"]
 
 files = sources.load_log_files(config)
@@ -47,7 +52,8 @@ def show(source, label: str) -> None:
 
 
 tabs = st.tabs(
-    ["Errors", "Scheduler", "Pipeline", "Ingestion", "Execution", "Run summaries"]
+    ["Errors", "Scheduler", "Application", "Data ingestion", "Execution",
+     "Run history"]
 )
 
 with tabs[0]:

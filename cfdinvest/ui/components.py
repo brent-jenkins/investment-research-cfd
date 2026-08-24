@@ -1,9 +1,16 @@
-"""Shared rendering: page setup, the banner, and formatting.
+"""Shared rendering: page setup, the banner, formatting and table styling.
 
 Seven pages need the same theme, the same banner and the same "this is not
 available, and here is why" panel. Putting that here keeps the pages short
 enough to read, and means the read-only contract is stated in one place
 rather than seven.
+
+**Times are shown in the operator's local zone, not UTC.** Everything is
+stored and compared in UTC — that part never changes — but a person reading
+"22:30" wants to know whether that is tonight, and a UTC timestamp during
+British Summer Time is an hour off the clock on the wall. The display zone is
+``Europe/London`` unless ``CFD_DISPLAY_TZ`` says otherwise, and the zone
+abbreviation is always printed so it cannot be misread.
 
 Formatting helpers are pure and are tested directly; the ``render_*``
 functions take the ``streamlit`` module as their first argument so that
@@ -13,50 +20,66 @@ importing this module never requires a Streamlit runtime.
 from __future__ import annotations
 
 import html
-from typing import Any, Iterable
+import os
+from typing import Any, Mapping
+from zoneinfo import ZoneInfo
 
-import numpy as np
 import pandas as pd
 
 from cfdinvest.ui import theme
-# Imported as a module, not by name: the checks are looked up at call
-# time so a caller -- or a test -- can substitute them.
+# Imported as a module, not by name: the checks are looked up at call time so
+# a caller -- or a test -- can substitute them.
 from cfdinvest.ui import health as health_module
-from cfdinvest.ui.health import BANNER_TEXT, HealthReport, HealthThresholds
+from cfdinvest.ui.health import HealthReport, HealthThresholds
 from cfdinvest.ui.sources import Source, utcnow
 
 __all__ = [
-    "PAGES",
     "DASH",
+    "DISPLAY_TZ",
+    "CURRENCY",
+    "DEFAULT_BALANCE",
     "bootstrap",
+    "display_zone",
+    "localise",
     "read_everything",
     "page_setup",
     "render_banner",
     "render_absent",
     "render_note",
     "render_frame",
+    "render_kv",
+    "render_section",
+    "for_display",
+    "column_config_for",
     "money",
     "number",
     "percent",
     "moment",
+    "short_moment",
+    "day",
     "age",
+    "duration",
     "direction_badge",
+    "account_balance",
+    "scale_factor",
 ]
 
 #: Shown wherever a value is genuinely absent. One character, used
 #: consistently, so an empty cell is never mistaken for a zero.
 DASH = "—"
 
-#: The page list, for the landing page's index.
-PAGES: tuple[tuple[str, str], ...] = (
-    ("Status", "Lake, scheduler, market and every health check"),
-    ("Signals", "What the model wants, per instrument"),
-    ("Execution", "Recommended trades, fills, levels and costs"),
-    ("Positions", "What is open, and what it is carrying"),
-    ("P&L", "Equity curve and the cost decomposition"),
-    ("Logs", "Scheduler, pipeline, ingestion, execution and errors"),
-    ("Config", "Every setting the run used, read-only"),
-)
+#: Where the operator is. Times render here; nothing is *stored* in it.
+DISPLAY_TZ: str = os.environ.get("CFD_DISPLAY_TZ", "Europe/London")
+
+#: Account currency symbol, for display only.
+CURRENCY: str = os.environ.get("CFD_CURRENCY_SYMBOL", "£")
+
+#: Session key holding the operator's real account balance.
+BALANCE_KEY = "cfd_account_balance"
+
+#: Default account balance when the operator has not set one this session.
+#: The virtual Trading 212 account this was built against started at £2,000.
+DEFAULT_BALANCE: float = float(os.environ.get("CFD_ACCOUNT_BALANCE", "2000"))
 
 
 def bootstrap() -> None:
@@ -76,6 +99,34 @@ def bootstrap() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Time
+# --------------------------------------------------------------------------- #
+def display_zone() -> ZoneInfo:
+    """The zone times render in, falling back to UTC if the name is unknown."""
+    try:
+        return ZoneInfo(DISPLAY_TZ)
+    except Exception:  # noqa: BLE001 - a bad zone name must not stop the page
+        return ZoneInfo("UTC")
+
+
+def localise(value: Any) -> pd.Timestamp | None:
+    """Parse anything into a timestamp in the display zone.
+
+    Naive input is assumed to be UTC, because everything this app reads was
+    written in UTC.
+    """
+    if _missing(value):
+        return None
+    try:
+        stamp = pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return None
+    if stamp.tz is None:
+        stamp = stamp.tz_localize("UTC")
+    return stamp.tz_convert(display_zone())
+
+
+# --------------------------------------------------------------------------- #
 # Reading
 # --------------------------------------------------------------------------- #
 def read_everything(
@@ -83,8 +134,8 @@ def read_everything(
 ) -> dict[str, Any]:
     """Read every source once, and run the health checks over them.
 
-    Cached briefly so that clicking a widget does not re-read the lake.
-    Every page calls this; the cache is what makes that cheap. The sidebar's
+    Cached briefly so that clicking a widget does not re-read the lake. Every
+    page calls this; the cache is what makes that cheap. The sidebar's
     refresh button clears it.
     """
     from cfdinvest.ui import sources
@@ -95,27 +146,18 @@ def read_everything(
         config = config_source.value
         universe = list(getattr(config.market, "tickers", ()) or ())
 
-        lake = sources.load_lake_metadata(config, now=now)
-        summary = sources.load_last_pipeline_summary(config)
-        scheduler_status = sources.load_scheduler_status(config, universe, now=now)
-        execution = sources.load_execution_frame(config)
-        signals = sources.load_signal_frame(config)
-        errors = sources.load_error_log(config)
-        disk = sources.disk_usage(config.paths.data_root)
-        market = sources.market_status(universe, now=now)
-
         return {
             "config_source": config_source,
             "config": config,
             "universe": universe,
-            "lake": lake,
-            "summary": summary,
-            "scheduler": scheduler_status,
-            "execution": execution,
-            "signals": signals,
-            "errors": errors,
-            "disk": disk,
-            "market": market,
+            "lake": sources.load_lake_metadata(config, now=now),
+            "summary": sources.load_last_pipeline_summary(config),
+            "scheduler": sources.load_scheduler_status(config, universe, now=now),
+            "execution": sources.load_execution_frame(config),
+            "signals": sources.load_signal_frame(config),
+            "errors": sources.load_error_log(config),
+            "disk": sources.disk_usage(config.paths.data_root),
+            "market": sources.market_status(universe, now=now),
         }
 
     stamp = st.session_state.get("cfd_refresh_stamp", "initial")
@@ -142,7 +184,7 @@ def read_everything(
 # --------------------------------------------------------------------------- #
 # Page frame
 # --------------------------------------------------------------------------- #
-def page_setup(st, title: str, *, icon: str = "📈") -> dict[str, Any]:
+def page_setup(st, title: str, *, icon: str = "📈", subtitle: str = "") -> dict:
     """Configure the page, apply the theme, read the data, draw the banner.
 
     Returns the bundle from :func:`read_everything` so the page can get on
@@ -150,51 +192,73 @@ def page_setup(st, title: str, *, icon: str = "📈") -> dict[str, Any]:
     """
     try:
         st.set_page_config(
-            page_title=f"cfdinvest — {title}", page_icon=icon, layout="wide"
+            page_title=f"{title} · cfdinvest", page_icon=icon, layout="wide"
         )
     except Exception:  # noqa: BLE001 - already configured by another page
         pass
 
-    theme.apply(st)
-    data = read_everything(st)
+    mode = theme.apply(st)
+    st.session_state["cfd_mode"] = mode
 
-    st.markdown(
-        f'<span class="cfd-readonly">read-only</span>', unsafe_allow_html=True
+    data = read_everything(st)
+    data["mode"] = mode
+
+    heading, badge = st.columns([5, 1], vertical_alignment="bottom")
+    heading.title(title)
+    badge.markdown(
+        '<div style="text-align:right;padding-bottom:14px;">'
+        '<span class="cfd-readonly">read-only</span></div>',
+        unsafe_allow_html=True,
     )
-    st.title(title)
-    render_banner(st, data["health"])
+    if subtitle:
+        render_note(st, subtitle)
+
+    render_banner(st, data["health"], mode)
     _render_sidebar(st, data)
     return data
 
 
-def _render_sidebar(st, data: dict[str, Any]) -> None:
-    """Freshness, health and the refresh control."""
+def _render_sidebar(st, data: dict) -> None:
+    """Freshness, health, the account balance and the refresh control."""
     health: HealthReport = data["health"]
+    scheduler = data["scheduler"].value or {}
+
     with st.sidebar:
-        st.markdown("### cfdinvest")
-        st.caption("Read-only dashboard. This app never places an order.")
-
-        state = "🔴 critical" if health.show_banner else (
-            "🟠 warnings" if health.triggered else "🟢 healthy"
+        state = (
+            "🔴 Critical"
+            if health.show_banner
+            else ("🟠 Warnings" if health.triggered else "🟢 Healthy")
         )
-        st.markdown(f"**System:** {state}")
-        st.caption(f"Checked {moment(data['now'])}")
+        render_kv(
+            st,
+            {
+                "System": state,
+                "Last completed run": age(scheduler.get("last_run"), data["now"]),
+                "Next run due": short_moment(scheduler.get("next_run")),
+                "Checked": short_moment(data["now"]),
+            },
+        )
 
-        summary = data["summary"]
-        if summary.ok:
-            st.caption(f"Run `{summary.value.get('run_id', '?')}`")
+        st.divider()
+        account_balance(st, data)
 
-        if st.button("Refresh", width="stretch"):
+        st.divider()
+        if st.button("Refresh data", width="stretch"):
             st.cache_data.clear()
             st.session_state["cfd_refresh_stamp"] = str(utcnow())
             st.rerun()
+        st.caption(
+            "Read-only. This dashboard never places an order. "
+            f"Times shown in {display_zone().key}."
+        )
 
 
-def render_banner(st, health: HealthReport) -> None:
+def render_banner(st, health: HealthReport, mode: str = "dark") -> None:
     """The persistent critical banner, or a quiet all-clear."""
     if health.show_banner:
         items = "".join(
-            f"<li>{html.escape(check.title)} — {html.escape(check.detail)}</li>"
+            f"<li><strong>{html.escape(check.title)}</strong> — "
+            f"{html.escape(check.detail)}</li>"
             for check in health.critical
         )
         st.markdown(
@@ -239,20 +303,254 @@ def render_note(st, text: str) -> None:
     st.markdown(f'<div class="cfd-note">{text}</div>', unsafe_allow_html=True)
 
 
-def render_frame(st, frame: pd.DataFrame, *, height: int | None = None) -> None:
-    """A dataframe, or a note that there is nothing in it.
+def render_section(st, title: str, note: str = "") -> None:
+    """A heading with an optional one-line explanation under it."""
+    st.subheader(title)
+    if note:
+        render_note(st, note)
 
-    ``height`` is omitted rather than passed as ``None``: Streamlit rejects
-    a null height, and every caller that does not care about height would
-    otherwise have to say so.
+
+def render_kv(st, rows: Mapping[str, Any]) -> None:
+    """Compact key/value rows, for facts that do not deserve a metric card.
+
+    Seven metric cards in a row is a wall; seven of these is a list you can
+    read down. Used where the label matters more than the number's size.
+    """
+    body = "".join(
+        f'<div class="cfd-kv"><span class="k">{html.escape(str(key))}</span>'
+        f'<span class="v">{html.escape(str(value))}</span></div>'
+        for key, value in rows.items()
+    )
+    st.markdown(body, unsafe_allow_html=True)
+
+
+# --------------------------------------------------------------------------- #
+# Tables
+# --------------------------------------------------------------------------- #
+#: Column-name fragments and the format each implies.
+_FRACTION = ("fraction", "_pct", "return", "drawdown", "share")
+_MONEY = ("pnl", "cost", "equity", "notional", "financing", "spread", "slippage",
+          "fee", "value", "exposure", "balance")
+_PRICE = ("price", "level", "fill", "close", "open", "high", "low", "distance")
+_RATE = ("rate", "leverage", "confidence", "size", "units")
+
+
+def _format_for(name: str) -> str | None:
+    """Which display format a column name implies."""
+    lowered = str(name).lower()
+    if any(token in lowered for token in _FRACTION):
+        return "percent"
+    if any(token in lowered for token in _MONEY):
+        return "money"
+    if any(token in lowered for token in _PRICE):
+        return "price"
+    if any(token in lowered for token in _RATE):
+        return "rate"
+    return None
+
+
+def column_config_for(st, frame: pd.DataFrame) -> dict:
+    """Per-column display rules inferred from the column names.
+
+    Money to two decimals with a currency symbol, prices and rates to four,
+    fractions as percentages, timestamps in the display zone, and every
+    heading spelled out. Guessing from names is crude, but the alternative is
+    every page hand-writing the same twenty rules.
+    """
+    config: dict[str, Any] = {}
+    for name in frame.columns:
+        series = frame[name]
+        label = _label(name)
+
+        if pd.api.types.is_datetime64_any_dtype(series):
+            config[name] = st.column_config.DatetimeColumn(
+                label, format="D MMM YYYY, HH:mm"
+            )
+            continue
+        if pd.api.types.is_bool_dtype(series):
+            config[name] = st.column_config.CheckboxColumn(label)
+            continue
+        if not pd.api.types.is_numeric_dtype(series):
+            config[name] = st.column_config.Column(label)
+            continue
+
+        kind = _format_for(name)
+        if kind == "money":
+            config[name] = st.column_config.NumberColumn(
+                label, format=f"{CURRENCY}%.2f"
+            )
+        elif kind in ("price", "rate"):
+            config[name] = st.column_config.NumberColumn(label, format="%.4f")
+        elif kind == "percent":
+            config[name] = st.column_config.NumberColumn(label, format="percent")
+        else:
+            config[name] = st.column_config.NumberColumn(label)
+    return config
+
+
+#: Column names whose expansion is not simply "underscores to spaces".
+#: Abbreviations get spelled out here rather than in seven pages.
+_LABELS: dict[str, str] = {
+    "asset": "Instrument",
+    "ticker": "Instrument",
+    "pnl": "Profit & loss",
+    "realized_pnl": "Realised profit & loss",
+    "unrealized_pnl": "Unrealised profit & loss",
+    "total_pnl": "Total profit & loss",
+    "fx_rate": "Exchange rate",
+    "fx_spread": "Currency spread",
+    "fx_slippage": "Currency slippage",
+    "fx_conversion_fee": "Currency conversion fee",
+    "fx_adjusted_fill_price": "All-in fill price",
+    "fx_cost": "Currency cost",
+    "fx_costs": "Currency costs",
+    "take_profit_level": "Take-profit level",
+    "take_profit_fill_price": "Take-profit fill",
+    "take_profit_order": "Take-profit order",
+    "stop_level": "Stop-loss level",
+    "stop_fill_price": "Stop-loss fill",
+    "stop_order": "Stop-loss order",
+    "tp_distance": "Take-profit distance",
+    "tp_distance_pct": "Take-profit distance",
+    "stop_distance": "Stop-loss distance",
+    "stop_distance_pct": "Stop-loss distance",
+    "gap_through": "Gapped through",
+    "breach_type": "How it was reached",
+    "traded_units": "Units traded",
+    "spread_cost": "Spread cost",
+    "run_id": "Run",
+    "duration_seconds": "Duration (seconds)",
+    "is_open": "Open now",
+    "is_holiday": "Holiday",
+    "next_open": "Next open",
+    "next_close": "Next close",
+    "asset_class": "Asset class",
+    "vintage_mode": "Vintage mode",
+    "max_drawdown_fraction": "Maximum drawdown",
+    "last_price": "Latest price",
+    "entry_price": "Entry price",
+    "financing_accrued": "Financing accrued",
+    "scaled_units": "Units for your account",
+    "scaled_notional": "Exposure for your account",
+}
+
+
+def _label(name: Any) -> str:
+    """A human column heading. Abbreviations are spelled out."""
+    key = str(name)
+    if key in _LABELS:
+        return _LABELS[key]
+    return key.replace("_", " ").strip().capitalize()
+
+
+def for_display(frame: pd.DataFrame) -> pd.DataFrame:
+    """A copy with every timestamp moved into the display zone."""
+    if frame is None or frame.empty:
+        return frame
+
+    shown = frame.copy()
+    for name in shown.columns:
+        if pd.api.types.is_datetime64_any_dtype(shown[name]):
+            values = shown[name]
+            if getattr(values.dtype, "tz", None) is None:
+                values = values.dt.tz_localize("UTC")
+            shown[name] = values.dt.tz_convert(display_zone())
+
+    if isinstance(shown.index, pd.DatetimeIndex):
+        index = shown.index
+        if index.tz is None:
+            index = index.tz_localize("UTC")
+        shown.index = index.tz_convert(display_zone())
+    return shown
+
+
+def render_frame(
+    st,
+    frame: pd.DataFrame,
+    *,
+    height: int | None = None,
+    empty: str = "Nothing to show.",
+) -> None:
+    """A formatted dataframe, or a note that there is nothing in it.
+
+    ``height`` is omitted rather than passed as ``None``: Streamlit rejects a
+    null height, and every caller that does not care would otherwise have to
+    say so.
     """
     if frame is None or frame.empty:
-        render_note(st, "Nothing to show.")
+        render_note(st, empty)
         return
-    if height is None:
-        st.dataframe(frame, width="stretch")
+
+    shown = for_display(frame)
+    options: dict[str, Any] = {"width": "stretch"}
+    if height is not None:
+        options["height"] = height
+    try:
+        options["column_config"] = column_config_for(st, shown)
+    except Exception:  # noqa: BLE001 - formatting must never stop the table
+        pass
+    st.dataframe(shown, **options)
+
+
+# --------------------------------------------------------------------------- #
+# The operator's real account
+# --------------------------------------------------------------------------- #
+def account_balance(st, data: dict) -> float:
+    """The sidebar control for the real account's balance.
+
+    **This changes nothing about the backtest.** The simulator ran at its own
+    starting equity; a real account rarely matches it, and a recommendation
+    in units is meaningless at the wrong account size. This scales the
+    *displayed* recommendation to the account actually being traded — a
+    display transform and nothing more. No config is written and no position
+    is resized anywhere but on the screen.
+    """
+    current = float(st.session_state.get(BALANCE_KEY, DEFAULT_BALANCE))
+    balance = st.number_input(
+        f"Account balance ({CURRENCY})",
+        min_value=0.0,
+        value=current,
+        step=100.0,
+        key=BALANCE_KEY,
+        help=(
+            "Your real Trading 212 balance. Recommended position sizes are "
+            "scaled to it. Nothing is written anywhere — set "
+            "CFD_ACCOUNT_BALANCE to change the default."
+        ),
+    )
+
+    simulated = simulated_equity(data)
+    if simulated:
+        st.caption(
+            f"Simulated at {money(simulated)} — sizes scaled by "
+            f"×{scale_factor(data, balance):,.4g}"
+        )
     else:
-        st.dataframe(frame, width="stretch", height=height)
+        st.caption("No completed run, so nothing to scale yet.")
+    return float(balance)
+
+
+def simulated_equity(data: dict) -> float | None:
+    """What the backtest started with, if the run recorded it."""
+    summary = data.get("summary")
+    metrics = (getattr(summary, "value", None) or {}).get("metrics") or {}
+    try:
+        equity = float(metrics.get("initial_equity"))
+    except (TypeError, ValueError):
+        return None
+    return equity if equity > 0 else None
+
+
+def scale_factor(data: dict, balance: float | None = None) -> float:
+    """How much to shrink a simulated position to fit the real account.
+
+    ``1.0`` when the run's starting equity is unknown — an unscaled number is
+    at least honestly the simulator's, whereas a guessed factor is nobody's.
+    """
+    simulated = simulated_equity(data)
+    if not simulated or balance is None or balance <= 0:
+        return 1.0
+    return float(balance) / simulated
 
 
 # --------------------------------------------------------------------------- #
@@ -277,7 +575,7 @@ def number(value: Any, places: int = 2) -> str:
         return str(value)
 
 
-def money(value: Any, currency: str = "", places: int = 2) -> str:
+def money(value: Any, currency: str | None = None, places: int = 2) -> str:
     """A signed amount, with the sign kept in front of the symbol."""
     if _missing(value):
         return DASH
@@ -285,8 +583,9 @@ def money(value: Any, currency: str = "", places: int = 2) -> str:
         amount = float(value)
     except (TypeError, ValueError):
         return str(value)
+    symbol = CURRENCY if currency is None else currency
     sign = "-" if amount < 0 else ""
-    return f"{sign}{currency}{abs(amount):,.{places}f}"
+    return f"{sign}{symbol}{abs(amount):,.{places}f}"
 
 
 def percent(value: Any, places: int = 2) -> str:
@@ -300,16 +599,42 @@ def percent(value: Any, places: int = 2) -> str:
 
 
 def moment(value: Any) -> str:
-    """A timestamp in UTC, to the minute."""
-    if _missing(value):
+    """A timestamp in the display zone: ``24 Aug 2026, 15:30 BST``."""
+    stamp = localise(value)
+    if stamp is None:
+        return DASH if _missing(value) else str(value)
+    return f"{stamp.day} {stamp:%b %Y, %H:%M %Z}"
+
+
+def short_moment(value: Any) -> str:
+    """A timestamp without the year: ``Mon 24 Aug, 15:30 BST``."""
+    stamp = localise(value)
+    if stamp is None:
+        return DASH
+    return f"{stamp:%a} {stamp.day} {stamp:%b, %H:%M %Z}"
+
+
+def day(value: Any) -> str:
+    """A date alone: ``Mon 24 Aug 2026``."""
+    stamp = localise(value)
+    if stamp is None:
+        return DASH
+    return f"{stamp:%a} {stamp.day} {stamp:%b %Y}"
+
+
+def duration(seconds: Any) -> str:
+    """A run length in the largest sensible unit."""
+    if _missing(seconds):
         return DASH
     try:
-        stamp = pd.Timestamp(value)
+        value = float(seconds)
     except (TypeError, ValueError):
-        return str(value)
-    if stamp.tz is None:
-        stamp = stamp.tz_localize("UTC")
-    return f"{stamp.tz_convert('UTC'):%Y-%m-%d %H:%M} UTC"
+        return str(seconds)
+    if value < 90:
+        return f"{value:.1f} seconds"
+    if value < 5400:
+        return f"{value / 60:.1f} minutes"
+    return f"{value / 3600:.1f} hours"
 
 
 def age(value: Any, now: pd.Timestamp | None = None) -> str:
@@ -323,20 +648,23 @@ def age(value: Any, now: pd.Timestamp | None = None) -> str:
     if stamp.tz is None:
         stamp = stamp.tz_localize("UTC")
 
-    delta = utcnow(now) - stamp.tz_convert("UTC")
-    seconds = delta.total_seconds()
+    seconds = (utcnow(now) - stamp.tz_convert("UTC")).total_seconds()
     if seconds < 0:
-        return f"in {age(utcnow(now) - delta, utcnow(now))}".replace(" ago", "")
+        return f"in {_span(-seconds)}"
+    return f"{_span(seconds)} ago"
+
+
+def _span(seconds: float) -> str:
     if seconds < 90:
-        return f"{seconds:.0f} s ago"
+        return f"{seconds:.0f} seconds"
     if seconds < 5400:
-        return f"{seconds / 60:.0f} min ago"
+        return f"{seconds / 60:.0f} minutes"
     if seconds < 172_800:
-        return f"{seconds / 3600:.1f} h ago"
-    return f"{seconds / 86_400:.1f} days ago"
+        return f"{seconds / 3600:.1f} hours"
+    return f"{seconds / 86_400:.1f} days"
 
 
-def direction_badge(direction: Any) -> str:
-    """A coloured dot and label for long/short/flat."""
+def direction_badge(direction: Any, mode: str = "dark") -> str:
+    """A coloured dot and label for long, short or flat."""
     label = str(direction or "flat").lower()
-    return theme.swatch(theme.colour_for(label), label)
+    return theme.swatch(theme.colour_for(label, mode), label.capitalize(), mode)

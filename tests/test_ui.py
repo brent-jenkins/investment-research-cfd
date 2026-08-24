@@ -29,41 +29,112 @@ UI = Path(__file__).resolve().parents[1] / "cfdinvest" / "ui"
 # --------------------------------------------------------------------------- #
 # Theme
 # --------------------------------------------------------------------------- #
-def test_the_palette_is_the_specified_one():
-    assert theme.PALETTE == {
-        "background": "#0B0C10",
-        "panel": "#1F2833",
-        "text": "#C5C6C7",
-        "accent": "#66FCF1",
-        "accent2": "#45A29E",
-    }
+def test_the_dark_palette_is_the_specified_one():
+    dark = theme.palette_for("dark")
+    assert dark["background"] == "#0B0C10"
+    assert dark["panel"] == "#1F2833"
+    assert dark["text"] == "#C5C6C7"
+    assert dark["accent"] == "#66FCF1"
+    assert dark["accent2"] == "#45A29E"
 
 
-def test_the_stylesheet_carries_every_palette_colour():
-    css = theme.stylesheet()
-    for colour in theme.PALETTE.values():
-        assert colour in css
+def test_both_modes_exist_and_carry_the_same_roles():
+    assert set(theme.PALETTES) == {"light", "dark"}
+    assert set(theme.PALETTES["light"]) == set(theme.PALETTES["dark"])
 
 
-def test_the_stylesheet_is_a_closed_style_block():
-    css = theme.stylesheet()
+def test_light_mode_inverts_background_and_text():
+    """Not the same five colours on white — the roles genuinely swap."""
+    light, dark = theme.palette_for("light"), theme.palette_for("dark")
+    assert light["background"] != dark["background"]
+    assert light["text"] != dark["text"]
+
+
+def test_the_light_accent_is_readable_on_white():
+    """#66FCF1 on white is about 1.3:1. It cannot be the light accent."""
+
+    def luminance(hex_colour: str) -> float:
+        r, g, b = (int(hex_colour[i : i + 2], 16) / 255 for i in (1, 3, 5))
+        channels = [
+            c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+            for c in (r, g, b)
+        ]
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+    accent = theme.palette_for("light")["accent"]
+    contrast = (1.0 + 0.05) / (luminance(accent) + 0.05)
+    assert contrast >= 3.0, f"{accent} is only {contrast:.1f}:1 on white"
+
+
+@pytest.mark.parametrize("mode", theme.MODES)
+def test_the_stylesheet_carries_every_palette_colour(mode):
+    css = theme.stylesheet(mode)
+    for role, colour in theme.palette_for(mode).items():
+        assert colour in css, role
+
+
+@pytest.mark.parametrize("mode", theme.MODES)
+def test_the_stylesheet_is_a_closed_style_block(mode):
+    css = theme.stylesheet(mode)
     assert css.strip().startswith("<style>")
     assert css.strip().endswith("</style>")
     assert css.count("{") == css.count("}")
 
 
-def test_the_stylesheet_is_deterministic():
-    assert theme.stylesheet() == theme.stylesheet()
+@pytest.mark.parametrize("mode", theme.MODES)
+def test_the_stylesheet_is_deterministic(mode):
+    assert theme.stylesheet(mode) == theme.stylesheet(mode)
 
 
-def test_warning_colours_are_not_brand_colours():
+def test_the_two_stylesheets_differ():
+    assert theme.stylesheet("light") != theme.stylesheet("dark")
+
+
+@pytest.mark.parametrize("mode", theme.MODES)
+def test_warning_colours_are_not_brand_colours(mode):
     """A warning that shares a hue with the accent is one nobody sees."""
-    assert theme.SEMANTIC["critical"] not in theme.PALETTE.values()
-    assert theme.SEMANTIC["warning"] not in theme.PALETTE.values()
+    brand = set(theme.palette_for(mode).values())
+    assert theme.colour_for("critical", mode) not in brand
+    assert theme.colour_for("warning", mode) not in brand
 
 
 def test_an_unknown_state_renders_muted_rather_than_raising():
-    assert theme.colour_for("something new") == theme.SEMANTIC["muted"]
+    assert theme.colour_for("something new", "dark") == (
+        theme.SEMANTIC_BY_MODE["dark"]["muted"]
+    )
+
+
+def test_an_unknown_mode_falls_back_to_light():
+    assert theme.palette_for("chartreuse") == theme.PALETTES["light"]
+
+
+def test_the_mode_falls_back_when_streamlit_cannot_say():
+    """Outside a browser both probes are None; guessing dark blinds people."""
+    assert theme.active_mode(None) == "light"
+
+
+def test_the_mode_reads_the_runtime_first():
+    class Probe:
+        context = type("C", (), {"theme": type("T", (), {"type": "dark"})()})()
+
+        @staticmethod
+        def get_option(name):
+            return "light"
+
+    assert theme.active_mode(Probe) == "dark"
+
+
+def test_a_broken_theme_probe_does_not_stop_the_page():
+    class Broken:
+        @property
+        def context(self):
+            raise RuntimeError("no runtime")
+
+        @staticmethod
+        def get_option(name):
+            raise RuntimeError("no config")
+
+    assert theme.active_mode(Broken()) in theme.MODES
 
 
 # --------------------------------------------------------------------------- #
@@ -86,17 +157,51 @@ def test_percent_renders_a_fraction():
     assert components.percent(0.0512) == "5.12%"
 
 
-def test_moment_is_always_utc():
-    assert components.moment("2026-08-24T09:30:00Z") == "2026-08-24 09:30 UTC"
-    assert components.moment("2026-08-24T09:30:00") == "2026-08-24 09:30 UTC"
+def test_times_render_in_the_operators_zone_not_utc():
+    """09:30 UTC in August is 10:30 in London, and the operator is in London."""
+    assert components.moment("2026-08-24T09:30:00Z") == "24 Aug 2026, 10:30 BST"
 
 
-def test_age_picks_a_sensible_unit():
+def test_naive_input_is_treated_as_utc():
+    """Everything this app reads was written in UTC."""
+    assert components.moment("2026-08-24T09:30:00") == "24 Aug 2026, 10:30 BST"
+
+
+def test_winter_renders_as_gmt():
+    """The abbreviation is printed so a reader cannot misjudge the offset."""
+    assert components.moment("2026-01-15T09:30:00Z") == "15 Jan 2026, 09:30 GMT"
+
+
+def test_the_short_form_drops_the_year_and_keeps_the_weekday():
+    assert components.short_moment("2026-08-24T09:30:00Z") == "Mon 24 Aug, 10:30 BST"
+
+
+def test_a_date_alone():
+    assert components.day("2026-08-24T09:30:00Z") == "Mon 24 Aug 2026"
+
+
+def test_an_unknown_display_zone_falls_back_to_utc(monkeypatch):
+    monkeypatch.setattr(components, "DISPLAY_TZ", "Mars/Olympus_Mons")
+    assert components.display_zone().key == "UTC"
+
+
+def test_age_spells_out_its_units():
     now = pd.Timestamp("2026-08-24 12:00", tz="UTC")
-    assert components.age(now - pd.Timedelta(seconds=30), now) == "30 s ago"
-    assert components.age(now - pd.Timedelta(minutes=30), now) == "30 min ago"
-    assert components.age(now - pd.Timedelta(hours=6), now) == "6.0 h ago"
+    assert components.age(now - pd.Timedelta(seconds=30), now) == "30 seconds ago"
+    assert components.age(now - pd.Timedelta(minutes=30), now) == "30 minutes ago"
+    assert components.age(now - pd.Timedelta(hours=6), now) == "6.0 hours ago"
     assert components.age(now - pd.Timedelta(days=4), now) == "4.0 days ago"
+
+
+def test_a_future_moment_reads_as_future():
+    now = pd.Timestamp("2026-08-24 12:00", tz="UTC")
+    assert components.age(now + pd.Timedelta(hours=6), now) == "in 6.0 hours"
+
+
+def test_duration_spells_out_its_units():
+    assert components.duration(42) == "42.0 seconds"
+    assert components.duration(600) == "10.0 minutes"
+    assert components.duration(7200) == "2.0 hours"
 
 
 def test_a_bad_value_never_raises_in_formatting():
@@ -698,8 +803,8 @@ def test_every_page_renders_when_the_lake_is_missing_entirely(page, absent_lake)
 
 def test_the_pages_directory_matches_the_specified_layout():
     expected = {
-        "01_status.py", "02_signals.py", "03_execution.py", "04_positions.py",
-        "05_pnl.py", "06_logs.py", "07_config.py",
+        "01_Status.py", "02_Signals.py", "03_Execution.py", "04_Positions.py",
+        "05_Profit_and_Loss.py", "06_Logs.py", "07_Configuration.py",
     }
     assert {p.name for p in (UI / "pages").glob("*.py")} == expected
 
@@ -753,6 +858,91 @@ def test_the_status_page_expands_every_failing_check(populated, monkeypatch):
     drawn = " ".join(element.value for element in app.markdown)
     assert "what was found" in drawn
     assert "what to do" in drawn
+
+
+# --------------------------------------------------------------------------- #
+# Scaling a simulated position onto a real account
+# --------------------------------------------------------------------------- #
+def bundle(initial_equity=100_000.0) -> dict:
+    return {
+        "summary": sources.Source(
+            value={"metrics": {"initial_equity": initial_equity}}
+        )
+    }
+
+
+def test_the_scale_factor_is_the_ratio_of_the_two_accounts():
+    """A £2,000 account trading a £100,000 backtest holds one fiftieth."""
+    assert components.scale_factor(bundle(100_000.0), 2_000.0) == pytest.approx(0.02)
+
+
+def test_scaling_is_the_identity_at_the_simulated_size():
+    assert components.scale_factor(bundle(2_000.0), 2_000.0) == pytest.approx(1.0)
+
+
+def test_an_unknown_starting_equity_does_not_scale():
+    """Unscaled is honestly the simulator's; a guessed factor is nobody's."""
+    assert components.scale_factor({"summary": sources.Source(value={})}, 2_000.0) == 1.0
+    assert components.scale_factor(bundle(0.0), 2_000.0) == 1.0
+
+
+def test_a_zero_balance_does_not_scale():
+    assert components.scale_factor(bundle(), 0.0) == 1.0
+    assert components.scale_factor(bundle(), None) == 1.0
+
+
+def test_the_default_balance_is_the_virtual_account():
+    assert components.DEFAULT_BALANCE == pytest.approx(2_000.0)
+
+
+def test_the_simulated_equity_is_read_from_the_run():
+    assert components.simulated_equity(bundle(50_000.0)) == pytest.approx(50_000.0)
+
+
+# --------------------------------------------------------------------------- #
+# Table formatting
+# --------------------------------------------------------------------------- #
+def test_column_headings_spell_out_abbreviations():
+    assert components._label("realized_pnl") == "Realised profit & loss"
+    assert components._label("fx_conversion_fee") == "Currency conversion fee"
+    assert components._label("stop_level") == "Stop-loss level"
+    assert components._label("asset") == "Instrument"
+
+
+def test_an_unmapped_column_is_still_readable():
+    assert components._label("some_new_column") == "Some new column"
+
+
+def test_money_columns_are_detected_from_their_names():
+    assert components._format_for("spread_cost") == "money"
+    assert components._format_for("realized_pnl") == "money"
+    assert components._format_for("fill_price") == "price"
+    assert components._format_for("fx_rate") == "rate"
+    assert components._format_for("total_return") == "percent"
+
+
+def test_display_moves_timestamps_into_the_operators_zone():
+    frame = pd.DataFrame(
+        {"when": pd.to_datetime(["2026-08-24T09:30:00Z"])},
+        index=pd.DatetimeIndex(["2026-08-24T09:30:00Z"], name="timestamp"),
+    )
+    shown = components.for_display(frame)
+
+    assert str(shown["when"].dt.tz) == "Europe/London"
+    assert shown["when"].iloc[0].hour == 10
+    assert shown.index[0].hour == 10
+
+
+def test_display_localises_a_naive_index():
+    frame = pd.DataFrame(
+        {"x": [1]}, index=pd.DatetimeIndex(["2026-08-24T09:30:00"])
+    )
+    assert components.for_display(frame).index.tz is not None
+
+
+def test_display_of_an_empty_frame_is_harmless():
+    empty = pd.DataFrame()
+    assert components.for_display(empty).empty
 
 
 # --------------------------------------------------------------------------- #

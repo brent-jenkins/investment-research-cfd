@@ -19,21 +19,25 @@ import streamlit as st  # noqa: E402
 
 from cfdinvest.ui import components  # noqa: E402
 
-data = components.page_setup(st, "Execution", icon="🎯")
+data = components.page_setup(
+    st,
+    "Execution",
+    icon="🎯",
+    subtitle="The trades the simulator made on the most recent bar, sized for your account. Every one of them is placed by hand.",
+)
+mode = data["mode"]
+balance = float(
+    st.session_state.get(components.BALANCE_KEY, components.DEFAULT_BALANCE)
+)
+factor = components.scale_factor(data, balance)
 execution = data["execution"]
 summary = data["summary"]
 
-st.markdown(
-    '<span class="cfd-readonly">recommendations only</span>',
-    unsafe_allow_html=True,
-)
 components.render_note(
     st,
-    "These are the trades the simulator executed on the most recent bar. "
-    "**They are placed by hand.** The gap between what is listed here and "
-    "what is in the account is the difference between the backtest and "
-    "reality — including any resting stop order that only exists if you "
-    "placed it.",
+    "The gap between what is listed here and what is in the account is the "
+    "difference between the backtest and reality — including any resting "
+    "stop-loss order, which only exists if you placed it.",
 )
 
 if components.render_absent(st, execution, "Execution output"):
@@ -68,44 +72,65 @@ def column(frame: pd.DataFrame, name: str, default=np.nan):
 # Per instrument
 # --------------------------------------------------------------------------- #
 st.subheader("Recommended trades on the latest bar")
+components.render_note(
+    st,
+    f"Sized for an account of {components.money(balance)} "
+    f"(×{factor:,.4g} the simulated size). Change the balance in the sidebar.",
+)
 
 if latest.empty:
     components.render_note(st, "No trade on the most recent bar.")
 else:
     for _, row in latest.iterrows():
-        traded = row.get("traded_units", 0.0)
-        side = "BUY" if traded > 0 else "SELL"
+        traded = float(row.get("traded_units", 0.0) or 0.0)
+        side = "Buy" if traded > 0 else "Sell"
         with st.container(border=True):
-            head, body = st.columns([1, 3])
+            head, body = st.columns([1, 4])
             with head:
                 st.markdown(f"### {row.get('asset', '?')}")
                 st.markdown(
-                    f"**{side} {abs(float(traded)):,.4f}**  \n"
-                    f"`{row.get('action', '?')}` · `{row.get('reason', '?')}`"
+                    f"**{side} {abs(traded) * factor:,.4f} units**  \n"
+                    f"{str(row.get('action', '?')).replace('_', ' ').capitalize()}"
+                )
+                st.caption(
+                    f"Simulated size {abs(traded):,.4f} · "
+                    f"{str(row.get('reason', '?')).replace('_', ' ')}"
                 )
             with body:
                 cells = st.columns(4)
                 cells[0].metric(
-                    "Recommended fill", components.number(row.get("fill_price"), 4)
+                    "Recommended fill price",
+                    components.number(row.get("fill_price"), 4),
                 )
                 cells[1].metric(
-                    "Stop level", components.number(row.get("stop_level"), 4)
+                    "Stop-loss level", components.number(row.get("stop_level"), 4)
                 )
                 cells[2].metric(
-                    "Take-profit", components.number(row.get("take_profit_level"), 4)
+                    "Take-profit level",
+                    components.number(row.get("take_profit_level"), 4),
                 )
                 cells[3].metric(
-                    "Notional", components.money(row.get("notional"))
+                    "Exposure for your account",
+                    components.money(float(row.get("notional") or 0.0) * factor),
                 )
 
                 costs = st.columns(4)
-                costs[0].metric("Spread", components.money(row.get("spread_cost")))
-                costs[1].metric("Slippage", components.money(row.get("slippage")))
+                costs[0].metric(
+                    "Spread cost",
+                    components.money(float(row.get("spread_cost") or 0.0) * factor),
+                )
+                costs[1].metric(
+                    "Slippage",
+                    components.money(float(row.get("slippage") or 0.0) * factor),
+                )
                 costs[2].metric(
-                    "FX fee", components.money(row.get("fx_conversion_fee"))
+                    "Currency conversion fee",
+                    components.money(
+                        float(row.get("fx_conversion_fee") or 0.0) * factor
+                    ),
                 )
                 costs[3].metric(
-                    "FX rate", components.number(row.get("fx_rate"), 6)
+                    "Exchange rate", components.number(row.get("fx_rate"), 4)
                 )
 
             flags = []
@@ -116,9 +141,9 @@ else:
                 flags.append(f"breach: `{row['breach_type']}`")
             if pd.notna(row.get("fx_adjusted_fill_price")):
                 flags.append(
-                    "FX-adjusted fill "
-                    f"`{components.number(row.get('fx_adjusted_fill_price'), 4)}` "
-                    "(all-in, what the ticket will show)"
+                    "All-in fill price after currency conversion: "
+                    f"**{components.number(row.get('fx_adjusted_fill_price'), 4)}**"
+                    " — what the order ticket will show"
                 )
             if flags:
                 st.caption(" · ".join(flags))
@@ -130,7 +155,9 @@ st.divider()
 # --------------------------------------------------------------------------- #
 st.subheader("Costs and conversion")
 
-tabs = st.tabs(["Costs", "FX detail", "Stops and gaps", "Leverage"])
+tabs = st.tabs(
+    ["Trading costs", "Currency conversion", "Stop-loss exits", "Leverage"]
+)
 
 with tabs[0]:
     cost_columns = [
@@ -192,8 +219,8 @@ with tabs[2]:
         gaps = int(pd.Series(column(trades, "gap_through")).fillna(False).astype(bool).sum())
 
         left, right = st.columns(2)
-        left.metric("Level exits", len(level_exits))
-        right.metric("Gap-through exits", gaps)
+        left.metric("Exits at a stop-loss or take-profit level", len(level_exits))
+        right.metric("Of which gapped through the level", gaps)
         if gaps:
             components.render_note(
                 st,

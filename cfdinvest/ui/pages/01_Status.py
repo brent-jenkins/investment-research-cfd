@@ -14,7 +14,13 @@ import streamlit as st  # noqa: E402
 
 from cfdinvest.ui import components  # noqa: E402
 
-data = components.page_setup(st, "Status", icon="🩺")
+data = components.page_setup(
+    st,
+    "System status",
+    icon="🩺",
+    subtitle="Whether the data, the scheduler and the market are in the "
+    "state the rest of this dashboard assumes.",
+)
 now = data["now"]
 
 # --------------------------------------------------------------------------- #
@@ -50,13 +56,13 @@ if not components.render_absent(st, lake, "Lake metadata"):
     metadata = lake.value
     columns = st.columns(5)
     columns[0].metric("Last updated", components.age(metadata["last_updated"], now))
-    columns[1].metric("Series", metadata["series_count"])
-    columns[2].metric("Anomalies", metadata["anomalies_count"])
+    columns[1].metric("Instruments and series", metadata["series_count"])
+    columns[2].metric("Data quality flags", metadata["anomalies_count"])
     columns[3].metric(
-        "Pub. calendar",
+        "Publication calendar",
         components.DASH
         if metadata["publication_calendar_freshness"] is None
-        else f"{metadata['publication_calendar_freshness']:.0f} d",
+        else f"{metadata['publication_calendar_freshness']:.0f} days old",
     )
     columns[4].metric("Vintage mode", metadata["vintage_mode"] or components.DASH)
 
@@ -67,7 +73,9 @@ if not components.render_absent(st, lake, "Lake metadata"):
         "rewritten today with data ending last month is stale."
     )
 
-    tabs = st.tabs(["Market coverage", "Macro coverage", "Anomalies", "Disk"])
+    tabs = st.tabs(
+        ["Market data", "Economic data", "Data quality flags", "Disk space"]
+    )
     with tabs[0]:
         components.render_frame(st, metadata["coverage"], height=320)
     with tabs[1]:
@@ -115,24 +123,17 @@ columns[1].metric(
     if state.get("next_run") is None
     else components.moment(state["next_run"]),
 )
-columns[2].metric(
-    "Last duration",
-    components.DASH
-    if state.get("last_duration") is None
-    else f"{float(state['last_duration']):.1f} s",
-)
+columns[2].metric("Time taken", components.duration(state.get("last_duration")))
 columns[3].metric(
-    "Exit code",
-    components.DASH
-    if state.get("last_exit_code") is None
-    else str(state["last_exit_code"]),
+    "Outcome",
+    str(state.get("last_status") or components.DASH).capitalize(),
+    help="Derived from the run's recorded status; the process exit code is "
+    "not stored.",
 )
 
 if state.get("next_run_asset"):
     st.caption(
-        f"Next event: {state['next_run_kind']} of "
-        f"`{state['next_run_asset']}`. Exit code is derived from the run's "
-        "recorded status — the process's real exit code is not stored."
+        f"Next event: {state['next_run_kind']} of `{state['next_run_asset']}`."
     )
 
 if state.get("last_error"):
@@ -160,7 +161,7 @@ if not components.render_absent(st, market, "Market status"):
     holidays = market.value.get("holidays") or []
     if holidays:
         with st.expander(f"US market holidays ({now.year})", expanded=False):
-            st.write(", ".join(str(pd.Timestamp(d).date()) for d in holidays))
+            st.write(", ".join(components.day(d) for d in holidays))
 
 st.divider()
 
@@ -173,4 +174,4 @@ errors = data["errors"]
 if not components.render_absent(st, errors, "The error log"):
     recent = list(errors.value)[-10:]
     st.code("\n".join(recent) or "(nothing)", language="text")
-    st.caption(f"Last {len(recent)} lines. Full logs on the Logs page.")
+    st.caption(f"Last {len(recent)} lines. Complete logs are on the Logs page.")
