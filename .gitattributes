@@ -1,0 +1,9 @@
+# Normalise line endings to LF in the repository, regardless of platform.
+# Working copies keep the platform's native endings on checkout.
+* text=auto eol=lf
+
+# Binary formats must never be line-ending normalised or diffed as text.
+*.parquet binary
+*.png binary
+*.jpg binary
+*.pdf binary
