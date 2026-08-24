@@ -128,49 +128,48 @@ book = pd.DataFrame(rows).set_index("asset")
 
 for ticker, row in book.iterrows():
     with st.container(border=True):
-        head, body = st.columns([1, 4])
-        with head:
-            st.markdown(f"### {ticker}")
+        name, levels, money = st.columns([1.3, 1.2, 1.3])
+        with name:
             st.markdown(
-                components.direction_badge(row["direction"], mode),
+                f"#### {ticker} &nbsp; "
+                f"{components.direction_badge(row['direction'], mode)}",
                 unsafe_allow_html=True,
             )
             st.caption(
-                f"{row['units'] * factor:,.4f} units  \n"
-                f"simulated {row['units']:,.4f}"
+                f"{row['units'] * factor:,.4f} units "
+                f"(simulated {row['units']:,.4f})"
             )
-        with body:
-            top = st.columns(4)
-            top[0].metric("Entry price", components.number(row["entry_price"], 4))
-            top[1].metric("Stop-loss level", components.number(row["stop_level"], 4))
-            top[2].metric(
-                "Take-profit level", components.number(row["take_profit_level"], 4)
+            if not np.isfinite(row["stop_level"]):
+                st.caption(
+                    "⚠ No stop-loss level — either stop-losses are disabled, "
+                    "or the average true range had not warmed up when this "
+                    "position opened."
+                )
+        with levels:
+            components.render_kv(
+                st,
+                {
+                    "Entry price": components.number(row["entry_price"], 4),
+                    "Latest price": components.number(row["last_price"], 4),
+                    "Stop-loss level": components.number(row["stop_level"], 4),
+                    "Take-profit level": components.number(
+                        row["take_profit_level"], 4
+                    ),
+                },
             )
-            top[3].metric(
-                "Unrealised profit & loss",
-                components.money(row["unrealized_pnl"] * factor),
-                delta_color="off",
-            )
-            bottom = st.columns(4)
-            bottom[0].metric("Exposure", components.money(row["notional"] * factor))
-            bottom[1].metric(
-                "Leverage",
-                components.number(row["leverage"], 2),
-                help="A ratio, so it does not change with account size.",
-            )
-            bottom[2].metric(
-                "Overnight financing",
-                components.money(row["financing_accrued"] * factor),
-            )
-            bottom[3].metric(
-                "Currency costs", components.money(row["fx_costs"] * factor)
-            )
-
-        if not np.isfinite(row["stop_level"]):
-            st.caption(
-                "⚠ No stop-loss level recorded for this position — either "
-                "stop-losses are disabled, or the average true range had not "
-                "warmed up when it opened."
+        with money:
+            components.render_kv(
+                st,
+                {
+                    "Unrealised profit & loss": components.money(
+                        row["unrealized_pnl"] * factor
+                    ),
+                    "Exposure": components.money(row["notional"] * factor),
+                    "Leverage": components.number(row["leverage"], 2),
+                    "Financing and currency": components.money(
+                        (row["financing_accrued"] + row["fx_costs"]) * factor
+                    ),
+                },
             )
 
 st.divider()

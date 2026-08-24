@@ -12,7 +12,7 @@ if _ROOT not in sys.path:
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from cfdinvest.ui import components  # noqa: E402
+from cfdinvest.ui import components, explain  # noqa: E402
 
 data = components.page_setup(
     st,
@@ -126,7 +126,7 @@ columns[1].metric(
 columns[2].metric("Time taken", components.duration(state.get("last_duration")))
 columns[3].metric(
     "Outcome",
-    str(state.get("last_status") or components.DASH).capitalize(),
+    explain.outcome(state.get("last_status")) or components.DASH,
     help="Derived from the run's recorded status; the process exit code is "
     "not stored.",
 )

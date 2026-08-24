@@ -17,7 +17,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from cfdinvest.ui import components  # noqa: E402
+from cfdinvest.ui import components, explain  # noqa: E402
 
 data = components.page_setup(
     st,
@@ -85,60 +85,64 @@ else:
         traded = float(row.get("traded_units", 0.0) or 0.0)
         side = "Buy" if traded > 0 else "Sell"
         with st.container(border=True):
-            head, body = st.columns([1, 4])
-            with head:
-                st.markdown(f"### {row.get('asset', '?')}")
+            name, prices, costs = st.columns([1.4, 1.2, 1.2])
+            with name:
                 st.markdown(
-                    f"**{side} {abs(traded) * factor:,.4f} units**  \n"
-                    f"{str(row.get('action', '?')).replace('_', ' ').capitalize()}"
+                    f"#### {row.get('asset', '?')} &nbsp; "
+                    f"<span style='font-weight:600;'>{side} "
+                    f"{abs(traded) * factor:,.4f} units</span>",
+                    unsafe_allow_html=True,
                 )
+                st.caption(explain.action(row.get("action")))
                 st.caption(
-                    f"Simulated size {abs(traded):,.4f} · "
-                    f"{str(row.get('reason', '?')).replace('_', ' ')}"
+                    f"{explain.action(row.get('reason'))} · simulated size "
+                    f"{abs(traded):,.4f}"
                 )
-            with body:
-                cells = st.columns(4)
-                cells[0].metric(
-                    "Recommended fill price",
-                    components.number(row.get("fill_price"), 4),
+            with prices:
+                components.render_kv(
+                    st,
+                    {
+                        "Recommended fill price": components.number(
+                            row.get("fill_price"), 4
+                        ),
+                        "Stop-loss level": components.number(
+                            row.get("stop_level"), 4
+                        ),
+                        "Take-profit level": components.number(
+                            row.get("take_profit_level"), 4
+                        ),
+                    },
                 )
-                cells[1].metric(
-                    "Stop-loss level", components.number(row.get("stop_level"), 4)
-                )
-                cells[2].metric(
-                    "Take-profit level",
-                    components.number(row.get("take_profit_level"), 4),
-                )
-                cells[3].metric(
-                    "Exposure for your account",
-                    components.money(float(row.get("notional") or 0.0) * factor),
-                )
-
-                costs = st.columns(4)
-                costs[0].metric(
-                    "Spread cost",
-                    components.money(float(row.get("spread_cost") or 0.0) * factor),
-                )
-                costs[1].metric(
-                    "Slippage",
-                    components.money(float(row.get("slippage") or 0.0) * factor),
-                )
-                costs[2].metric(
-                    "Currency conversion fee",
-                    components.money(
-                        float(row.get("fx_conversion_fee") or 0.0) * factor
-                    ),
-                )
-                costs[3].metric(
-                    "Exchange rate", components.number(row.get("fx_rate"), 4)
+            with costs:
+                components.render_kv(
+                    st,
+                    {
+                        "Exposure": components.money(
+                            float(row.get("notional") or 0.0) * factor
+                        ),
+                        "Spread and slippage": components.money(
+                            (
+                                float(row.get("spread_cost") or 0.0)
+                                + float(row.get("slippage") or 0.0)
+                            )
+                            * factor
+                        ),
+                        "Currency conversion": components.money(
+                            float(row.get("fx_conversion_fee") or 0.0) * factor
+                        ),
+                    },
                 )
 
             flags = []
             if bool(row.get("gap_through", False)):
-                flags.append("⚠ **gap-through** — the level never traded; the "
-                             "fill is the bar's open")
+                flags.append(
+                    "⚠ The market gapped past the level — it never traded, so "
+                    "the fill is the bar's open"
+                )
             if str(row.get("breach_type") or ""):
-                flags.append(f"breach: `{row['breach_type']}`")
+                flags.append(
+                    f"The level {explain.breach(row['breach_type'])}"
+                )
             if pd.notna(row.get("fx_adjusted_fill_price")):
                 flags.append(
                     "All-in fill price after currency conversion: "

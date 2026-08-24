@@ -33,27 +33,31 @@ order, which only exists if you placed it.
 
 ```
 cfdinvest/ui/
-    app.py            landing page; the multipage entry point
-    theme.py          the palette, and the CSS that applies it
+    app.py            entry point; declares the navigation
+    theme.py          both palettes, the wordmark, and the CSS
     sources.py        every read; the safety contract lives here
     health.py         the critical-warning checks
-    components.py     page setup, the banner, formatting
+    components.py     page setup, the banner, formatting, account scaling
     configview.py     flattening config, spotting overrides and unknown keys
+    explain.py        the pipeline's vocabulary, in English
     pages/
-        01_Status.py            02_Signals.py       03_Execution.py
-        04_Positions.py         05_Profit_and_Loss.py
+        00_Overview.py          01_Status.py        02_Signals.py
+        03_Execution.py         04_Positions.py     05_Profit_and_Loss.py
         06_Logs.py              07_Configuration.py
 ```
 
-Page names come from the filenames, which is why they are capitalised and
-spelled out: Streamlit turns `05_Profit_and_Loss.py` into "Profit and Loss"
-in the sidebar. Renaming a page renames its nav entry.
+**Navigation is declared in `app.py`, not inferred from filenames.**
+Streamlit's filename convention would label the Profit & Loss page "05
+Profit and Loss" while the page itself prints "Profit & Loss", and a nav
+entry that does not match the page it opens is a small, constant papercut. A
+test parses `app.py` and fails if a declared title is not printed by the page
+it points at, or if a page file is missing from the list.
 
-`sources.py`, `health.py`, `components.py` and `configview.py` are not in the
-original outline. They exist because seven pages otherwise duplicate the same
-reads, the same banner and the same "this is missing, and here is why" panel
-— and because none of that logic is testable while it lives inside a
-Streamlit script.
+`sources.py`, `health.py`, `components.py`, `configview.py` and `explain.py`
+are not in the original outline. They exist because eight pages otherwise
+duplicate the same reads, the same banner and the same "this is missing, and
+here is why" panel — and because none of that logic is testable while it
+lives inside a Streamlit script.
 
 Nothing here imports `streamlit` at module scope except the pages themselves:
 the `render_*` helpers take the module as an argument. That is what lets the
@@ -151,9 +155,9 @@ editing the checks.
 | --- | --- |
 | **Overview** | Account value at your balance, system health, last and next run, and the open book |
 | **System status** | Lake freshness, series and anomaly counts, vintage mode, coverage tables; scheduler last/next/duration/exit; market sessions and holidays; the last 10 error lines; every health check expanded |
-| **Signals** | Per instrument: direction, size, confidence, reason, stop and take-profit distance (absolute and %), timestamp; full signal history |
-| **Execution** | Per instrument: recommended trade and fill, stop/TP levels, notional; spread, slippage, FX fee and rate; gap-through flags; per-bar leverage |
-| **Positions** | Per open position: entry, stop, TP, unrealised P&L, financing accrued, FX costs, exposure, leverage; book totals |
+| **Signals** | Per instrument: direction, size, confidence, the reason in plain English, stop-loss and take-profit distance, timestamp; full signal history |
+| **Execution** | Per instrument: recommended trade and fill sized for your account, stop-loss and take-profit levels, exposure, costs, currency conversion, gap-through flags; per-bar leverage |
+| **Positions** | Per open position: entry, stop-loss, take-profit, latest price, unrealised profit & loss, exposure, leverage, financing and currency costs; book totals |
 | **Profit & Loss** | Account value and drawdown; realised P&L, spread, slippage, financing and FX totals; daily and cumulative cost charts; daily summary and trade history |
 | **Logs** | Errors, scheduler, pipeline, ingestion, execution, and the run-summary history; tail length and substring filter |
 | **Configuration** | Global config from disk, per-instrument settings, and the stop/FX/execution/scheduler/run configs, each with overrides, unset values and unrecognised keys called out |
@@ -194,6 +198,51 @@ theming covers the chrome but not the widgets this app leans on. Only the
 app's own furniture is styled — banners, notes, badges, metric cards, table
 chrome — so switching modes in the browser gives a coherent page rather than
 half of one.
+
+---
+
+## Plain English
+
+The signal layer records why it decided what it decided, in a compact machine
+format — `trend_short|high_volatility @crisis`. That is exactly right for a
+log and exactly wrong for someone deciding whether to place a trade at nine
+in the evening. `explain.py` is the dictionary between the two:
+
+> Downtrend, and the filters allow a short position — volatility is high, so
+> the size was cut. Market regime: Crisis.
+
+It is a lookup rather than a parser, because every token the pipeline can
+emit is enumerable. **Unknown tokens are tidied and shown, never dropped**: a
+token this module does not recognise means the pipeline grew a new rule, and
+hiding it would make the explanation wrong rather than merely unfamiliar. A
+test asserts the dictionary covers every rule in
+`signals.combined.DIRECTION_PRECEDENCE`, every flag in
+`signals.filters.REASON_FLAGS`, every regime in
+`regimes.combined.COMBINED_REGIMES` and every action in
+`execution.state.ACTIONS` — so adding one upstream fails this suite rather
+than silently degrading the page.
+
+The same treatment covers trade actions ("Flip from long to short"), stop
+exits ("gapped past the level — filled at the open, not at the level") and
+run outcomes.
+
+---
+
+## The wordmark
+
+The CFDINVEST mark and strapline sit above the navigation, rendered through
+`st.logo` as an SVG built by `theme.brand_svg`. That is not decoration of the
+sidebar: `st.navigation` draws its links at the very top regardless of call
+order, and the logo slot is the only thing that sits higher. Streamlit keeps
+one logo per page and the last call wins, so the entry script and
+`page_setup` can both set it without the mark appearing twice.
+
+The blue is the brand's own and is **the same in both modes** — the one
+colour here that does not bend to the contrast rule the light accent had to.
+WCAG exempts text that forms part of a logo, and a wordmark that changes
+colour between light and dark is no longer the wordmark. Only the strapline
+follows the palette, because grey on black and grey on white are not the
+same grey.
 
 ---
 
@@ -470,7 +519,7 @@ showing you an empty table.
 ## Testing
 
 ```bash
-pytest tests/test_ui.py -q      # 146 tests, no network
+pytest tests/test_ui.py -q      # 185 tests, no network
 ```
 
 The pages are executed by Streamlit's own `AppTest` runner — against a real

@@ -44,6 +44,7 @@ __all__ = [
     "read_everything",
     "page_setup",
     "render_banner",
+    "render_brand",
     "render_absent",
     "render_note",
     "render_frame",
@@ -59,6 +60,7 @@ __all__ = [
     "day",
     "age",
     "duration",
+    "run_moment",
     "direction_badge",
     "account_balance",
     "scale_factor",
@@ -198,6 +200,7 @@ def page_setup(st, title: str, *, icon: str = "📈", subtitle: str = "") -> dic
         pass
 
     mode = theme.apply(st)
+    render_brand(st, mode)
     st.session_state["cfd_mode"] = mode
 
     data = read_everything(st)
@@ -236,6 +239,9 @@ def _render_sidebar(st, data: dict) -> None:
                 "Last completed run": age(scheduler.get("last_run"), data["now"]),
                 "Next run due": short_moment(scheduler.get("next_run")),
                 "Checked": short_moment(data["now"]),
+                "Latest run": run_moment(
+                    (data["summary"].value or {}).get("run_id")
+                ),
             },
         )
 
@@ -251,6 +257,19 @@ def _render_sidebar(st, data: dict) -> None:
             "Read-only. This dashboard never places an order. "
             f"Times shown in {display_zone().key}."
         )
+
+
+def render_brand(st, mode: str = "dark") -> None:
+    """The wordmark, in Streamlit's logo slot above the navigation.
+
+    Idempotent by construction: Streamlit keeps one logo per page and the
+    last call wins, so the entry script and the page can both set it without
+    the mark appearing twice.
+    """
+    try:
+        st.logo(theme.brand_svg(mode), size="large")
+    except Exception:  # noqa: BLE001 - never fail to draw over a logo
+        pass
 
 
 def render_banner(st, health: HealthReport, mode: str = "dark") -> None:
@@ -328,11 +347,11 @@ def render_kv(st, rows: Mapping[str, Any]) -> None:
 # Tables
 # --------------------------------------------------------------------------- #
 #: Column-name fragments and the format each implies.
-_FRACTION = ("fraction", "_pct", "return", "drawdown", "share")
+_FRACTION = ("fraction", "_pct", "return", "drawdown", "share", "confidence")
 _MONEY = ("pnl", "cost", "equity", "notional", "financing", "spread", "slippage",
           "fee", "value", "exposure", "balance")
 _PRICE = ("price", "level", "fill", "close", "open", "high", "low", "distance")
-_RATE = ("rate", "leverage", "confidence", "size", "units")
+_RATE = ("rate", "leverage", "size", "units")
 
 
 def _format_for(name: str) -> str | None:
@@ -620,6 +639,24 @@ def day(value: Any) -> str:
     if stamp is None:
         return DASH
     return f"{stamp:%a} {stamp.day} {stamp:%b %Y}"
+
+
+def run_moment(run_id: Any) -> str:
+    """A run identifier rendered as a local date and time.
+
+    Run ids are compact UTC timestamps (``20260824T090000Z``), which is the
+    right shape for a directory name and the wrong shape for a person. A
+    value that does not parse is returned unchanged — some other identifier
+    is still an identifier.
+    """
+    raw = str(run_id or "").strip()
+    if not raw:
+        return DASH
+    try:
+        stamp = pd.to_datetime(raw, format="%Y%m%dT%H%M%SZ", utc=True)
+    except (ValueError, TypeError):
+        return raw
+    return short_moment(stamp)
 
 
 def duration(seconds: Any) -> str:

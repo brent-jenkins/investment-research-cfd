@@ -14,7 +14,7 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from cfdinvest.schema import TICKER, TIMESTAMP  # noqa: E402
-from cfdinvest.ui import components  # noqa: E402
+from cfdinvest.ui import components, explain  # noqa: E402
 
 data = components.page_setup(
     st,
@@ -29,9 +29,9 @@ summary = data["summary"]
 
 components.render_note(
     st,
-    "Only **active** signals are persisted — flat cells are the vast "
-    "majority and are dropped before writing. An instrument missing from "
-    "this table is flat, not missing.",
+    "Only **active** signals are stored — flat cells are the vast majority "
+    "and are dropped before writing, so an instrument missing here is flat, "
+    "not missing.",
 )
 
 if components.render_absent(st, signals, "Signals"):
@@ -99,37 +99,37 @@ else:
     for _, row in latest.sort_values(TICKER if TICKER in latest else latest.columns[0]).iterrows():
         ticker = row.get(TICKER, "?")
         with st.container(border=True):
-            header, body = st.columns([1, 3])
-            with header:
+            name, strength, levels = st.columns([1.5, 1, 1.2])
+            with name:
                 st.markdown(
-                    f"### {ticker}", unsafe_allow_html=False
-                )
-                st.markdown(
-                    components.direction_badge(row.get("direction"), mode),
+                    f"#### {ticker} &nbsp; "
+                    f"{components.direction_badge(row.get('direction'), mode)}",
                     unsafe_allow_html=True,
                 )
-            with body:
-                cells = st.columns(4)
-                cells[0].metric("Size", components.number(row.get("size"), 3))
-                cells[1].metric(
-                    "Confidence", components.number(row.get("confidence"), 3)
+                st.caption(explain.reason(row.get("reason")))
+                st.caption(components.short_moment(row.get(TIMESTAMP)))
+            with strength:
+                components.render_kv(
+                    st,
+                    {
+                        "Size": components.number(row.get("size"), 3),
+                        "Confidence": components.percent(
+                            row.get("confidence"), 0
+                        ),
+                    },
                 )
-                cells[2].metric(
-                    "Stop-loss distance",
-                    components.number(row.get("stop_distance"), 4),
-                    delta=components.percent(row.get("stop_distance_pct")),
-                    delta_color="off",
+            with levels:
+                components.render_kv(
+                    st,
+                    {
+                        "Stop-loss distance": components.percent(
+                            row.get("stop_distance_pct")
+                        ),
+                        "Take-profit distance": components.percent(
+                            row.get("tp_distance_pct")
+                        ),
+                    },
                 )
-                cells[3].metric(
-                    "Take-profit distance",
-                    components.number(row.get("tp_distance"), 4),
-                    delta=components.percent(row.get("tp_distance_pct")),
-                    delta_color="off",
-                )
-            st.caption(
-                f"**Reason:** {row.get('reason', components.DASH)}  ·  "
-                f"{components.short_moment(row.get(TIMESTAMP))}"
-            )
 
 st.divider()
 

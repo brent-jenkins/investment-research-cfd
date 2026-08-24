@@ -18,6 +18,7 @@ Streamlit. Neither reads anything or touches disk.
 from __future__ import annotations
 
 __all__ = [
+    "BRAND",
     "PALETTES",
     "PALETTE",
     "SEMANTIC",
@@ -28,9 +29,23 @@ __all__ = [
     "apply",
     "swatch",
     "colour_for",
+    "brand_svg",
 ]
 
 MODES: tuple[str, ...] = ("light", "dark")
+
+#: The wordmark, and the line under it.
+#:
+#: The blue is the brand's own and is **the same in both modes**. It is the
+#: one colour here that does not bend to the contrast rule the light accent
+#: had to: WCAG exempts text that is part of a logo or brand name, and a
+#: wordmark that changes colour between light and dark is no longer the
+#: wordmark.
+BRAND: dict[str, str] = {
+    "name": "CFDINVEST",
+    "strapline": "Trend-following CFD research.",
+    "colour": "#29B6F6",
+}
 
 #: The two palettes. ``dark`` is that site's set verbatim.
 PALETTES: dict[str, dict[str, str]] = {
@@ -154,6 +169,32 @@ def swatch(colour: str, label: str, mode: str = "dark") -> str:
     )
 
 
+def brand_svg(mode: str = "dark") -> str:
+    """The wordmark and strapline as an SVG, for Streamlit's logo slot.
+
+    An image rather than markup because ``st.navigation`` always draws the
+    navigation at the very top of the sidebar, above anything a script
+    writes there. The only thing that sits higher is ``st.logo``, and that
+    takes an image — so the wordmark is drawn as one.
+
+    Pure. The blue is the brand's in both modes; only the strapline follows
+    the palette, because grey-on-black and grey-on-white are not the same
+    grey.
+    """
+    p = palette_for(mode)
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 62" '
+        'width="300" height="62" role="img" aria-label="CFDINVEST">'
+        f'<text x="0" y="30" font-family="Inter, Segoe UI, Helvetica, Arial, '
+        f'sans-serif" font-size="27" font-weight="800" letter-spacing="4.2" '
+        f'fill="{BRAND["colour"]}">{BRAND["name"]}</text>'
+        f'<text x="1" y="52" font-family="Inter, Segoe UI, Helvetica, Arial, '
+        f'sans-serif" font-size="13" fill="{p["subtle"]}">'
+        f'{BRAND["strapline"]}</text>'
+        "</svg>"
+    )
+
+
 def stylesheet(mode: str = "dark") -> str:
     """The full stylesheet for one mode, as a ``<style>`` block.
 
@@ -203,13 +244,47 @@ def stylesheet(mode: str = "dark") -> str:
 
   [data-testid="stSidebar"] {{ border-right: 1px solid var(--cfd-border); }}
 
-  /* Metric cards */
+  /* Metric cards. A row of them must line up. Without this a card that
+     happens to carry a delta is taller than one that does not, and four
+     cards read as four unrelated boxes rather than one row.
+
+     Equal height needs an unbroken flex chain from the row down to the
+     card, because `height: 100%` against an auto-height parent resolves to
+     nothing. The chain is scoped with `:has()` to rows that actually
+     contain a metric, so ordinary column layouts are left alone. */
+  [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) {{
+    align-items: stretch;
+  }}
+  [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"])
+    [data-testid="stColumn"] {{
+    display: flex;
+    flex-direction: column;
+  }}
+  [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"])
+    [data-testid="stColumn"] > div,
+  [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"])
+    [data-testid="stVerticalBlock"],
+  [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"])
+    [data-testid="stElementContainer"]:has([data-testid="stMetric"]) {{
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }}
   [data-testid="stMetric"] {{
     background-color: var(--cfd-panel);
     border: 1px solid var(--cfd-border);
     border-radius: 10px;
-    padding: 12px 16px;
+    padding: 14px 16px;
+    height: 100%;
+    min-height: 6.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }}
+  /* Push the delta to the bottom so the value sits at the same height on
+     every card, whether or not one follows it. */
+  [data-testid="stMetricDelta"] {{ margin-top: auto; }}
   [data-testid="stMetricLabel"] p {{
     color: var(--cfd-subtle) !important;
     font-size: 0.74rem;
@@ -273,6 +348,23 @@ def stylesheet(mode: str = "dark") -> str:
     text-transform: uppercase;
     font-weight: 600;
     color: var(--cfd-accent2);
+  }}
+
+  /* The wordmark lives in Streamlit's logo slot (see brand_svg), which is
+     the only place above the navigation. Streamlit sizes a logo to fit its
+     own header height, which is built for a small square mark rather than a
+     wordmark, so the height is forced here. */
+  [data-testid="stSidebarHeader"] {{
+    padding-top: 20px;
+    padding-bottom: 14px;
+  }}
+  [data-testid="stLogo"],
+  [data-testid="stSidebarHeader"] img {{
+    height: 3.5rem !important;
+    max-height: none !important;
+    width: auto !important;
+    max-width: 100% !important;
+    margin: 0;
   }}
 
   .cfd-note {{

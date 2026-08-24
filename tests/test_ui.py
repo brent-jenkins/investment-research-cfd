@@ -21,7 +21,7 @@ import pandas as pd
 import pytest
 
 from cfdinvest.config import AppConfig, PathConfig
-from cfdinvest.ui import components, configview, health, sources, theme
+from cfdinvest.ui import components, configview, explain, health, sources, theme
 
 UI = Path(__file__).resolve().parents[1] / "cfdinvest" / "ui"
 
@@ -198,6 +198,16 @@ def test_a_future_moment_reads_as_future():
     assert components.age(now + pd.Timedelta(hours=6), now) == "in 6.0 hours"
 
 
+def test_a_run_identifier_reads_as_a_date():
+    """A run id is a compact UTC timestamp, not something to show raw."""
+    assert components.run_moment("20260824T090000Z") == "Mon 24 Aug, 10:00 BST"
+
+
+def test_an_identifier_that_is_not_a_timestamp_is_left_alone():
+    assert components.run_moment("nightly-rerun") == "nightly-rerun"
+    assert components.run_moment("") == components.DASH
+
+
 def test_duration_spells_out_its_units():
     assert components.duration(42) == "42.0 seconds"
     assert components.duration(600) == "10.0 minutes"
@@ -331,7 +341,10 @@ def run(lake) -> Path:
             "direction": ["long", "short"],
             "size": [0.3, 0.25],
             "confidence": [0.9, 0.7],
-            "reason": ["trend_up|calm", "trend_down|crisis"],
+            "reason": [
+                "trend_long @risk_on",
+                "trend_short|high_volatility @crisis",
+            ],
         },
         index=pd.MultiIndex.from_arrays(
             [[index[-1], index[-1]], ["SPX", "UKX"]], names=["timestamp", "ticker"]
@@ -801,10 +814,49 @@ def test_every_page_renders_when_the_lake_is_missing_entirely(page, absent_lake)
     assert app.markdown, f"{page} drew nothing"
 
 
+def test_navigation_labels_match_the_page_headings():
+    """A nav entry that does not match the page it opens is a papercut."""
+    import ast
+
+    entry = ast.parse((UI / "app.py").read_text(encoding="utf-8"))
+    declared = {}
+    for node in ast.walk(entry):
+        if isinstance(node, ast.AnnAssign) and getattr(
+            node.target, "id", None
+        ) == "PAGES":
+            for element in node.value.elts:
+                path, title, _icon = (item.value for item in element.elts)
+                declared[path] = title
+
+    assert declared, "app.py no longer declares PAGES"
+
+    for relative, title in declared.items():
+        source = (UI / relative).read_text(encoding="utf-8")
+        assert f'"{title}"' in source, (
+            f"{relative} does not print the title {title!r} the nav gives it"
+        )
+
+
+def test_every_page_file_appears_in_the_navigation():
+    import ast
+
+    entry = ast.parse((UI / "app.py").read_text(encoding="utf-8"))
+    declared = set()
+    for node in ast.walk(entry):
+        if isinstance(node, ast.AnnAssign) and getattr(
+            node.target, "id", None
+        ) == "PAGES":
+            declared = {element.elts[0].value for element in node.value.elts}
+
+    on_disk = {f"pages/{p.name}" for p in (UI / "pages").glob("*.py")}
+    assert declared == on_disk
+
+
 def test_the_pages_directory_matches_the_specified_layout():
     expected = {
-        "01_Status.py", "02_Signals.py", "03_Execution.py", "04_Positions.py",
-        "05_Profit_and_Loss.py", "06_Logs.py", "07_Configuration.py",
+        "00_Overview.py", "01_Status.py", "02_Signals.py", "03_Execution.py",
+        "04_Positions.py", "05_Profit_and_Loss.py", "06_Logs.py",
+        "07_Configuration.py",
     }
     assert {p.name for p in (UI / "pages").glob("*.py")} == expected
 
@@ -858,6 +910,123 @@ def test_the_status_page_expands_every_failing_check(populated, monkeypatch):
     drawn = " ".join(element.value for element in app.markdown)
     assert "what was found" in drawn
     assert "what to do" in drawn
+
+
+# --------------------------------------------------------------------------- #
+# Plain English
+# --------------------------------------------------------------------------- #
+def test_a_reason_becomes_a_sentence():
+    """The format the signal layer actually emits: rule|flag @regime."""
+    assert explain.reason("trend_short|high_volatility @crisis") == (
+        "Downtrend, and the filters allow a short position — volatility is "
+        "high, so the size was cut. Market regime: Crisis."
+    )
+
+
+def test_a_reason_without_flags_or_regime():
+    assert explain.reason("trend_long") == (
+        "Uptrend, and the filters allow a long position."
+    )
+
+
+def test_a_reason_with_a_regime_but_no_flags():
+    assert explain.reason("trend_long @risk_on").endswith(
+        "Market regime: Risk-on."
+    )
+
+
+def test_several_flags_read_as_a_list():
+    sentence = explain.reason(
+        "blocked_long|high_volatility|correlation_breakdown @risk_off"
+    )
+    assert "volatility is high, so the size was cut, and correlations have "
+    "broken down" in sentence
+    assert sentence.startswith("An uptrend, but the regime filters block")
+
+
+def test_an_unknown_token_is_shown_not_dropped():
+    """A new rule upstream must not silently vanish from the explanation."""
+    sentence = explain.reason("some_new_rule|some_new_flag @some_new_regime")
+    assert "some new rule" in sentence
+    assert "some new flag" in sentence
+    assert "some new regime" in sentence
+
+
+def test_an_empty_reason_says_so():
+    assert explain.reason("") == "No reason recorded."
+    assert explain.reason(None) == "No reason recorded."
+
+
+@pytest.mark.parametrize("rule", list(explain.RULES))
+def test_every_rule_has_a_sentence(rule):
+    assert explain.RULES[rule]
+    assert "_" not in explain.RULES[rule]
+
+
+@pytest.mark.parametrize("flag", list(explain.FLAGS))
+def test_every_flag_has_a_clause(flag):
+    assert explain.FLAGS[flag]
+    assert "_" not in explain.FLAGS[flag]
+
+
+def test_the_vocabulary_matches_the_pipeline():
+    """If the signal layer grows a rule, this test is how we find out."""
+    from cfdinvest.regimes.combined import COMBINED_REGIMES
+    from cfdinvest.signals.combined import DIRECTION_PRECEDENCE
+    from cfdinvest.signals.filters import REASON_FLAGS
+
+    assert {rule.name for rule in DIRECTION_PRECEDENCE} <= set(explain.RULES)
+    assert set(REASON_FLAGS) <= set(explain.FLAGS)
+    assert set(COMBINED_REGIMES) <= set(explain.REGIMES)
+
+
+def test_every_execution_action_is_translated():
+    from cfdinvest.execution.state import ACTIONS
+
+    assert set(ACTIONS) <= set(explain.ACTIONS)
+
+
+def test_actions_and_outcomes_read_as_english():
+    assert explain.action("flip_long_to_short") == "Flip from long to short"
+    assert explain.action("stop_loss") == "Stopped out at the stop-loss level"
+    assert explain.outcome("ok") == "Succeeded"
+    assert explain.outcome("failed") == "Failed"
+
+
+def test_a_breach_explains_what_happened_to_the_level():
+    assert "gapped past" in explain.breach("gap")
+    assert "traded through" in explain.breach("intrabar")
+    assert explain.breach("") == ""
+
+
+# --------------------------------------------------------------------------- #
+# The brand mark
+# --------------------------------------------------------------------------- #
+def test_the_wordmark_and_strapline_are_the_brand_ones():
+    assert theme.BRAND["name"] == "CFDINVEST"
+    assert theme.BRAND["strapline"] == "Trend-following CFD research."
+
+
+@pytest.mark.parametrize("mode", theme.MODES)
+def test_the_wordmark_colour_is_the_same_in_both_modes(mode):
+    """A wordmark that changes colour between modes is not the wordmark."""
+    assert theme.BRAND["colour"] in theme.brand_svg(mode)
+
+
+@pytest.mark.parametrize("mode", theme.MODES)
+def test_the_wordmark_renders_as_an_svg(mode):
+    """An image, because the logo slot is the only place above the nav."""
+    svg = theme.brand_svg(mode)
+    assert svg.startswith("<svg") and svg.endswith("</svg>")
+    assert theme.BRAND["name"] in svg
+    assert theme.BRAND["strapline"] in svg
+    assert theme.BRAND["colour"] in svg
+
+
+def test_the_strapline_follows_the_palette():
+    """Grey on black and grey on white are not the same grey."""
+    assert theme.palette_for("dark")["subtle"] in theme.brand_svg("dark")
+    assert theme.palette_for("light")["subtle"] in theme.brand_svg("light")
 
 
 # --------------------------------------------------------------------------- #
@@ -918,6 +1087,7 @@ def test_money_columns_are_detected_from_their_names():
     assert components._format_for("realized_pnl") == "money"
     assert components._format_for("fill_price") == "price"
     assert components._format_for("fx_rate") == "rate"
+    assert components._format_for("confidence") == "percent"
     assert components._format_for("total_return") == "percent"
 
 
