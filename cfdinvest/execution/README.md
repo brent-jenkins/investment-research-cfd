@@ -409,6 +409,222 @@ its own.
 
 ---
 
+## FX conversion
+
+**Disabled by default** (`ExecutionConfig().fx.enabled is False`), which
+treats every instrument as already denominated in the account currency —
+exactly what the engine assumed before this module existed, so no recorded
+number moves.
+
+```python
+from cfdinvest.execution import ExecutionConfig, FXConfig, run_backtest
+
+execution = run_backtest(
+    signal_frame, analysis_frame,
+    ExecutionConfig(fx=FXConfig(
+        enabled=True,
+        account_currency="GBP",
+        instrument_currencies={"SPX": "USD"},
+        fx_rate_source="lake",
+        fx_pair_tickers={"USD": "GBPUSD"},
+    )),
+)
+
+execution.fx_total_cost   # everything conversion took out
+execution.fx_summary()    # cost per instrument, beside the rate
+execution.fx_open_cost    # per bar, funding leg
+execution.fx_close_cost   # per bar, repatriation leg
+execution.fx_rate_used    # per instrument, as at the last bar
+```
+
+### Part 1 — Conversion logic
+
+**The rate convention is fixed once so it cannot be read backwards.**
+`fx_rate` is always *units of account currency per one unit of instrument
+currency*. A GBP account trading a USD instrument at 0.79 GBP/USD has
+`fx_rate = 0.79`, and a $100 price is £79. Conversion is a multiplication in
+one direction and a division in the other, and there is nowhere for the sign
+of an exponent to hide.
+
+**When conversion applies.** At open, account currency is converted into
+instrument currency to fund the position. At close, instrument currency is
+converted back. A flip does both: the whole old position is repatriated and
+the whole new one funded, which is what `split_open_close()` computes and
+what the broker actually converts.
+
+**Prices convert at the mid; the charges are separate cost lines.** This is
+the same split the price spread already uses. The whole price panel — close,
+open, high, low, and the ATR — is restated in the account currency before
+the loop starts, so the state machine, the leverage cap and the equity curve
+all work in one unit and none of them needs to know FX exists. The three
+charges then sit beside the P&L as a sixth component. No double counting,
+and the identity still holds.
+
+The ATR converts too, and it has to: an ATR-multiple stop on a dollar
+instrument would otherwise be placed a *dollar* distance away from a
+*sterling* price.
+
+**Price flow for one trade:**
+
+```
+  base_fill_price          from fills.py / stops.py, instrument currency
+        |
+        x fx_rate          the mid, per bar, from the lake
+        |
+   fill_price              account currency -- what P&L books at
+        |
+        + fx_spread        \
+        + fx_slippage       >  charged separately, never folded into price
+        + conversion_fee   /
+        |
+   fx_adjusted_fill_price  the all-in number, for the person placing it
+```
+
+**Rates are per bar, not per run.** The `"lake"` source reads the FX series
+bar by bar and forward-fills only. Using one rate for a whole decade would
+put an end-of-run rate on a start-of-run trade — look-ahead, and of a kind
+that is easy to miss because it hides inside a cost model rather than in a
+signal. A truncation test pins it: cutting the last 100 bars off the input
+must not change any of the first 200.
+
+**An unhedged foreign position earns the currency move**, and that is not a
+cost — it is a real exposure the account carries. A GBP investor holding a
+USD instrument owns the dollar as well as the instrument. Converting the
+price panel is what makes that show up in the equity curve at all.
+
+### Part 2 — Fee structure
+
+```python
+FXConfig(
+    enabled=False,                  # opt-in
+
+    account_currency="GBP",
+    instrument_currencies=None,     # {ticker: currency}; unmapped == domestic
+
+    fx_conversion_fee_pct=0.005,    # 0.5%, Trading212's
+    fx_spread_bps=0.0,              # applied to the rate, before conversion
+    fx_slippage_bps=0.0,            # applied after the spread
+
+    fx_rate_source="lake",          # "lake" | "config" | "static"
+    fx_rates=None,                  # {currency: rate}; the lake's fallback
+    fx_pair_tickers=None,           # {currency: ticker} naming the lake series
+    static_fx_rate=1.0,
+
+    fx_rounding_mode="none",        # "none" | "nearest_pip" | "nearest_cent"
+    fx_fee_basis="notional",        # "notional" | "result"  <- read this one
+    record_fx_details=True,         # always true for manual execution
+)
+```
+
+**Three charges, deliberately not merged**, because a real statement lists
+them separately and they answer different questions:
+
+| Charge | On what | Typical |
+| --- | --- | --- |
+| `fx_conversion_fee_pct` | The broker's explicit percentage | 0.5% — dominant at retail size |
+| `fx_spread_bps` | The two-sided quote, adverse on both sides | a few bps |
+| `fx_slippage_bps` | What the quoted spread misses | 0 by default |
+
+Order of application is fixed and is the order a broker applies it in:
+**spread, then slippage, then rounding**. Rounding last matters — rounding
+the mid first and widening it afterwards would quote a granularity the deal
+never had. A test asserts the two orders differ.
+
+**`fx_fee_basis` is the setting that matters, and it is worth two orders of
+magnitude.**
+
+| Basis | Charged on | A 0.5% fee on a £30k position that gains 1% |
+| --- | --- | --- |
+| `"notional"` (default) | The converted position value, at open **and** close | ~£300 |
+| `"result"` | The realised P&L and financing, at close only | ~£1.50 |
+
+The default is `"notional"` because it is what this module was specified to
+do, and because it is the conservative reading — it cannot flatter a result.
+**But `"result"` is closer to how Trading212 actually charges CFD
+conversion:** a CFD never buys the underlying, so no position notional
+crosses currencies at open; what crosses is the outcome. If the strategy
+holds foreign instruments at any size, run both — the gap between them is
+larger than most of the effects the rest of this engine models.
+
+`fx_conversion_fee_pct` is a **fraction**, and a value at or above 0.1 is
+refused: `0.5` is exactly what "0.5%" becomes when it is typed as a number,
+and no broker charges a tenth of the converted amount.
+
+### Part 3 — Integration points
+
+| File | What it does |
+| --- | --- |
+| `fx.py` | The model. Pure, and calls nothing |
+| `fills.py` | `convert_prices()` restates the panel; `fx_open_costs()` is the funding leg |
+| `pnl.py` | `fx` joins `PNL_COMPONENTS`; `fx_close_costs()` is the repatriation leg |
+| `engine.py` | Builds the per-bar rate matrix, splits open from close, logs the rate on every trade |
+| `frame.py` | `FXConfig` on the config; `fx_open_cost`, `fx_close_cost`, `fx_total_cost`, `fx_rate_used`, `fx_summary()` on the frame |
+
+The trade log gains `fx_rate`, `fx_spread`, `fx_conversion_fee`,
+`fx_slippage` and `fx_adjusted_fill_price`. `bar_pnl()`'s `fx_cost` argument
+defaults to zero, so every pre-existing caller produces exactly what it
+produced before.
+
+**A domestic instrument is charged nothing.** `converting_assets()` marks
+which tickers actually cross a currency boundary, and the charges are masked
+to those. An unmapped ticker is assumed domestic — the safe direction, since
+it understates costs visibly rather than inventing them silently, and the
+resolver warns when it cannot find a rate it was told to expect.
+
+### Part 4 — Manual execution
+
+**Nothing is sent anywhere.** `recommended_fx_fill()` returns the all-in
+price to expect, beside the unconverted `instrument_price` the broker's
+order ticket will actually show. Both are on every trade-log row while
+`record_fx_details` is `True`, which it is by default and should stay.
+
+Latency between the recommendation and the order being placed is accepted.
+The rate will have moved a few pips, which is small beside a 0.5% conversion
+fee and is not something a daily-bar backtest could model honestly anyway.
+The backtest remains realistic because it models *ideal* CFD behaviour and
+charges the costs that are actually predictable; it does not pretend to
+predict the ones that are not.
+
+### Test matrix
+
+`tests/test_execution_fx.py`, 87 tests, no network.
+
+| # | Case | Expected |
+| --- | --- | --- |
+| 1 | Open conversion | Account → instrument; fee, spread and slippage applied |
+| 2 | Close conversion | Instrument → account; charges applied, adverse the other way |
+| 3 | No conversion | Same currency ⇒ every charge exactly zero |
+| 4 | Spread only | `spread_bps > 0`, `fee_pct = 0` |
+| 5 | Fee only | `fee_pct > 0`, `spread_bps = 0` |
+| 6 | Combined | Spread, then slippage, then rounding — and the order is not commutative |
+| 7 | Rounding | `none`, `nearest_pip`, `nearest_cent` |
+| 8 | Manual execution | `recommended_fill` returned; nothing is sent anywhere |
+| 9 | Multi-currency prep | `convert_to_` / `convert_from_account_currency` are exact inverses |
+| 10 | Determinism | Identical inputs ⇒ identical outputs |
+
+Beyond the matrix, the tests that decide whether this is safe to switch on:
+
+- **A constant rate with no fees changes nothing.** Position sizing is
+  notional-based, so a pure rescaling of prices cancels exactly. This is
+  what proves the conversion is a change of *units* and not a change of
+  *model* — any difference after it is a cost, not an artefact.
+- **The P&L identity survives a sixth component**, with FX and stops both on.
+- **A lake rate cannot reach backwards** — the truncation test above.
+- **The reported cost is exactly what the P&L was charged**, though the
+  *shortfall against a fee-free run* is only approximately the fee: charging
+  it lowers equity, which resizes the next position. That gap is compounding,
+  not error, and the tests state which of the two is exact.
+
+Two bugs these tests caught during the build:
+
+- **Domestic instruments were charged a conversion fee** — the whole cost
+  model applied to transactions that never happened.
+- **The `"lake"` source warned on every call**, because the rate-matrix
+  builder asks for the fallback first and supplies the real per-bar rates
+  itself afterwards.
+
+---
+
 ## Why there is a loop
 
 Every layer upstream is vectorised over the whole panel because each bar's
@@ -459,7 +675,7 @@ ExecutionConfig(
 ## Testing
 
 ```bash
-pytest tests/test_execution_*.py     # 192 tests, no network
+pytest tests/test_execution_*.py     # 279 tests, no network
 ```
 
 | File | Covers |
@@ -467,6 +683,7 @@ pytest tests/test_execution_*.py     # 192 tests, no network
 | `test_execution_components.py` | State machine, fills, financing, P&L decomposition |
 | `test_execution_engine.py` | Accounting identities, lag, hysteresis, risk, costs |
 | `test_execution_stops.py` | Intrabar stops: the eleven-case matrix, fill modes, manual orders |
+| `test_execution_fx.py` | FX conversion: the ten-case matrix, fee bases, look-ahead |
 
 The accounting tests matter most: if the components stop summing to the
 change in equity, every number the analytics layer eventually reports
@@ -499,5 +716,17 @@ one bar and neither gapped, the bar does not record which came first. The
 real CFD account posts margin per position at instrument-specific rates and
 is closed out on a margin *ratio*, not on drawdown from peak.
 
-**One equity pool, no currency.** Every instrument is assumed denominated in
-the account currency. FX CFDs in particular would need conversion.
+**One equity pool, and conversion but not multi-currency accounting.** FX
+conversion costs are modelled (above), and prices are restated into the
+account currency, but the account still holds a single cash balance. A real
+multi-currency account keeps a balance per currency, converts only what it
+needs to, and can leave a foreign balance unconverted between trades — which
+is materially cheaper than converting both ways on every round trip. The
+primitives an accounting layer would need are exposed for exactly this:
+`convert_to_account_currency`, `convert_from_account_currency`,
+`apply_conversion_fee` and `apply_fx_spread`.
+
+**FX exposure is unhedged and unmeasured.** A foreign position carries the
+currency as well as the instrument, and the equity curve reflects it, but
+nothing reports how much of a result came from the instrument and how much
+from the rate. That decomposition belongs to the analytics layer.

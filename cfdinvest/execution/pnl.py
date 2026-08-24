@@ -17,6 +17,10 @@ The decomposition, for each bar:
     Transaction costs, charged on the change in position.
 ``financing``
     Overnight carry on the position held into the bar.
+``fx``
+    Currency conversion on the part of the position opened and closed this
+    bar. Zero unless FX is enabled, so the identity is unchanged for every
+    single-currency run.
 
 Splitting at the fill price rather than marking everything close-to-close is
 what makes a mid-bar trade accounted correctly: without it, a position opened
@@ -35,9 +39,12 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from cfdinvest.execution import fx as fx_module
+
 __all__ = [
     "PNL_COMPONENTS",
     "bar_pnl",
+    "fx_close_costs",
     "realized_on_close",
     "equity_curve",
     "drawdown",
@@ -51,6 +58,7 @@ PNL_COMPONENTS: tuple[str, ...] = (
     "spread",
     "slippage",
     "financing",
+    "fx",
 )
 
 
@@ -63,17 +71,21 @@ def bar_pnl(
     spread_cost: np.ndarray,
     slippage_cost: np.ndarray,
     financing: np.ndarray,
+    fx_cost: np.ndarray | float = 0.0,
 ) -> dict[str, np.ndarray]:
     """Decompose one bar's P&L per asset.
 
-    Pure and vectorised. Costs and financing arrive as positive numbers and
-    are negated here, so every returned component is signed the same way:
-    positive helps the account.
+    Pure and vectorised. Costs, financing and FX arrive as positive numbers
+    and are negated here, so every returned component is signed the same
+    way: positive helps the account.
+
+    ``fx_cost`` defaults to zero, which is what makes every pre-FX caller
+    and every single-currency run produce exactly the numbers it did before.
 
     Returns
     -------
     dict
-        The five :data:`PNL_COMPONENTS` plus ``total``.
+        The six :data:`PNL_COMPONENTS` plus ``total``.
     """
     gap = np.where(
         np.isfinite(previous_close) & np.isfinite(fill_price),
@@ -92,9 +104,43 @@ def bar_pnl(
         "spread": -spread_cost,
         "slippage": -slippage_cost,
         "financing": -financing,
+        "fx": -np.broadcast_to(
+            np.asarray(fx_cost, dtype="float64"), np.shape(gap)
+        ).copy(),
     }
     components["total"] = sum(components.values())
     return components
+
+
+def fx_close_costs(
+    reference_price: np.ndarray,
+    closed_units: np.ndarray,
+    fx_rates: np.ndarray,
+    fx_config,
+    *,
+    realized_pnl=None,
+    financing=None,
+    converts=None,
+) -> dict[str, np.ndarray]:
+    """The cost of converting back into the account currency on a close.
+
+    The integration point named in the design: repatriation is a P&L event,
+    so it lives beside the rest of the P&L. A thin wrapper over
+    :func:`cfdinvest.execution.fx.apply_fx_conversion_close`.
+
+    ``reference_price`` is expected already converted to the account
+    currency; it is turned back into the instrument's own currency here so
+    that the FX module works in the units it documents.
+    """
+    return fx_module.apply_fx_conversion_close(
+        fx_module.convert_from_account_currency(reference_price, fx_rates),
+        closed_units,
+        fx_rates,
+        fx_config,
+        realized_pnl=realized_pnl,
+        financing=financing,
+        converts=converts,
+    )
 
 
 def realized_on_close(
@@ -209,4 +255,5 @@ def summarise(
         "total_spread": float(-pnl["spread"].sum()) if "spread" in pnl else 0.0,
         "total_slippage": float(-pnl["slippage"].sum()) if "slippage" in pnl else 0.0,
         "total_financing": float(-pnl["financing"].sum()) if "financing" in pnl else 0.0,
+        "total_fx": float(-pnl["fx"].sum()) if "fx" in pnl else 0.0,
     }

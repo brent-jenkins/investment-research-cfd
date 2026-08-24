@@ -19,6 +19,12 @@ holding is free and only trading pays:
     gap through the level. Defaults to zero so a run's costs are exactly
     the spread until you deliberately say otherwise.
 
+**Fills are struck in the account currency.** A price panel arrives in the
+instrument's own currency; :func:`convert_prices` restates it before anything
+else sees it, so the state machine, the risk cap and the P&L all work in one
+unit. With FX disabled every rate is 1.0 and the conversion is the identity,
+which is what keeps existing runs reproducible.
+
 All functions are pure and vectorised.
 """
 
@@ -27,11 +33,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from cfdinvest.execution import fx as fx_module
+
 __all__ = [
     "FILL_MODES",
     "DEFAULT_SPREAD_BPS",
     "shift_for_execution",
     "fill_prices",
+    "convert_prices",
+    "fx_open_costs",
     "resolve_spreads",
     "transaction_costs",
     "effective_fill_price",
@@ -120,6 +130,67 @@ def fill_prices(
         if panel is None or panel.empty:
             raise ValueError(f"no {mode!r} or 'close' panel available for fills")
     return panel
+
+
+def convert_prices(values, fx_rates):
+    """Restate prices in the account currency.
+
+    Pure. Accepts a ``timestamp x ticker`` panel with a per-ticker rate
+    Series, or the same two as aligned numpy matrices — the engine works in
+    matrices, and a caller inspecting a panel should not have to.
+
+    A panel of dollar prices in a sterling account becomes a panel of
+    sterling prices, so everything downstream — position sizing, the
+    leverage cap, the equity curve — is denominated consistently without
+    knowing that FX exists at all.
+
+    A rate of 1.0 is the identity, so a run with FX disabled produces
+    bit-for-bit what it did before this module existed.
+    """
+    if values is None or fx_rates is None:
+        return values
+
+    if isinstance(values, pd.DataFrame):
+        if values.empty or fx_rates is None or len(fx_rates) == 0:
+            return values
+        rates = pd.Series(fx_rates).reindex(values.columns).fillna(1.0)
+        if bool((rates == 1.0).all()):
+            return values
+        return values.mul(rates, axis="columns")
+
+    matrix = np.asarray(values, dtype="float64")
+    rates = np.asarray(fx_rates, dtype="float64")
+    if rates.size == 0 or np.all(rates == 1.0):
+        return matrix
+    return matrix * rates
+
+
+def fx_open_costs(
+    reference_price: np.ndarray,
+    opened_units: np.ndarray,
+    fx_rates: np.ndarray,
+    fx_config,
+    *,
+    converts=None,
+) -> dict[str, np.ndarray]:
+    """The cost of converting into instrument currency to fund an open.
+
+    The integration point named in the design: once a base fill price is
+    known, this is what FX adds to it. A thin wrapper over
+    :func:`cfdinvest.execution.fx.apply_fx_conversion_open`, kept here so
+    the engine asks the fills module for everything about a fill.
+
+    ``reference_price`` is expected **already converted** to the account
+    currency by :func:`convert_prices`; the rate is passed again only so the
+    all-in ``fx_adjusted_fill_price`` can be quoted for manual execution.
+    """
+    return fx_module.apply_fx_conversion_open(
+        fx_module.convert_from_account_currency(reference_price, fx_rates),
+        opened_units,
+        fx_rates,
+        fx_config,
+        converts=converts,
+    )
 
 
 def resolve_spreads(

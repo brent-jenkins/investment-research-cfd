@@ -22,6 +22,7 @@ import pandas as pd
 from cfdinvest.execution import engine as engine_module
 from cfdinvest.execution import pnl as pnl_module
 from cfdinvest.execution.state import HysteresisThresholds
+from cfdinvest.execution.fx import FXConfig
 from cfdinvest.execution.stops import StopConfig, recommended_orders
 from cfdinvest.schema import TIMESTAMP
 
@@ -77,6 +78,15 @@ class ExecutionConfig:
     #: realism: without it, reported drawdowns are smaller than the ones that
     #: actually happened.
     stops: StopConfig = field(default_factory=StopConfig)
+
+    # -- currency ----------------------------------------------------------- #
+    #: Currency conversion policy. **Disabled by default**, which treats every
+    #: instrument as already denominated in the account currency -- exactly
+    #: what the engine assumed before this existed, so no recorded number
+    #: moves. Enable it for any book holding foreign instruments: the fee is
+    #: charged on turnover rather than on skill, so ignoring it flatters a
+    #: high-turnover strategy most.
+    fx: FXConfig = field(default_factory=FXConfig)
 
     # -- risk ------------------------------------------------------------- #
     #: Cap on gross notional divided by equity.
@@ -142,6 +152,15 @@ class ExecutionFrame:
         default_factory=lambda: pd.Series(dtype="float64")
     )
     entry_prices: pd.Series = field(default_factory=lambda: pd.Series(dtype="float64"))
+    fx_open_cost: pd.Series = field(
+        default_factory=lambda: pd.Series(dtype="float64")
+    )
+    fx_close_cost: pd.Series = field(
+        default_factory=lambda: pd.Series(dtype="float64")
+    )
+    fx_rate_used: pd.Series = field(
+        default_factory=lambda: pd.Series(dtype="float64")
+    )
     metadata: dict[str, Any] = field(default_factory=dict)
 
     # -- views ------------------------------------------------------------ #
@@ -150,9 +169,46 @@ class ExecutionFrame:
         """The calendar every panel shares."""
         return self.equity_curve.index
 
+    @property
+    def fx_total_cost(self) -> float:
+        """Everything currency conversion took out of the account.
+
+        The number to hold against the strategy's edge: if conversion costs
+        a comparable fraction of equity to what the signal earns, the edge
+        is in the broker's pocket rather than the account's.
+        """
+        return float(self.fx_open_cost.sum() + self.fx_close_cost.sum())
+
     def drawdown(self) -> pd.DataFrame:
         """Running peak, drawdown and drawdown fraction."""
         return pnl_module.drawdown(self.equity_curve)
+
+    def fx_summary(self) -> pd.DataFrame:
+        """FX cost per instrument, beside the rate it was converted at.
+
+        Empty when FX is disabled. The column to read is ``fx_cost`` against
+        ``realized_pnl``: an instrument whose conversion cost rivals its P&L
+        is one the account would be better off not holding in that currency.
+        """
+        if self.trades.empty or "fx_conversion_fee" not in self.trades.columns:
+            return pd.DataFrame(
+                columns=["fx_rate", "fx_cost", "fx_conversion_fee", "trades"]
+            )
+
+        costs = self.trades.assign(
+            fx_cost=self.trades["fx_conversion_fee"]
+            + self.trades["fx_spread"]
+            + self.trades["fx_slippage"]
+        )
+        grouped = costs.groupby("asset")
+        return pd.DataFrame(
+            {
+                "fx_rate": grouped["fx_rate"].last(),
+                "fx_cost": grouped["fx_cost"].sum(),
+                "fx_conversion_fee": grouped["fx_conversion_fee"].sum(),
+                "trades": grouped.size(),
+            }
+        ).sort_index()
 
     def working_orders(self) -> pd.DataFrame:
         """The stop and take-profit orders to place, for the current book.
@@ -320,6 +376,14 @@ def run_backtest(
         "tp_priority": settings.stops.tp_priority,
         "slippage_bps": settings.stops.slippage_bps,
         "max_slippage_bps": settings.stops.max_slippage_bps,
+        "fx_enabled": settings.fx.enabled,
+        "account_currency": settings.fx.account_currency,
+        "fx_conversion_fee_pct": settings.fx.fx_conversion_fee_pct,
+        "fx_spread_bps": settings.fx.fx_spread_bps,
+        "fx_slippage_bps": settings.fx.fx_slippage_bps,
+        "fx_rate_source": settings.fx.fx_rate_source,
+        "fx_rounding_mode": settings.fx.fx_rounding_mode,
+        "fx_fee_basis": settings.fx.fx_fee_basis,
         "stop_events": len(result["stop_events"]),
         "gap_through_exits": int(
             (result["stop_events"]["breach_type"] == "gap").sum()
@@ -350,5 +414,8 @@ def run_backtest(
         stop_levels=result["stop_levels"],
         take_profit_levels=result["take_profit_levels"],
         entry_prices=result["entry_prices"],
+        fx_open_cost=result["fx_open_cost"],
+        fx_close_cost=result["fx_close_cost"],
+        fx_rate_used=result["fx_rate_used"],
         metadata=metadata,
     )

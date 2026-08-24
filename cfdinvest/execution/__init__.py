@@ -19,6 +19,17 @@ from cfdinvest.execution.fills import fill_prices, shift_for_execution, transact
 from cfdinvest.execution.financing import financing_cost, financing_rates, nights_between
 from cfdinvest.execution.frame import ExecutionConfig, ExecutionFrame, run_backtest
 from cfdinvest.execution.pnl import PNL_COMPONENTS, bar_pnl, drawdown, equity_curve
+from cfdinvest.execution.fx import (
+    FXConfig,
+    apply_conversion_fee,
+    apply_fx_conversion_close,
+    apply_fx_conversion_open,
+    apply_fx_spread,
+    convert_from_account_currency,
+    convert_to_account_currency,
+    recommended_fx_fill,
+    resolve_fx_rates,
+)
 from cfdinvest.execution.stops import (
     StopConfig,
     StopEvent,
@@ -42,6 +53,15 @@ __all__ = [
     "run_backtest",
     "run_execution",
     "HysteresisThresholds",
+    "FXConfig",
+    "convert_to_account_currency",
+    "convert_from_account_currency",
+    "apply_conversion_fee",
+    "apply_fx_spread",
+    "apply_fx_conversion_open",
+    "apply_fx_conversion_close",
+    "recommended_fx_fill",
+    "resolve_fx_rates",
     "StopConfig",
     "StopEvent",
     "TakeProfitEvent",

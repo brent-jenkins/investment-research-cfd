@@ -17,7 +17,8 @@ subtly wrong, so it is fixed and documented:
 3. Decide the new target from the (lagged) signal, the hysteresis band and
    the risk caps.
 4. Trade the difference at the fill price, paying spread and slippage;
-   crystallise realised P&L on whatever was closed.
+   crystallise realised P&L on whatever was closed; convert the opened and
+   closed portions across currencies and pay for that too.
 5. Earn the rest of the bar on the new position, fill price to close.
 6. Roll equity forward.
 
@@ -34,6 +35,7 @@ import pandas as pd
 
 from cfdinvest.execution import fills as fills_module
 from cfdinvest.execution import financing as financing_module
+from cfdinvest.execution import fx as fx_module
 from cfdinvest.execution import pnl as pnl_module
 from cfdinvest.execution import state as state_module
 from cfdinvest.execution import stops as stops_module
@@ -69,6 +71,9 @@ TRADE_COLUMNS: tuple[str, ...] = (
     "gap_through",
     "slippage_applied",
     "breach_type",
+    # FX context. The rate a trade was struck at is the one number a manual
+    # execution most needs and the one a backtest most often forgets.
+    *fx_module.FX_TRADE_COLUMNS,
 )
 
 
@@ -88,6 +93,61 @@ def _as_labels(frame: pd.DataFrame, index, columns) -> np.ndarray:
         return np.full((len(index), len(columns)), "flat", dtype=object)
     aligned = frame.reindex(index=index, columns=columns)
     return aligned.astype("object").fillna("flat").to_numpy()
+
+
+def _fx_matrix(index, columns, analysis_frame, fx_config) -> np.ndarray:
+    """A ``bars x assets`` matrix of account-currency-per-instrument rates.
+
+    A matrix rather than a per-ticker constant because the rate genuinely
+    moves, and because using one rate for a whole decade would put an
+    end-of-run rate on a start-of-run trade — look-ahead, and of a kind that
+    is easy to miss because it hides inside a cost model.
+
+    The ``"lake"`` source therefore reads the FX series bar by bar and
+    **forward-fills only**: a rate is carried forward from the last day it
+    was known, never backward from a day it was not.
+    """
+    ones = np.ones((len(index), len(columns)), dtype="float64")
+    if not fx_config.enabled:
+        return ones
+
+    # The lake source supplies its own per-bar rates below, so the resolved
+    # constants are only its fallback and must not warn about being one.
+    resolved = fx_module.resolve_fx_rates(
+        columns, fx_config, warn=fx_config.fx_rate_source != "lake"
+    ).to_numpy()
+    matrix = ones * resolved
+
+    if fx_config.fx_rate_source != "lake":
+        return matrix
+
+    close_panel = analysis_frame.prices.get("close", pd.DataFrame())
+    currencies = fx_config.instrument_currencies or {}
+    pairs = fx_config.fx_pair_tickers or {}
+
+    for position, ticker in enumerate(columns):
+        currency = currencies.get(str(ticker), fx_config.account_currency)
+        if currency == fx_config.account_currency:
+            continue
+        pair = pairs.get(currency)
+        if pair is None or close_panel.empty or pair not in close_panel.columns:
+            logger.warning(
+                "fx_rate_source='lake' but no %s series for %s in the lake "
+                "(fx_pair_tickers: %r); using the configured rate %.6g.",
+                currency, ticker, pair, matrix[0, position],
+            )
+            continue
+
+        series = close_panel[pair].reindex(index).ffill()
+        usable = series.to_numpy(dtype="float64", na_value=np.nan)
+        # Where the lake has nothing yet -- before the pair's first print --
+        # keep the configured fallback rather than a NaN that would silently
+        # blank out every price for that instrument.
+        matrix[:, position] = np.where(
+            np.isfinite(usable) & (usable > 0), usable, matrix[:, position]
+        )
+
+    return matrix
 
 
 def run_execution(signal_frame, analysis_frame, config):
@@ -131,17 +191,43 @@ def run_execution(signal_frame, analysis_frame, config):
         index, columns, 0.0,
     )
 
-    close = _as_matrix(close_panel, index, columns)
-    fill_reference = _as_matrix(
-        fills_module.fill_prices(analysis_frame.prices, config.fill_mode),
-        index, columns,
+    # Every price the loop touches is restated in the account currency
+    # before anything else sees it, so the state machine, the leverage cap
+    # and the equity curve all work in one unit. Rates are 1.0 with FX
+    # disabled, which makes the conversion the identity.
+    fx_config = config.fx
+    fx_rates = _fx_matrix(index, columns, analysis_frame, fx_config)
+    # Which instruments genuinely cross a currency boundary. A domestic
+    # instrument converts nothing and is charged nothing.
+    fx_converts = fx_module.converting_assets(columns, fx_config)
+
+    close = fills_module.convert_prices(
+        _as_matrix(close_panel, index, columns), fx_rates
+    )
+    fill_reference = fills_module.convert_prices(
+        _as_matrix(
+            fills_module.fill_prices(analysis_frame.prices, config.fill_mode),
+            index, columns,
+        ),
+        fx_rates,
     )
 
     stop_config = config.stops
-    bar_open = _as_matrix(analysis_frame.prices.get("open"), index, columns)
-    bar_high = _as_matrix(analysis_frame.prices.get("high"), index, columns)
-    bar_low = _as_matrix(analysis_frame.prices.get("low"), index, columns)
-    atr_panel = _as_matrix(analysis_frame.volatility.get("atr"), index, columns)
+    bar_open = fills_module.convert_prices(
+        _as_matrix(analysis_frame.prices.get("open"), index, columns), fx_rates
+    )
+    bar_high = fills_module.convert_prices(
+        _as_matrix(analysis_frame.prices.get("high"), index, columns), fx_rates
+    )
+    bar_low = fills_module.convert_prices(
+        _as_matrix(analysis_frame.prices.get("low"), index, columns), fx_rates
+    )
+    # The ATR is a price range, so it converts exactly like a price -- and it
+    # must, or an ATR-multiple stop on a dollar instrument would be placed a
+    # dollar distance away from a sterling price.
+    atr_panel = fills_module.convert_prices(
+        _as_matrix(analysis_frame.volatility.get("atr"), index, columns), fx_rates
+    )
 
     stops_active = stop_config.enabled
     if stops_active and not np.isfinite(atr_panel).any():
@@ -194,6 +280,8 @@ def run_execution(signal_frame, analysis_frame, config):
     }
     realized_series = np.zeros(bars)
     unrealized_series = np.zeros(bars)
+    fx_open_series = np.zeros(bars)
+    fx_close_series = np.zeros(bars)
     equity_series = np.zeros(bars)
     exposure_series = np.zeros(bars)
     trades: list[dict] = []
@@ -294,6 +382,30 @@ def run_execution(signal_frame, analysis_frame, config):
         )
         realized = np.nan_to_num(realized)
 
+        # 4b. Currency conversion, on the part opened and the part closed.
+        #     A flip does both: the old position is repatriated in full and
+        #     the new one funded in full, which is what the broker converts.
+        opened_units, closed_units = fx_module.split_open_close(
+            units, target_units
+        )
+        fx_rate_row = fx_rates[bar]
+        if fx_config.enabled:
+            fx_open = fills_module.fx_open_costs(
+                effective_fill, opened_units, fx_rate_row, fx_config,
+                converts=fx_converts,
+            )
+            fx_close = pnl_module.fx_close_costs(
+                effective_fill, closed_units, fx_rate_row, fx_config,
+                realized_pnl=realized, financing=-carry,
+                converts=fx_converts,
+            )
+            fx_cost = np.nan_to_num(fx_open["total"]) + np.nan_to_num(
+                fx_close["total"]
+            )
+        else:
+            fx_open = fx_close = None
+            fx_cost = np.zeros(assets)
+
         # 4. Book the bar.
         # Passing the stop fill as that asset's fill price makes the
         # decomposition exact without touching pnl.py: the "gap" leg becomes
@@ -301,10 +413,14 @@ def run_execution(signal_frame, analysis_frame, config):
         # and the "intraday" leg is zero because the new position is flat.
         bar_components = pnl_module.bar_pnl(
             units, target_units, previous_close, effective_fill, price_now,
-            spread_cost, slippage_cost, carry,
+            spread_cost, slippage_cost, carry, fx_cost,
         )
         for name, values in bar_components.items():
             components[name][bar] = float(np.nansum(values))
+
+        if fx_open is not None:
+            fx_open_series[bar] = float(np.nansum(fx_open["total"]))
+            fx_close_series[bar] = float(np.nansum(fx_close["total"]))
 
         equity += components["total"][bar]
         peak_equity = max(peak_equity, equity)
@@ -347,6 +463,10 @@ def run_execution(signal_frame, analysis_frame, config):
                         stop_out, bool(stopped[position]), breach, position
                     ),
                     **_stop_fields(breach, stopped, position, stop_level, target_level),
+                    **_fx_fields(
+                        fx_open, fx_close, position, fx_rate_row,
+                        effective_fill, traded, fx_config,
+                    ),
                 }
             )
 
@@ -431,6 +551,7 @@ def run_execution(signal_frame, analysis_frame, config):
         index, columns, positions, notionals, components, realized_series,
         unrealized_series, equity_series, exposure_series, trades, config,
         stop_events, stop_level, target_level, entry_price,
+        fx_open_series, fx_close_series, fx_rates[-1] if bars else None,
     )
 
 
@@ -505,6 +626,51 @@ def _trade_reason(stop_out, was_stopped, breach, position) -> str:
     return "signal"
 
 
+def _fx_fields(
+    fx_open, fx_close, position, fx_rate_row, effective_fill, traded, fx_config
+) -> dict:
+    """The FX columns for one trade-log row.
+
+    The costs of the open leg and the close leg are summed: a single row can
+    be both, and splitting one trade across two rows would break the
+    one-row-per-executed-change contract the log already keeps.
+    """
+    rate = float(fx_rate_row[position])
+    if fx_open is None or not fx_config.record_fx_details:
+        return {
+            "fx_rate": rate,
+            "fx_spread": 0.0,
+            "fx_conversion_fee": 0.0,
+            "fx_slippage": 0.0,
+            "fx_adjusted_fill_price": float("nan"),
+        }
+
+    buying = traded[position] > 0
+    recommended = fx_module.recommended_fx_fill(
+        fx_module.convert_from_account_currency(
+            effective_fill[position : position + 1], fx_rate_row[position : position + 1]
+        ),
+        fx_rate_row[position : position + 1],
+        fx_config,
+        side=1.0 if buying else -1.0,
+    )
+
+    return {
+        "fx_rate": rate,
+        "fx_spread": float(
+            fx_open["fx_spread"][position] + fx_close["fx_spread"][position]
+        ),
+        "fx_conversion_fee": float(
+            fx_open["fx_conversion_fee"][position]
+            + fx_close["fx_conversion_fee"][position]
+        ),
+        "fx_slippage": float(
+            fx_open["fx_slippage"][position] + fx_close["fx_slippage"][position]
+        ),
+        "fx_adjusted_fill_price": float(recommended["recommended_fill"][0]),
+    }
+
+
 def _stop_fields(breach, stopped, position, stop_level, target_level) -> dict:
     """The stop/take-profit columns for one trade-log row."""
     was_stopped = bool(stopped[position]) and breach is not None
@@ -530,6 +696,7 @@ def _assemble(
     index, columns, positions, notionals, components, realized, unrealized,
     equity, exposure, trades, config,
     stop_events=None, stop_level=None, target_level=None, entry_price=None,
+    fx_open=None, fx_close=None, fx_rate_used=None,
 ):
     """Package the loop's arrays into frames."""
     position_frame = pd.DataFrame(positions, index=index, columns=columns)
@@ -581,6 +748,18 @@ def _assemble(
             blank if entry_price is None else entry_price,
             index=columns, name="entry_price",
         ),
+        "fx_open_cost": pd.Series(
+            np.zeros(len(index)) if fx_open is None else fx_open,
+            index=index, name="fx_open_cost",
+        ),
+        "fx_close_cost": pd.Series(
+            np.zeros(len(index)) if fx_close is None else fx_close,
+            index=index, name="fx_close_cost",
+        ),
+        "fx_rate_used": pd.Series(
+            np.ones(len(columns)) if fx_rate_used is None else fx_rate_used,
+            index=columns, name="fx_rate_used",
+        ),
     }
 
 
@@ -601,4 +780,7 @@ def _empty_result():
             dtype="float64", name="take_profit_level"
         ),
         "entry_prices": pd.Series(dtype="float64", name="entry_price"),
+        "fx_open_cost": pd.Series(dtype="float64", name="fx_open_cost"),
+        "fx_close_cost": pd.Series(dtype="float64", name="fx_close_cost"),
+        "fx_rate_used": pd.Series(dtype="float64", name="fx_rate_used"),
     }
