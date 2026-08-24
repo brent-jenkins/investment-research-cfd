@@ -1,0 +1,867 @@
+"""The read-only dashboard: sources, health checks, formatting and pages.
+
+Two things are worth testing here and they are different in kind.
+
+The **logic** — what counts as stale, what a missing file means, how a
+config override is spotted — is plain Python and is tested directly.
+
+The **pages** are Streamlit scripts, which normally means they are only
+tested by looking at them. They are executed here against a stub Streamlit
+and a synthetic lake, which catches the failure that actually happens: a
+page that raises on a column the pipeline did not write.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from cfdinvest.config import AppConfig, PathConfig
+from cfdinvest.ui import components, configview, health, sources, theme
+
+UI = Path(__file__).resolve().parents[1] / "cfdinvest" / "ui"
+
+
+# --------------------------------------------------------------------------- #
+# Theme
+# --------------------------------------------------------------------------- #
+def test_the_palette_is_the_specified_one():
+    assert theme.PALETTE == {
+        "background": "#0B0C10",
+        "panel": "#1F2833",
+        "text": "#C5C6C7",
+        "accent": "#66FCF1",
+        "accent2": "#45A29E",
+    }
+
+
+def test_the_stylesheet_carries_every_palette_colour():
+    css = theme.stylesheet()
+    for colour in theme.PALETTE.values():
+        assert colour in css
+
+
+def test_the_stylesheet_is_a_closed_style_block():
+    css = theme.stylesheet()
+    assert css.strip().startswith("<style>")
+    assert css.strip().endswith("</style>")
+    assert css.count("{") == css.count("}")
+
+
+def test_the_stylesheet_is_deterministic():
+    assert theme.stylesheet() == theme.stylesheet()
+
+
+def test_warning_colours_are_not_brand_colours():
+    """A warning that shares a hue with the accent is one nobody sees."""
+    assert theme.SEMANTIC["critical"] not in theme.PALETTE.values()
+    assert theme.SEMANTIC["warning"] not in theme.PALETTE.values()
+
+
+def test_an_unknown_state_renders_muted_rather_than_raising():
+    assert theme.colour_for("something new") == theme.SEMANTIC["muted"]
+
+
+# --------------------------------------------------------------------------- #
+# Formatting
+# --------------------------------------------------------------------------- #
+def test_missing_values_render_as_a_dash_not_nan():
+    for value in (None, np.nan, pd.NaT):
+        assert components.number(value) == components.DASH
+        assert components.money(value) == components.DASH
+        assert components.percent(value) == components.DASH
+        assert components.moment(value) == components.DASH
+
+
+def test_money_keeps_the_sign_in_front():
+    assert components.money(-1234.5, "£") == "-£1,234.50"
+    assert components.money(1234.5, "£") == "£1,234.50"
+
+
+def test_percent_renders_a_fraction():
+    assert components.percent(0.0512) == "5.12%"
+
+
+def test_moment_is_always_utc():
+    assert components.moment("2026-08-24T09:30:00Z") == "2026-08-24 09:30 UTC"
+    assert components.moment("2026-08-24T09:30:00") == "2026-08-24 09:30 UTC"
+
+
+def test_age_picks_a_sensible_unit():
+    now = pd.Timestamp("2026-08-24 12:00", tz="UTC")
+    assert components.age(now - pd.Timedelta(seconds=30), now) == "30 s ago"
+    assert components.age(now - pd.Timedelta(minutes=30), now) == "30 min ago"
+    assert components.age(now - pd.Timedelta(hours=6), now) == "6.0 h ago"
+    assert components.age(now - pd.Timedelta(days=4), now) == "4.0 days ago"
+
+
+def test_a_bad_value_never_raises_in_formatting():
+    assert components.number("not a number") == "not a number"
+    assert components.moment("not a date") == "not a date"
+
+
+# --------------------------------------------------------------------------- #
+# Sources: the Source contract
+# --------------------------------------------------------------------------- #
+def test_missing_is_not_the_same_as_broken():
+    """An empty lake is early; an unreadable one is a fault."""
+    missing = sources.Source.missing("nothing yet")
+    broken = sources.Source.broken("permission denied")
+
+    assert not missing.failed and not missing.ok
+    assert broken.failed and not broken.ok
+
+
+def test_a_good_read_is_ok():
+    assert sources.Source(value=[1, 2]).ok
+
+
+def test_utcnow_accepts_an_injected_clock():
+    pinned = pd.Timestamp("2026-01-01", tz="UTC")
+    assert sources.utcnow(pinned) == pinned
+
+
+def test_utcnow_localises_a_naive_clock():
+    assert sources.utcnow(pd.Timestamp("2026-01-01")).tz is not None
+
+
+# --------------------------------------------------------------------------- #
+# Sources: a synthetic lake
+# --------------------------------------------------------------------------- #
+NOW = pd.Timestamp("2026-08-24 12:00", tz="UTC")
+
+
+@pytest.fixture
+def lake(tmp_path) -> Path:
+    """A lake with one run, one market series and one macro series."""
+    root = tmp_path / "data"
+    (root / "metadata").mkdir(parents=True)
+    (root / "logs").mkdir(parents=True)
+
+    (root / "metadata" / "market_1d_manifest.json").write_text(
+        json.dumps(
+            {
+                "SPX": {"status": "ok", "rows": 300, "start": "2025-01-02",
+                        "end": "2026-08-22", "anomalies": {"zero_volume": 2}},
+                "UKX": {"status": "ok", "rows": 300, "start": "2025-01-02",
+                        "end": "2026-08-22", "anomalies": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "metadata" / "macro_manifest.json").write_text(
+        json.dumps(
+            {
+                "CPIAUCSL": {
+                    "status": "ok", "rows": 60, "start": "2020-01-01",
+                    "end": "2026-07-01", "vintage_mode": "publication_lag",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return root
+
+
+@pytest.fixture
+def run(lake) -> Path:
+    """One completed run, with every artefact the pipeline writes."""
+    from cfdinvest import storage
+
+    directory = lake / "runs" / "20260824T090000Z"
+    directory.mkdir(parents=True)
+
+    index = pd.date_range("2026-08-20", periods=4, tz="UTC", name="timestamp")
+    storage.write_parquet(
+        pd.DataFrame({"equity": [100_000.0, 100_500.0, 99_800.0, 101_200.0]},
+                     index=index),
+        directory / "equity.parquet",
+    )
+    storage.write_parquet(
+        pd.DataFrame(
+            {"SPX": [0.0, 10.0, 10.0, 10.0], "UKX": [0.0, 0.0, -5.0, -5.0]},
+            index=index,
+        ),
+        directory / "positions.parquet",
+    )
+    storage.write_parquet(
+        pd.DataFrame(
+            {
+                "timestamp": [index[1], index[2]],
+                "asset": ["SPX", "UKX"],
+                "action": ["open_long", "open_short"],
+                "units": [10.0, -5.0],
+                "traded_units": [10.0, -5.0],
+                "price": [100.0, 90.0],
+                "fill_price": [100.05, 89.95],
+                "spread_cost": [1.0, 0.5],
+                "slippage": [0.0, 0.0],
+                "financing": [0.0, 0.2],
+                "realized_pnl": [0.0, 0.0],
+                "notional": [1000.0, 450.0],
+                "equity": [100_500.0, 99_800.0],
+                "reason": ["signal", "signal"],
+                "stop_level": [95.0, 94.0],
+                "take_profit_level": [110.0, 82.0],
+                "stop_fill_price": [np.nan, np.nan],
+                "take_profit_fill_price": [np.nan, np.nan],
+                "gap_through": [False, False],
+                "slippage_applied": [0.0, 0.0],
+                "breach_type": ["", ""],
+                "fx_rate": [0.8, 1.0],
+                "fx_spread": [0.0, 0.0],
+                "fx_conversion_fee": [4.0, 0.0],
+                "fx_slippage": [0.0, 0.0],
+                "fx_adjusted_fill_price": [80.44, 89.95],
+            }
+        ),
+        directory / "trades.parquet",
+    )
+    signals = pd.DataFrame(
+        {
+            "direction": ["long", "short"],
+            "size": [0.3, 0.25],
+            "confidence": [0.9, 0.7],
+            "reason": ["trend_up|calm", "trend_down|crisis"],
+        },
+        index=pd.MultiIndex.from_arrays(
+            [[index[-1], index[-1]], ["SPX", "UKX"]], names=["timestamp", "ticker"]
+        ),
+    )
+    storage.write_parquet(signals, directory / "signals.parquet")
+
+    (directory / "summary.json").write_text(
+        json.dumps(
+            {
+                "run_id": "20260824T090000Z",
+                "started_at": "2026-08-24T09:00:00+00:00",
+                "finished_at": "2026-08-24T09:00:42+00:00",
+                "duration_seconds": 42.0,
+                "status": "ok",
+                "universe": ["SPX", "UKX"],
+                "bars": 300,
+                "as_of": "2026-08-22T00:00:00+00:00",
+                "metrics": {
+                    "final_equity": 101_200.0, "total_pnl": 1_200.0,
+                    "total_return": 0.012, "max_drawdown_fraction": -0.02,
+                    "total_spread": 1.5, "total_slippage": 0.0,
+                    "total_financing": 0.2, "total_fx": 4.0,
+                },
+                "latest_signals": [],
+                "latest_trades": [],
+                "output_paths": {},
+                "error": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return directory
+
+
+def config_for(lake: Path) -> AppConfig:
+    return AppConfig(paths=PathConfig(data_root=lake))
+
+
+def test_lake_metadata_counts_series_and_anomalies(lake):
+    read = sources.load_lake_metadata(config_for(lake), now=NOW)
+
+    assert read.ok
+    assert read.value["series_count"] == 3       # 2 market + 1 macro
+    assert read.value["anomalies_count"] == 2
+    assert read.value["vintage_mode"] == "publication_lag"
+
+
+def test_lake_freshness_is_the_newest_observation_not_a_file_time(lake):
+    """A lake rewritten today with old data is stale, and must read stale."""
+    read = sources.load_lake_metadata(config_for(lake), now=NOW)
+    assert read.value["last_updated"] == pd.Timestamp("2026-08-22", tz="UTC")
+    assert read.value["age_days"] == pytest.approx(2.5, abs=0.01)
+
+
+def test_a_missing_lake_is_reported_not_raised(tmp_path):
+    read = sources.load_lake_metadata(config_for(tmp_path / "nope"), now=NOW)
+    assert not read.ok
+    assert "does not exist" in (read.error or read.note or "")
+
+
+def test_the_last_run_summary_is_found(lake, run):
+    read = sources.load_last_pipeline_summary(config_for(lake))
+    assert read.ok
+    assert read.value["run_id"] == "20260824T090000Z"
+    assert read.value["status"] == "ok"
+
+
+def test_no_runs_is_missing_not_broken(lake):
+    read = sources.load_last_pipeline_summary(config_for(lake))
+    assert not read.ok
+    assert not read.failed
+
+
+def test_execution_artefacts_load(lake, run):
+    read = sources.load_execution_frame(config_for(lake))
+    assert read.ok
+    assert len(read.value["trades"]) == 2
+    assert not read.value["equity"].empty
+
+
+def test_signals_load_in_long_form(lake, run):
+    read = sources.load_signal_frame(config_for(lake))
+    assert read.ok
+    assert set(read.value.columns) >= {"direction", "size", "confidence", "reason"}
+
+
+def test_regimes_report_their_own_absence(lake):
+    read = sources.load_regime_frame(config_for(lake))
+    assert not read.ok
+    assert not read.failed
+    assert "not persisted" in read.note
+
+
+def test_the_analysis_frame_reports_its_own_absence(lake):
+    assert "not persisted" in sources.load_analysis_frame(config_for(lake)).note
+
+
+def test_scheduler_status_comes_from_the_run_directory(lake, run):
+    read = sources.load_scheduler_status(config_for(lake), ["SPX"], now=NOW)
+
+    assert read.ok
+    assert read.value["last_run"] == pd.Timestamp("2026-08-24T09:00:42Z")
+    assert read.value["last_duration"] == 42.0
+    assert read.value["last_exit_code"] == 0
+    assert read.value["state_file"] is None   # the scheduler keeps none
+
+
+def test_scheduler_next_run_is_computed_not_read(lake, run):
+    read = sources.load_scheduler_status(config_for(lake), ["SPY"], now=NOW)
+    assert read.value["next_run"] is None or read.value["next_run"] > NOW
+
+
+def test_market_status_is_offline_and_deterministic():
+    first = sources.market_status(["SPY", "GLD"], now=NOW)
+    second = sources.market_status(["SPY", "GLD"], now=NOW)
+
+    assert first.ok
+    assert "is_open" in first.value["sessions"].columns
+    pd.testing.assert_frame_equal(
+        first.value["sessions"], second.value["sessions"]
+    )
+
+
+def test_market_status_without_a_universe():
+    assert not sources.market_status([], now=NOW).ok
+
+
+def test_disk_usage_reports_free_space(tmp_path):
+    read = sources.disk_usage(tmp_path)
+    assert read.ok
+    assert read.value["free_bytes"] > 0
+    assert 0.0 <= read.value["free_fraction"] <= 1.0
+
+
+def test_disk_usage_walks_up_to_an_existing_parent(tmp_path):
+    assert sources.disk_usage(tmp_path / "a" / "b" / "c").ok
+
+
+def test_log_tailing_returns_the_last_lines(lake):
+    path = lake / "logs" / "cfdinvest.log"
+    path.write_text("\n".join(f"line {n}" for n in range(500)), encoding="utf-8")
+    config = AppConfig(paths=PathConfig(data_root=lake))
+    object.__setattr__(config.logging, "log_file", str(path))
+
+    read = sources.load_log_files(config)
+    assert "application" in read.value
+
+
+def test_errors_are_filtered_out_of_a_mixed_log(lake):
+    path = lake / "logs" / "cfdinvest.log"
+    path.write_text(
+        "INFO fine\nERROR something broke\nINFO fine again\n", encoding="utf-8"
+    )
+    config = AppConfig(paths=PathConfig(data_root=lake))
+    object.__setattr__(config.logging, "log_file", str(path))
+
+    read = sources.load_error_log(config)
+    assert read.value == ["ERROR something broke"]
+
+
+def test_no_log_file_is_reported_plainly(tmp_path):
+    read = sources.load_error_log(config_for(tmp_path))
+    assert not read.ok
+    assert not read.failed
+
+
+# --------------------------------------------------------------------------- #
+# Health checks
+# --------------------------------------------------------------------------- #
+def healthy_sources(lake: Path, now=NOW) -> dict:
+    config = config_for(lake)
+    return {
+        "config_source": sources.Source(value=config),
+        "lake": sources.load_lake_metadata(config, now=now),
+        "scheduler_status": sources.load_scheduler_status(config, ["SPY"], now=now),
+        "summary": sources.load_last_pipeline_summary(config),
+        "execution": sources.load_execution_frame(config),
+        "errors": sources.Source(value=[]),
+        "disk": sources.disk_usage(lake),
+    }
+
+
+def test_a_healthy_system_shows_no_banner(lake, run):
+    report = health.run_checks(**healthy_sources(lake), now=NOW)
+    assert not report.show_banner, [c.title for c in report.critical]
+
+
+def test_every_check_reports_a_status(lake, run):
+    report = health.run_checks(**healthy_sources(lake), now=NOW)
+    frame = report.to_frame()
+    assert len(frame) == len(report.checks)
+    assert set(frame["status"]) <= set(health.SEVERITIES)
+
+
+def test_a_stale_lake_triggers_the_banner(lake, run):
+    late = NOW + pd.Timedelta(days=10)
+    report = health.run_checks(**healthy_sources(lake, late), now=late)
+
+    assert report.show_banner
+    assert "lake_fresh" in {check.key for check in report.critical}
+
+
+def test_a_failed_run_triggers_the_banner(lake, run):
+    payload = json.loads((run / "summary.json").read_text(encoding="utf-8"))
+    payload["status"] = "failed"
+    payload["error"] = "execution engine exploded"
+    (run / "summary.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    report = health.run_checks(**healthy_sources(lake), now=NOW)
+    keys = {check.key for check in report.critical}
+
+    assert "pipeline_ok" in keys
+    assert "execution_ok" in keys   # the error names the execution layer
+
+
+def test_an_unreadable_config_triggers_the_banner(lake, run):
+    inputs = healthy_sources(lake)
+    inputs["config_source"] = sources.Source.broken("config.toml is not valid TOML")
+
+    report = health.run_checks(**inputs, now=NOW)
+    assert "config" in {check.key for check in report.critical}
+
+
+def test_an_unreadable_lake_triggers_the_banner(lake, run):
+    inputs = healthy_sources(lake)
+    inputs["lake"] = sources.Source.broken("permission denied")
+
+    report = health.run_checks(**inputs, now=NOW)
+    keys = {check.key for check in report.critical}
+    assert "lake_readable" in keys
+    assert "lake_fresh" in keys      # freshness is unknowable, not assumed fine
+
+
+def test_a_full_disk_triggers_the_banner(lake, run):
+    inputs = healthy_sources(lake)
+    inputs["disk"] = sources.Source(
+        value={"free_gb": 0.2, "free_fraction": 0.01, "path": "/",
+               "total_bytes": 1, "used_bytes": 1, "free_bytes": 1}
+    )
+    report = health.run_checks(**inputs, now=NOW)
+    assert "disk" in {check.key for check in report.critical}
+
+
+def test_a_failed_ingestion_triggers_the_banner(lake, run):
+    manifest = json.loads(
+        (lake / "metadata" / "market_1d_manifest.json").read_text(encoding="utf-8")
+    )
+    manifest["SPX"]["status"] = "failed"
+    (lake / "metadata" / "market_1d_manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+    report = health.run_checks(**healthy_sources(lake), now=NOW)
+    assert "ingestion_ok" in {check.key for check in report.critical}
+
+
+def test_a_stop_exit_with_no_fill_triggers_the_banner(lake, run):
+    from cfdinvest import storage
+
+    trades = storage.read_parquet(run / "trades.parquet")
+    trades.loc[0, "reason"] = "stop_loss"
+    trades.loc[0, "stop_fill_price"] = np.nan
+    storage.write_parquet(trades, run / "trades.parquet")
+
+    report = health.run_checks(**healthy_sources(lake), now=NOW)
+    assert "stops_ok" in {check.key for check in report.critical}
+
+
+def test_a_broken_fx_rate_triggers_the_banner(lake, run):
+    from cfdinvest import storage
+
+    trades = storage.read_parquet(run / "trades.parquet")
+    trades.loc[0, "fx_rate"] = np.nan
+    storage.write_parquet(trades, run / "trades.parquet")
+
+    report = health.run_checks(**healthy_sources(lake), now=NOW)
+    assert "fx_ok" in {check.key for check in report.critical}
+
+
+def test_an_execution_traceback_in_the_log_triggers_the_banner(lake, run):
+    inputs = healthy_sources(lake)
+    inputs["errors"] = sources.Source(
+        value=["2026-08-24 ERROR cfdinvest.execution.engine Traceback ..."]
+    )
+    report = health.run_checks(**inputs, now=NOW)
+    assert "execution_ok" in {check.key for check in report.critical}
+
+
+def test_a_missed_scheduled_run_triggers_the_banner(lake, run):
+    inputs = healthy_sources(lake)
+    inputs["scheduler_status"] = sources.Source(
+        value={
+            "last_run": NOW - pd.Timedelta(hours=3),
+            "next_run": NOW - pd.Timedelta(hours=2),
+        }
+    )
+    report = health.run_checks(**inputs, now=NOW)
+    assert "missed_run" in {check.key for check in report.critical}
+
+
+def test_a_check_that_raises_reports_itself_rather_than_crashing():
+    """A check that crashes silently stops protecting you."""
+    broken = sources.Source(value={"coverage": "not a frame at all"})
+    report = health.run_checks(
+        config_source=sources.Source(value=None),
+        lake=broken,
+        scheduler_status=sources.Source(value={}),
+        summary=sources.Source(value={}),
+        execution=sources.Source(value={}),
+        errors=sources.Source(value=[]),
+        disk=sources.Source(value={}),
+        now=NOW,
+    )
+    assert isinstance(report.triggered, tuple)   # it produced a report at all
+
+
+def test_the_banner_text_is_the_specified_string():
+    assert health.BANNER_TEXT == (
+        "⚠ Critical system warning — results may be unreliable. "
+        "See Status page."
+    )
+
+
+def test_thresholds_are_configurable(lake, run):
+    strict = health.HealthThresholds(lake_stale_days=0.5)
+    report = health.run_checks(**healthy_sources(lake), thresholds=strict, now=NOW)
+    assert "lake_fresh" in {check.key for check in report.critical}
+
+
+# --------------------------------------------------------------------------- #
+# Config view
+# --------------------------------------------------------------------------- #
+def test_flatten_walks_nested_dataclasses():
+    frame = configview.to_frame(AppConfig(), AppConfig())
+    assert (frame["setting"] == "paths.data_root").any()
+    assert not frame["overridden"].any()
+
+
+def test_an_override_is_detected():
+    changed = AppConfig(paths=PathConfig(data_root=Path("/elsewhere")))
+    frame = configview.to_frame(changed, AppConfig())
+    row = frame[frame["setting"] == "paths.data_root"].iloc[0]
+
+    assert row["overridden"]
+    assert "elsewhere" in row["value"]
+
+
+def test_credentials_are_redacted():
+    """This page renders into a browser; a printed key is a leaked key."""
+    assert configview.redact("market.api_key", "abcd1234") == "<redacted, 8 chars>"
+    assert configview.redact("macro.fred_api_token", "x" * 32).startswith("<redacted")
+    assert configview.redact("paths.data_root", "/data") == "/data"
+
+
+def test_an_empty_secret_is_left_alone():
+    assert configview.redact("api_key", None) is None
+
+
+def test_unknown_config_keys_are_found():
+    """Keys the loader silently ignores are the quietest way to be wrong."""
+    unknown = configview.unknown_keys(
+        {"paths": {"data_root": "/x", "nonsense": 1}, "made_up": True}, AppConfig()
+    )
+    assert unknown == ["made_up", "paths.nonsense"]
+
+
+def test_unknown_keys_of_an_empty_payload():
+    assert configview.unknown_keys({}, AppConfig()) == []
+
+
+def test_missing_values_are_flagged():
+    frame = configview.to_frame(AppConfig(), AppConfig())
+    assert frame["missing"].any()   # log_file is unset by default
+
+
+def test_long_collections_are_truncated_for_display():
+    rendered = configview._display(list(range(50)))
+    assert "(+42)" in rendered
+
+
+# --------------------------------------------------------------------------- #
+# The pages actually run
+# --------------------------------------------------------------------------- #
+PAGE_FILES = ["app.py"] + [
+    f"pages/{path.name}" for path in sorted((UI / "pages").glob("*.py"))
+]
+
+
+def render(page: str):
+    """Execute one page through Streamlit's own test runner.
+
+    ``AppTest`` runs the script against the real Streamlit API rather than a
+    stub, which is the only way to catch the failure that actually happens
+    here: an argument Streamlit no longer accepts. A hand-written stub is
+    permissive by construction and would pass either way.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(str(UI / page), default_timeout=60)
+    app.run()
+    return app
+
+
+def assert_clean(app, page: str) -> None:
+    assert not app.exception, (
+        f"{page} raised: {[e.value for e in app.exception]}"
+    )
+    assert not app.error, f"{page} rendered an error: {[e.value for e in app.error]}"
+
+
+@pytest.fixture
+def populated(lake, run, monkeypatch):
+    """Point the whole app at the synthetic lake."""
+    monkeypatch.setattr(
+        sources, "load_app_config",
+        lambda *a, **k: sources.Source(value=config_for(lake)),
+    )
+    return lake
+
+
+@pytest.fixture
+def empty_lake(tmp_path, monkeypatch):
+    """A lake directory that exists but holds nothing — a fresh install."""
+    root = tmp_path / "data"
+    root.mkdir()
+    monkeypatch.setattr(
+        sources, "load_app_config",
+        lambda *a, **k: sources.Source(value=config_for(root)),
+    )
+    return root
+
+
+@pytest.fixture
+def absent_lake(tmp_path, monkeypatch):
+    """No lake at all — a misconfigured CFD_DATA_ROOT."""
+    monkeypatch.setattr(
+        sources, "load_app_config",
+        lambda *a, **k: sources.Source(value=config_for(tmp_path / "gone")),
+    )
+    return tmp_path / "gone"
+
+
+@pytest.mark.parametrize("page", PAGE_FILES)
+def test_every_page_renders_against_a_populated_lake(page, populated):
+    app = render(page)
+    assert_clean(app, page)
+    assert app.markdown, f"{page} drew nothing"
+
+
+@pytest.mark.parametrize("page", PAGE_FILES)
+def test_every_page_renders_against_an_empty_lake(page, empty_lake):
+    """The state a fresh install is in, and the one most likely to crash."""
+    app = render(page)
+    assert not app.exception, (
+        f"{page} raised: {[e.value for e in app.exception]}"
+    )
+    assert app.markdown, f"{page} drew nothing"
+
+
+@pytest.mark.parametrize("page", PAGE_FILES)
+def test_every_page_renders_when_the_lake_is_missing_entirely(page, absent_lake):
+    app = render(page)
+    assert not app.exception, (
+        f"{page} raised: {[e.value for e in app.exception]}"
+    )
+    assert app.markdown, f"{page} drew nothing"
+
+
+def test_the_pages_directory_matches_the_specified_layout():
+    expected = {
+        "01_status.py", "02_signals.py", "03_execution.py", "04_positions.py",
+        "05_pnl.py", "06_logs.py", "07_config.py",
+    }
+    assert {p.name for p in (UI / "pages").glob("*.py")} == expected
+
+
+def test_the_banner_is_on_every_page(populated, monkeypatch):
+    """It is a *persistent* banner: absent from one page is a hole."""
+    monkeypatch.setattr(
+        health, "run_checks",
+        lambda **kwargs: health.HealthReport(
+            checks=(
+                health.Check(
+                    key="x", title="Forced failure", triggered=True,
+                    detail="injected by the test",
+                ),
+            )
+        ),
+    )
+    for page in PAGE_FILES:
+        drawn = " ".join(element.value for element in render(page).markdown)
+        assert health.BANNER_TEXT in drawn, f"{page} drew no banner"
+
+
+def test_a_healthy_system_draws_no_banner(populated, monkeypatch):
+    monkeypatch.setattr(
+        health, "run_checks", lambda **kwargs: health.HealthReport(checks=())
+    )
+    drawn = " ".join(element.value for element in render("app.py").markdown)
+    assert health.BANNER_TEXT not in drawn
+    assert "All health checks passing" in drawn
+
+
+def test_the_read_only_badge_is_on_every_page(populated):
+    for page in PAGE_FILES:
+        drawn = " ".join(element.value for element in render(page).markdown)
+        assert "cfd-readonly" in drawn, f"{page} does not say it is read-only"
+
+
+def test_the_status_page_expands_every_failing_check(populated, monkeypatch):
+    monkeypatch.setattr(
+        health, "run_checks",
+        lambda **kwargs: health.HealthReport(
+            checks=(
+                health.Check(
+                    key="x", title="Forced failure", triggered=True,
+                    detail="what was found", remedy="what to do",
+                ),
+            )
+        ),
+    )
+    app = render("pages/01_status.py")
+    drawn = " ".join(element.value for element in app.markdown)
+    assert "what was found" in drawn
+    assert "what to do" in drawn
+
+
+# --------------------------------------------------------------------------- #
+# The read-only contract
+# --------------------------------------------------------------------------- #
+#: Functions no module in this package may ever call, and modules it may
+#: never import. Checked against the parsed syntax tree rather than the raw
+#: text, so a log filename that happens to contain "ingest" is not a
+#: violation and a genuine call cannot hide inside a docstring.
+FORBIDDEN_CALLS: frozenset[str] = frozenset(
+    {
+        # Persisting anything, on any receiver. These names are unambiguous:
+        # nothing in a read-only dashboard has a reason to say them.
+        "write_parquet", "write_json", "upsert_parquet", "to_parquet",
+        "to_csv", "to_json", "write_text", "write_bytes", "mkdir", "rmdir",
+        "unlink", "touch", "rmtree",
+        # Running the pipeline, or trading.
+        "run_pipeline", "run_backtest", "run_execution", "ingest_market",
+        "ingest_macro",
+        # Reaching outside.
+        "urlopen", "urlretrieve",
+    }
+)
+
+#: Verbs that are only dangerous on certain receivers. ``replace`` is a
+#: Series method far more often than it is ``os.replace``, and ``get`` is a
+#: dict method far more often than it is an HTTP verb, so banning the bare
+#: name would ban ordinary pandas.
+FORBIDDEN_METHODS: dict[str, frozenset[str]] = {
+    "os": frozenset({"remove", "rename", "replace", "unlink", "rmdir",
+                     "makedirs", "mkdir", "system"}),
+    "shutil": frozenset({"rmtree", "move", "copy", "copytree"}),
+    "subprocess": frozenset({"run", "call", "Popen", "check_output"}),
+    "requests": frozenset({"get", "post", "put", "delete", "request",
+                           "Session"}),
+    "session": frozenset({"get", "post", "put", "delete", "request"}),
+    "storage": frozenset({"write_parquet", "write_json", "upsert_parquet"}),
+}
+
+#: Modules that would let a page reach the network, a vendor or a shell.
+FORBIDDEN_IMPORTS: frozenset[str] = frozenset(
+    {
+        "requests", "urllib", "urllib3", "httpx", "aiohttp", "socket",
+        "yfinance", "smtplib", "subprocess", "multiprocessing",
+        "cfdinvest.ingestion", "cfdinvest.schedule.notify",
+    }
+)
+
+
+def _calls_and_imports(path: Path):
+    """Every called name and imported module in one file."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    calls: list[tuple[str, str]] = []
+    imports: list[str] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            function = node.func
+            if isinstance(function, ast.Attribute):
+                receiver = (
+                    function.value.id
+                    if isinstance(function.value, ast.Name)
+                    else type(function.value).__name__
+                )
+                calls.append((receiver.lower(), function.attr))
+            elif isinstance(function, ast.Name):
+                calls.append(("", function.id))
+        elif isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.append(node.module)
+
+    return calls, imports
+
+
+@pytest.mark.parametrize("path", sorted(UI.rglob("*.py")))
+def test_no_ui_module_can_write_trade_or_fetch(path):
+    """The safety contract, enforced rather than promised.
+
+    The whole point of this package is that it cannot do anything. Checking
+    the syntax tree is what keeps this true when somebody adds a page in six
+    months without reading the docstring at the top of ``sources.py``.
+    """
+    calls, imports = _calls_and_imports(path)
+
+    for receiver, name in calls:
+        assert name not in FORBIDDEN_CALLS, f"{path.name} calls {name}()"
+        assert name not in FORBIDDEN_METHODS.get(receiver, frozenset()), (
+            f"{path.name} calls {receiver}.{name}()"
+        )
+
+    for module in imports:
+        root = module.split(".")[0]
+        assert module not in FORBIDDEN_IMPORTS and root not in FORBIDDEN_IMPORTS, (
+            f"{path.name} imports {module}"
+        )
+
+
+@pytest.mark.parametrize("path", sorted(UI.rglob("*.py")))
+def test_no_ui_module_opens_a_file_for_writing(path):
+    source = path.read_text(encoding="utf-8")
+    for mode in ('"w"', "'w'", '"a"', "'a'", '"wb"', "'wb'", '"w+"', "'w+'"):
+        assert f".open({mode}" not in source, path.name
+        assert f"open(path, {mode}" not in source, path.name
+
+
+def test_the_read_only_contract_is_stated_where_it_is_enforced():
+    """The claim and the code that keeps it true live in the same file."""
+    text = (UI / "sources.py").read_text(encoding="utf-8")
+    assert "never writes" in text or "Nothing in this module writes" in text

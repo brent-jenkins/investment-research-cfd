@@ -1,0 +1,165 @@
+"""Positions — what is open, and what it is carrying."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_ROOT = str(Path(__file__).resolve().parents[3])
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import streamlit as st  # noqa: E402
+
+from cfdinvest.ui import components  # noqa: E402
+
+data = components.page_setup(st, "Positions", icon="📦")
+execution = data["execution"]
+
+if components.render_absent(st, execution, "Execution output"):
+    st.stop()
+
+parts = execution.value or {}
+positions = parts.get("positions")
+trades = parts.get("trades")
+equity_frame = parts.get("equity")
+
+if not isinstance(positions, pd.DataFrame) or positions.empty:
+    components.render_note(st, "The last run held no positions.")
+    st.stop()
+
+positions = positions.copy()
+positions.index = pd.to_datetime(positions.index, utc=True, errors="coerce")
+as_of = positions.index.max()
+held = positions.loc[as_of]
+held = held[held != 0]
+
+equity = np.nan
+if isinstance(equity_frame, pd.DataFrame) and not equity_frame.empty:
+    equity = float(pd.to_numeric(equity_frame.iloc[-1], errors="coerce").iloc[0])
+
+st.caption(f"As at {components.moment(as_of)}")
+
+if held.empty:
+    st.info("The book is flat. Nothing is open.")
+    st.stop()
+
+# --------------------------------------------------------------------------- #
+# Per-instrument context, from the trade log
+# --------------------------------------------------------------------------- #
+# Entry price, levels, financing and FX are recorded per trade, not per bar,
+# so the open book's context is the most recent trade on each instrument.
+context = pd.DataFrame()
+if isinstance(trades, pd.DataFrame) and not trades.empty and "asset" in trades:
+    ordered = trades.sort_values("timestamp")
+    wanted = [
+        c
+        for c in ("fill_price", "price", "stop_level", "take_profit_level",
+                  "fx_rate", "timestamp")
+        if c in ordered.columns
+    ]
+    context = ordered.groupby("asset")[wanted].last()
+
+    accrued = {}
+    for name in ("financing", "fx_conversion_fee", "fx_spread", "fx_slippage",
+                 "spread_cost", "slippage"):
+        if name in ordered.columns:
+            accrued[name] = ordered.groupby("asset")[name].sum()
+    if accrued:
+        context = context.join(pd.DataFrame(accrued), how="left")
+
+last_price = pd.Series(dtype="float64")
+if isinstance(trades, pd.DataFrame) and "price" in trades.columns:
+    last_price = trades.sort_values("timestamp").groupby("asset")["price"].last()
+
+st.subheader(f"{len(held)} open position(s)")
+
+rows = []
+for ticker, units in held.items():
+    entry = float(context.get("fill_price", pd.Series()).get(ticker, np.nan)) if not context.empty else np.nan
+    mark = float(last_price.get(ticker, np.nan)) if len(last_price) else np.nan
+    unrealized = units * (mark - entry) if np.isfinite(entry) and np.isfinite(mark) else np.nan
+    notional = abs(units * mark) if np.isfinite(mark) else np.nan
+    fx_costs = sum(
+        float(context.get(name, pd.Series()).get(ticker, 0.0) or 0.0)
+        for name in ("fx_conversion_fee", "fx_spread", "fx_slippage")
+        if not context.empty
+    )
+
+    rows.append(
+        {
+            "asset": ticker,
+            "units": units,
+            "direction": "long" if units > 0 else "short",
+            "entry_price": entry,
+            "last_price": mark,
+            "stop_level": float(context.get("stop_level", pd.Series()).get(ticker, np.nan)) if not context.empty else np.nan,
+            "take_profit_level": float(context.get("take_profit_level", pd.Series()).get(ticker, np.nan)) if not context.empty else np.nan,
+            "unrealized_pnl": unrealized,
+            "financing_accrued": float(context.get("financing", pd.Series()).get(ticker, np.nan)) if not context.empty else np.nan,
+            "fx_costs": fx_costs,
+            "notional": notional,
+            "leverage": notional / equity if np.isfinite(notional) and np.isfinite(equity) and equity else np.nan,
+            "fx_rate": float(context.get("fx_rate", pd.Series()).get(ticker, np.nan)) if not context.empty else np.nan,
+        }
+    )
+
+book = pd.DataFrame(rows).set_index("asset")
+
+for ticker, row in book.iterrows():
+    with st.container(border=True):
+        head, body = st.columns([1, 4])
+        with head:
+            st.markdown(f"### {ticker}")
+            st.markdown(
+                components.direction_badge(row["direction"]), unsafe_allow_html=True
+            )
+            st.caption(f"{row['units']:,.4f} units")
+        with body:
+            top = st.columns(4)
+            top[0].metric("Entry", components.number(row["entry_price"], 4))
+            top[1].metric("Stop", components.number(row["stop_level"], 4))
+            top[2].metric("Take-profit", components.number(row["take_profit_level"], 4))
+            top[3].metric(
+                "Unrealised P&L",
+                components.money(row["unrealized_pnl"]),
+                delta_color="off",
+            )
+            bottom = st.columns(4)
+            bottom[0].metric("Exposure", components.money(row["notional"]))
+            bottom[1].metric("Leverage", components.number(row["leverage"], 2))
+            bottom[2].metric("Financing", components.money(row["financing_accrued"]))
+            bottom[3].metric("FX costs", components.money(row["fx_costs"]))
+
+        if not np.isfinite(row["stop_level"]):
+            st.caption(
+                "⚠ No stop level recorded for this position — either stops "
+                "are disabled, or the ATR had not warmed up when it opened."
+            )
+
+st.divider()
+
+# --------------------------------------------------------------------------- #
+# Book totals
+# --------------------------------------------------------------------------- #
+st.subheader("Book")
+totals = st.columns(4)
+totals[0].metric("Gross exposure", components.money(book["notional"].sum()))
+totals[1].metric(
+    "Gross leverage",
+    components.number(book["notional"].sum() / equity if equity else np.nan, 2),
+)
+totals[2].metric("Unrealised P&L", components.money(book["unrealized_pnl"].sum()))
+totals[3].metric("Equity", components.money(equity))
+
+components.render_frame(st, book)
+
+components.render_note(
+    st,
+    "Entry price, financing and FX are read from the **trade log**, which "
+    "records them per trade rather than per bar. Financing and FX therefore "
+    "show what has accrued across every trade on that instrument in this "
+    "run, not only since the current position opened.",
+)

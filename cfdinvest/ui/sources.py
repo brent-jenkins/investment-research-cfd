@@ -1,0 +1,726 @@
+"""Read-only access to everything the UI displays.
+
+**Nothing in this module writes, mutates, refreshes or trades.** Every
+function opens files the pipeline already wrote and returns what it found.
+That is the whole safety contract of this package, and it is enforceable by
+reading this one file.
+
+**Every function returns a** :class:`Source` **and none of them raise.** A
+dashboard whose job is to report that the system is broken must not itself
+break when the system is broken: a missing lake, an unreadable config or a
+half-written parquet file all have to render as a red panel, not a stack
+trace. So failures are captured and returned, and the caller decides how
+loudly to say so.
+
+**Where the pipeline persists nothing, this module says so** rather than
+inventing a value. The scheduler keeps no state file, and regimes and the
+analysis frame are never written to disk, so the helpers for those return
+``available=False`` with a reason. A blank panel and an absent panel look
+the same to a reader; only one of them is honest.
+
+Clocks are injected. Anything that needs the current time takes ``now`` so
+the same inputs always produce the same output.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import shutil
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from cfdinvest import storage
+from cfdinvest.config import AppConfig, load_config
+from cfdinvest.repository import DataRepository
+from cfdinvest.schedule import market_calendar, scheduler
+from cfdinvest.schedule.runner import load_summary
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "Source",
+    "utcnow",
+    "load_app_config",
+    "open_repository",
+    "load_lake_metadata",
+    "list_runs",
+    "load_last_pipeline_summary",
+    "load_scheduler_status",
+    "market_status",
+    "load_signal_frame",
+    "load_execution_frame",
+    "load_regime_frame",
+    "load_analysis_frame",
+    "load_error_log",
+    "load_scheduler_log",
+    "load_log_files",
+    "disk_usage",
+]
+
+#: Files a run directory may contain, and what each holds.
+RUN_ARTEFACTS: dict[str, str] = {
+    "summary": "summary.json",
+    "equity": "equity.parquet",
+    "trades": "trades.parquet",
+    "positions": "positions.parquet",
+    "signals": "signals.parquet",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class Source:
+    """One read, and whether it worked.
+
+    Attributes
+    ----------
+    value:
+        Whatever was read. Never ``None`` for frame-shaped reads — an empty
+        DataFrame instead, so a caller can render it without checking.
+    available:
+        ``False`` when there was nothing to read. Not an error: a fresh
+        install has no runs yet, and that is worth saying plainly.
+    error:
+        Set when the read was attempted and failed. **This is the field
+        that matters** — an unreadable lake is a critical warning, while an
+        empty one is merely early.
+    note:
+        Why the data is absent, when its absence is structural rather than
+        incidental. Rendered as an explanation instead of a blank panel.
+    path:
+        Where it was read from, for the Status page to display.
+    """
+
+    value: Any = None
+    available: bool = True
+    error: str | None = None
+    note: str | None = None
+    path: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """Read succeeded and produced something."""
+        return self.error is None and self.available
+
+    @property
+    def failed(self) -> bool:
+        """The read was attempted and broke. Distinct from simply empty."""
+        return self.error is not None
+
+    @classmethod
+    def missing(cls, note: str, path: str | None = None, value: Any = None):
+        """Nothing to read, for a reason worth stating."""
+        return cls(value=value, available=False, note=note, path=path)
+
+    @classmethod
+    def broken(cls, error: str, path: str | None = None, value: Any = None):
+        """A read that failed."""
+        return cls(value=value, available=False, error=error, path=path)
+
+
+def utcnow(now: pd.Timestamp | None = None) -> pd.Timestamp:
+    """The current UTC instant, or the injected one.
+
+    Every clock in this package goes through here so a test can pin it.
+    """
+    if now is not None:
+        return pd.Timestamp(now).tz_convert("UTC") if pd.Timestamp(now).tz else (
+            pd.Timestamp(now).tz_localize("UTC")
+        )
+    return pd.Timestamp.now(tz="UTC")
+
+
+def _empty(*columns: str) -> pd.DataFrame:
+    return pd.DataFrame(columns=list(columns))
+
+
+# --------------------------------------------------------------------------- #
+# Config
+# --------------------------------------------------------------------------- #
+def load_app_config(config_path: str | os.PathLike[str] | None = None) -> Source:
+    """The :class:`~cfdinvest.config.AppConfig` the pipeline runs under.
+
+    An unreadable config is a critical warning rather than a crash: it means
+    every path on every other page is a guess.
+    """
+    try:
+        config = load_config(config_path) if config_path else load_config()
+        return Source(value=config, path=str(config_path) if config_path else None)
+    except Exception as error:  # noqa: BLE001 - the UI must survive anything
+        logger.warning("Config unreadable: %s", error)
+        return Source.broken(f"config unreadable: {error}", value=AppConfig())
+
+
+def open_repository(config: AppConfig) -> Source:
+    """A :class:`~cfdinvest.repository.DataRepository` over the lake.
+
+    Read-only by construction: the repository has no write path.
+    """
+    try:
+        root = Path(config.paths.data_root)
+        if not root.exists():
+            return Source.missing(
+                f"lake directory does not exist: {root}", path=str(root)
+            )
+        if not os.access(root, os.R_OK):
+            return Source.broken(
+                f"lake directory is not readable: {root}", path=str(root)
+            )
+        return Source(value=DataRepository(config), path=str(root))
+    except Exception as error:  # noqa: BLE001
+        return Source.broken(f"lake unreadable: {error}")
+
+
+# --------------------------------------------------------------------------- #
+# Lake
+# --------------------------------------------------------------------------- #
+def load_lake_metadata(
+    config: AppConfig,
+    repository: DataRepository | None = None,
+    *,
+    now: pd.Timestamp | None = None,
+) -> Source:
+    """Freshness, size and data-quality counts for the lake.
+
+    Returns a dict with ``last_updated``, ``series_count``,
+    ``anomalies_count``, ``publication_calendar_freshness``,
+    ``vintage_mode``, plus the coverage frames the Status page tabulates.
+
+    ``last_updated`` is the **latest end date across every stored series**,
+    not a file mtime: a lake that was rewritten yesterday with data ending
+    last month is stale, and the mtime would hide that.
+    """
+    if repository is None:
+        opened = open_repository(config)
+        if not opened.ok:
+            return Source.broken(
+                opened.error or opened.note or "lake unavailable", path=opened.path
+            )
+        repository = opened.value
+
+    root = Path(config.paths.data_root)
+    try:
+        coverage = repository.coverage()
+        macro = repository.macro_coverage()
+        anomalies = repository.anomalies()
+    except Exception as error:  # noqa: BLE001
+        return Source.broken(f"lake metadata unreadable: {error}", path=str(root))
+
+    last_updated = _latest_end(coverage, macro)
+    modes = sorted(set(macro["vintage_mode"])) if "vintage_mode" in macro else []
+
+    calendar_age = None
+    calendar_rows = 0
+    try:
+        calendar = repository.publication_calendar()
+        calendar_rows = len(calendar)
+        if not calendar.empty and "publication_date" in calendar.columns:
+            latest = pd.to_datetime(calendar["publication_date"], utc=True).max()
+            if pd.notna(latest):
+                calendar_age = (utcnow(now) - latest).total_seconds() / 86_400.0
+    except Exception as error:  # noqa: BLE001
+        logger.debug("Publication calendar unavailable: %s", error)
+
+    metadata = {
+        "data_root": str(root),
+        "last_updated": last_updated,
+        "age_days": None
+        if last_updated is None
+        else (utcnow(now) - last_updated).total_seconds() / 86_400.0,
+        "series_count": int(len(coverage)) + int(len(macro)),
+        "market_series": int(len(coverage)),
+        "macro_series": int(len(macro)),
+        "anomalies_count": int(anomalies.to_numpy().sum()) if not anomalies.empty else 0,
+        "publication_calendar_rows": calendar_rows,
+        "publication_calendar_freshness": calendar_age,
+        "vintage_mode": ", ".join(modes) if modes else None,
+        "coverage": coverage,
+        "macro_coverage": macro,
+        "anomalies": anomalies,
+    }
+    if coverage.empty and macro.empty:
+        return Source.missing("the lake holds no series yet", path=str(root),
+                              value=metadata)
+    return Source(value=metadata, path=str(root))
+
+
+def _latest_end(*frames: pd.DataFrame) -> pd.Timestamp | None:
+    """The most recent end date across every manifest frame."""
+    candidates = []
+    for frame in frames:
+        if frame is None or frame.empty:
+            continue
+        for column in ("end", "last_timestamp", "observation_end", "updated_at"):
+            if column in frame.columns:
+                values = pd.to_datetime(frame[column], utc=True, errors="coerce")
+                if values.notna().any():
+                    candidates.append(values.max())
+    return max(candidates) if candidates else None
+
+
+# --------------------------------------------------------------------------- #
+# Runs
+# --------------------------------------------------------------------------- #
+def list_runs(config: AppConfig, output_dir: str = "runs") -> Source:
+    """Every run directory, newest first.
+
+    Run ids sort lexicographically in time order, which is what makes
+    "newest" a sort rather than a stat of every directory.
+    """
+    root = Path(config.paths.data_root) / output_dir
+    try:
+        if not root.is_dir():
+            return Source.missing(
+                f"no run directory yet at {root}; the pipeline has not run",
+                path=str(root),
+                value=[],
+            )
+        directories = sorted(
+            (p for p in root.iterdir() if p.is_dir()), key=lambda p: p.name, reverse=True
+        )
+        if not directories:
+            return Source.missing(
+                "the run directory is empty", path=str(root), value=[]
+            )
+        return Source(value=directories, path=str(root))
+    except Exception as error:  # noqa: BLE001
+        return Source.broken(f"run directory unreadable: {error}", path=str(root),
+                             value=[])
+
+
+def load_last_pipeline_summary(
+    config: AppConfig, output_dir: str = "runs"
+) -> Source:
+    """The most recent run's ``summary.json``.
+
+    The single most informative file in the system: it carries the run's
+    status, duration, universe, metrics, latest signals and latest trades.
+    """
+    runs = list_runs(config, output_dir)
+    if not runs.ok:
+        return Source(
+            value={}, available=False, error=runs.error, note=runs.note, path=runs.path
+        )
+
+    for directory in runs.value:
+        path = directory / RUN_ARTEFACTS["summary"]
+        if not path.is_file():
+            continue
+        try:
+            summary = load_summary(path)
+        except Exception as error:  # noqa: BLE001
+            return Source.broken(
+                f"run summary unreadable: {error}", path=str(path), value={}
+            )
+        if summary:
+            summary.setdefault("run_id", directory.name)
+            summary["run_dir"] = str(directory)
+            return Source(value=summary, path=str(path))
+
+    return Source.missing(
+        "no run has written a summary yet", path=str(runs.path), value={}
+    )
+
+
+def _read_parquet(path: Path, *columns: str) -> Source:
+    """One parquet artefact, or an explanation."""
+    if not path.is_file():
+        return Source.missing(
+            f"{path.name} was not written by the last run",
+            path=str(path),
+            value=_empty(*columns),
+        )
+    try:
+        return Source(value=storage.read_parquet(path), path=str(path))
+    except Exception as error:  # noqa: BLE001
+        return Source.broken(
+            f"{path.name} unreadable: {error}", path=str(path), value=_empty(*columns)
+        )
+
+
+def load_signal_frame(config: AppConfig, output_dir: str = "runs") -> Source:
+    """The last run's signals, in long ``(timestamp, ticker)`` form.
+
+    Only *active* signals are persisted by the pipeline — flat cells are the
+    overwhelming majority and are dropped before writing — so an instrument
+    absent from this frame is flat, not missing.
+    """
+    summary = load_last_pipeline_summary(config, output_dir)
+    if not summary.ok:
+        return Source(
+            value=_empty("direction", "size", "confidence", "reason"),
+            available=False, error=summary.error, note=summary.note,
+        )
+    return _read_parquet(
+        Path(summary.value["run_dir"]) / RUN_ARTEFACTS["signals"],
+        "direction", "size", "confidence", "reason",
+    )
+
+
+def load_execution_frame(config: AppConfig, output_dir: str = "runs") -> Source:
+    """The last run's execution artefacts: trades, positions and equity.
+
+    Not an :class:`~cfdinvest.execution.frame.ExecutionFrame` — that object
+    lives in memory during a run and is never serialised whole. What the
+    pipeline persists is these three frames, and between them they carry
+    almost everything the object did: the trade log alone holds costs,
+    financing, realised P&L, stop levels, gap flags and FX detail.
+
+    The per-bar P&L decomposition is **not** persisted, so the P&L page
+    reconstructs what it can from the trade log and reports the rest from
+    the run summary's metrics. See the README.
+    """
+    summary = load_last_pipeline_summary(config, output_dir)
+    empty = {"trades": _empty(), "positions": _empty(), "equity": _empty()}
+    if not summary.ok:
+        return Source(
+            value=empty, available=False, error=summary.error, note=summary.note
+        )
+
+    directory = Path(summary.value["run_dir"])
+    parts, errors, notes = {}, [], []
+    for name in ("trades", "positions", "equity"):
+        read = _read_parquet(directory / RUN_ARTEFACTS[name])
+        parts[name] = read.value
+        if read.failed:
+            errors.append(read.error)
+        elif not read.available and read.note:
+            notes.append(read.note)
+
+    if errors:
+        return Source.broken("; ".join(errors), path=str(directory), value=parts)
+    if all(frame is None or frame.empty for frame in parts.values()):
+        return Source.missing(
+            "; ".join(notes) or "the last run produced no execution output",
+            path=str(directory), value=parts,
+        )
+    return Source(value=parts, path=str(directory), note="; ".join(notes) or None)
+
+
+def load_regime_frame(config: AppConfig, output_dir: str = "runs") -> Source:
+    """Regime classifications — **not persisted by the pipeline**.
+
+    The runner writes signals, trades, positions and equity; regimes are
+    computed in memory and discarded. Recomputing them here would mean
+    re-running preprocessing inside a web request, which is neither a read
+    nor fast, so this reports the absence instead.
+
+    The signal ``reason`` string carries the regime context that drove each
+    signal, and the Signals page surfaces that in its place.
+    """
+    return Source.missing(
+        "regimes are not persisted by the pipeline; the signal 'reason' "
+        "column carries the regime context instead",
+        value=_empty(),
+    )
+
+
+def load_analysis_frame(config: AppConfig, output_dir: str = "runs") -> Source:
+    """Preprocessed panels — **not persisted by the pipeline**.
+
+    Same reason as :func:`load_regime_frame`. Prices themselves are always
+    available through the repository; it is the derived panels (returns,
+    volatility, ATR, correlations) that are not written out.
+    """
+    return Source.missing(
+        "the analysis frame is not persisted by the pipeline; prices are "
+        "readable from the lake, derived panels are not",
+        value=_empty(),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Scheduler and market
+# --------------------------------------------------------------------------- #
+def load_scheduler_status(
+    config: AppConfig,
+    universe: list[str] | None = None,
+    *,
+    settings: scheduler.SchedulerConfig | None = None,
+    output_dir: str = "runs",
+    now: pd.Timestamp | None = None,
+) -> Source:
+    """When the pipeline last ran, and when it is next due.
+
+    **The scheduler keeps no state file**, so "last run" is read from the
+    run directory rather than from the scheduler itself. That is a genuine
+    difference and worth knowing: this reports when a run last *completed*,
+    which says nothing about whether a scheduler process is alive right now.
+    A dead scheduler shows up here only as a last run that keeps getting
+    older — which is exactly what the staleness warning is for.
+
+    ``next_run`` is computed from the session calendar, not read: given the
+    universe and the schedule settings it is a pure function of the clock.
+    """
+    moment = utcnow(now)
+    runs = list_runs(config, output_dir)
+    summary = load_last_pipeline_summary(config, output_dir)
+
+    status: dict[str, Any] = {
+        "last_run": None,
+        "last_run_started": None,
+        "next_run": None,
+        "next_run_asset": None,
+        "next_run_kind": None,
+        "last_duration": None,
+        "last_exit_code": None,
+        "last_status": None,
+        "last_error": None,
+        "run_count": len(runs.value or []),
+        "state_file": None,
+        "history": _run_history(runs.value or []),
+    }
+
+    if summary.ok:
+        record = summary.value
+        status["last_run"] = _timestamp(record.get("finished_at"))
+        status["last_run_started"] = _timestamp(record.get("started_at"))
+        status["last_duration"] = record.get("duration_seconds")
+        status["last_status"] = record.get("status")
+        status["last_error"] = record.get("error")
+        # There is no exit code to read; the run's own status is the closest
+        # honest equivalent, and it is labelled as derived.
+        status["last_exit_code"] = 0 if record.get("status") == "ok" else 1
+        status["run_id"] = record.get("run_id")
+
+    if universe:
+        try:
+            event = scheduler.next_event(universe, moment, settings)
+            if event is not None:
+                status["next_run"] = event.at
+                status["next_run_asset"] = event.asset
+                status["next_run_kind"] = event.kind
+        except Exception as error:  # noqa: BLE001
+            logger.debug("Could not compute the next scheduled event: %s", error)
+
+    if summary.failed:
+        return Source.broken(summary.error or "run summary unreadable", value=status)
+    if not summary.available:
+        return Source.missing(
+            summary.note or "the pipeline has not run yet", value=status
+        )
+    return Source(value=status)
+
+
+def _run_history(directories: list[Path], limit: int = 20) -> pd.DataFrame:
+    """Status and duration for the most recent runs."""
+    rows = []
+    for directory in directories[:limit]:
+        path = directory / RUN_ARTEFACTS["summary"]
+        if not path.is_file():
+            continue
+        try:
+            record = load_summary(path)
+        except Exception:  # noqa: BLE001
+            rows.append({"run_id": directory.name, "status": "unreadable"})
+            continue
+        rows.append(
+            {
+                "run_id": record.get("run_id", directory.name),
+                "status": record.get("status"),
+                "started_at": _timestamp(record.get("started_at")),
+                "duration_seconds": record.get("duration_seconds"),
+                "bars": record.get("bars"),
+                "error": record.get("error"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _timestamp(value: Any) -> pd.Timestamp | None:
+    """Parse a stored timestamp, tolerating anything."""
+    if value in (None, ""):
+        return None
+    try:
+        parsed = pd.Timestamp(value)
+    except Exception:  # noqa: BLE001
+        return None
+    if parsed.tz is None:
+        parsed = parsed.tz_localize("UTC")
+    return parsed.tz_convert("UTC")
+
+
+def market_status(
+    universe: list[str] | None,
+    *,
+    now: pd.Timestamp | None = None,
+    asset_classes: dict[str, str] | None = None,
+) -> Source:
+    """Open/closed, next open, next close and holiday state per instrument.
+
+    Pure: the session calendar is computed, not fetched. No exchange is
+    contacted, which is what makes this deterministic and offline.
+    """
+    moment = utcnow(now)
+    if not universe:
+        return Source.missing("no universe configured", value=_empty())
+    try:
+        frame = market_calendar.describe(universe, moment, asset_classes)
+    except Exception as error:  # noqa: BLE001
+        return Source.broken(f"market calendar failed: {error}", value=_empty())
+
+    if frame.empty:
+        return Source.missing("no instruments to describe", value=frame)
+
+    holidays = set()
+    try:
+        holidays = set(market_calendar.us_market_holidays(moment.year))
+    except Exception as error:  # noqa: BLE001
+        logger.debug("Holiday calendar unavailable: %s", error)
+
+    # is_holiday takes the date and the session *rule*, not the ticker: two
+    # instruments on the same session share a holiday calendar.
+    frame = frame.copy()
+    frame["is_holiday"] = [
+        market_calendar.is_holiday(
+            moment.date(), market_calendar.session_for(asset, asset_classes)
+        )
+        for asset in frame.index
+    ]
+    return Source(value={"sessions": frame, "holidays": sorted(holidays)})
+
+
+# --------------------------------------------------------------------------- #
+# Logs and disk
+# --------------------------------------------------------------------------- #
+#: Log files the UI looks for, by role. The pipeline writes at most one
+#: (``LoggingConfig.log_file``); the rest are conventional names a systemd
+#: unit or a cron wrapper is likely to have created beside it.
+LOG_ROLES: dict[str, tuple[str, ...]] = {
+    "application": ("cfdinvest.log", "app.log"),
+    "scheduler": ("scheduler.log", "cron.log"),
+    "error": ("error.log", "errors.log"),
+    "ingestion": ("ingestion.log", "ingest.log"),
+    "execution": ("execution.log",),
+}
+
+
+def load_log_files(config: AppConfig) -> Source:
+    """Every log file the UI can find, by role.
+
+    Looks beside the configured ``log_file`` and under ``<data_root>/logs``.
+    Nothing is created; a role with no file is reported as absent.
+    """
+    candidates: dict[str, Path] = {}
+    directories: list[Path] = []
+
+    configured = getattr(config.logging, "log_file", None)
+    if configured:
+        path = Path(configured)
+        candidates["application"] = path
+        directories.append(path.parent)
+    directories.append(Path(config.paths.data_root) / "logs")
+
+    for role, names in LOG_ROLES.items():
+        if role in candidates:
+            continue
+        for directory in directories:
+            for name in names:
+                path = directory / name
+                if path.is_file():
+                    candidates[role] = path
+                    break
+            if role in candidates:
+                break
+
+    present = {role: path for role, path in candidates.items() if path.is_file()}
+    if not present:
+        return Source.missing(
+            "no log files found; set logging.log_file (or CFD_LOG_FILE) to "
+            "enable file logging",
+            value={},
+        )
+    return Source(value=present)
+
+
+def _tail(path: Path, lines: int) -> Source:
+    """The last ``lines`` lines of a text file, without loading all of it."""
+    try:
+        if not path.is_file():
+            return Source.missing(f"{path} does not exist", path=str(path), value=[])
+        size = path.stat().st_size
+        # 512 bytes a line is generous for a log; capped so a runaway file
+        # cannot pull hundreds of megabytes into a web request.
+        window = min(size, max(lines * 512, 8192), 4_000_000)
+        with path.open("rb") as handle:
+            handle.seek(size - window)
+            content = handle.read().decode("utf-8", errors="replace")
+        found = content.splitlines()
+        if window < size and found:
+            found = found[1:]  # the first line is probably truncated
+        return Source(value=found[-lines:], path=str(path))
+    except Exception as error:  # noqa: BLE001
+        return Source.broken(f"log unreadable: {error}", path=str(path), value=[])
+
+
+def load_error_log(config: AppConfig, lines: int = 200) -> Source:
+    """The error log, or the error lines of the application log.
+
+    Falls back to filtering the application log when no dedicated error file
+    exists, which is the common case: one log file, mixed levels.
+    """
+    files = load_log_files(config)
+    available = files.value or {}
+
+    if "error" in available:
+        return _tail(available["error"], lines)
+
+    if "application" in available:
+        tail = _tail(available["application"], lines * 5)
+        if tail.failed:
+            return tail
+        errors = [
+            line
+            for line in tail.value
+            if "ERROR" in line or "CRITICAL" in line or "Traceback" in line
+        ]
+        return Source(
+            value=errors[-lines:],
+            available=bool(errors),
+            note=None if errors else "no errors in the application log",
+            path=tail.path,
+        )
+
+    return Source.missing(files.note or "no log file configured", value=[])
+
+
+def load_scheduler_log(config: AppConfig, lines: int = 200) -> Source:
+    """The scheduler log, if a wrapper is writing one."""
+    files = load_log_files(config)
+    available = files.value or {}
+    if "scheduler" in available:
+        return _tail(available["scheduler"], lines)
+    return Source.missing(
+        "no scheduler log found; a cron or systemd wrapper usually writes one",
+        value=[],
+    )
+
+
+def disk_usage(path: str | os.PathLike[str]) -> Source:
+    """Free space on the volume holding ``path``.
+
+    A full disk is the failure that makes every other failure confusing: the
+    lake stops updating, runs fail to write, and nothing says why.
+    """
+    target = Path(path)
+    try:
+        probe = target
+        while not probe.exists() and probe != probe.parent:
+            probe = probe.parent
+        usage = shutil.disk_usage(probe)
+        return Source(
+            value={
+                "total_bytes": usage.total,
+                "used_bytes": usage.used,
+                "free_bytes": usage.free,
+                "free_fraction": usage.free / usage.total if usage.total else 0.0,
+                "free_gb": usage.free / 1024**3,
+                "path": str(probe),
+            },
+            path=str(probe),
+        )
+    except Exception as error:  # noqa: BLE001
+        return Source.broken(f"disk usage unavailable: {error}", path=str(target))

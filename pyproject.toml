@@ -16,7 +16,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-mock>=3.12"]
+# The dashboard is optional: nothing in the pipeline imports it.
+ui = ["streamlit>=1.49"]
+dev = ["pytest>=8.0", "pytest-mock>=3.12", "streamlit>=1.49"]
 
 [tool.setuptools.packages.find]
 include = ["cfdinvest*"]
