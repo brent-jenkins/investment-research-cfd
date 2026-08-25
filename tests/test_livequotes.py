@@ -1288,3 +1288,39 @@ def test_an_instrument_recorded_as_unavailable_stops_being_suggested():
 
     assert not mapping.tradable
     assert mapping.relationship == "none"
+
+
+def test_the_overnight_fee_is_recorded_as_the_app_shows_it():
+    """Trading 212 displays a percentage per day; financing_rate is an
+    annual fraction.
+
+    Typing 0.0083 into the annual field is wrong by about four thousand
+    times, and it produces a plausible small number rather than an obviously
+    broken one -- which is the dangerous kind of wrong. So the daily figure
+    is recorded as read and converted once, here.
+    """
+    from cfdinvest.livehelper.t212_rules import InstrumentRules
+
+    uk100 = InstrumentRules(ticker="^FTSE", financing_daily_pct=0.0083)
+
+    assert uk100.annual_financing_rate == pytest.approx(0.030295)
+    # Sanity: a GBP index at roughly 3% a year, not 0.83% and not 300%.
+    assert 0.02 < uk100.annual_financing_rate < 0.05
+
+
+def test_the_daily_figure_wins_when_both_are_given():
+    """It is the one read off a screen rather than worked out."""
+    from cfdinvest.livehelper.t212_rules import InstrumentRules
+
+    both = InstrumentRules(
+        ticker="X", financing_daily_pct=0.0083, financing_rate=0.99
+    )
+    assert both.annual_financing_rate == pytest.approx(0.030295)
+
+
+def test_an_unrecorded_financing_rate_stays_unknown_not_zero():
+    """Zero would say the carry is free, which is a measurement nobody made
+    -- and carry is the largest cost line in the backtest."""
+    from cfdinvest.livehelper.t212_rules import InstrumentRules
+
+    assert InstrumentRules(ticker="X").annual_financing_rate is None

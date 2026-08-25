@@ -136,11 +136,32 @@ class InstrumentRules:
     #: "USA 500" -- which is precisely the error that sends you to the wrong
     #: instrument or to none at all.
     t212_name: str | None = None
+    #: The overnight fee exactly as the app shows it: a **percentage per
+    #: day**. Trading 212 displays 0.0083% for UK 100; that is 3.03% a year.
+    #:
+    #: It exists so you can record what you read rather than converting it
+    #: yourself. ``financing_rate`` is an annual fraction, and typing a daily
+    #: percentage into it is wrong by a factor of about four thousand -- a
+    #: mistake that produces a plausible-looking small number rather than an
+    #: obviously broken one, which is the dangerous kind.
+    financing_daily_pct: float | None = None
     #: ``False`` when Trading 212 does not offer it at all, so the signal
     #: layer can stop suggesting something you cannot place.
     available: bool | None = None
     source: str = "unverified"
     notes: str | None = None
+
+    @property
+    def annual_financing_rate(self) -> float | None:
+        """The financing rate as an annual fraction, however it was given.
+
+        One owner for the number. ``financing_daily_pct`` is what the app
+        shows and wins when both are present, because it is the one that was
+        read off a screen rather than worked out.
+        """
+        if self.financing_daily_pct is not None:
+            return float(self.financing_daily_pct) / 100.0 * 365.0
+        return self.financing_rate
 
     def __post_init__(self) -> None:
         if self.quantity_precision is not None:
