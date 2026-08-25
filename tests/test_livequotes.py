@@ -479,3 +479,38 @@ def test_the_rules_template_covers_the_universe_and_asserts_no_numbers():
         assert not line.strip() or line.lstrip().startswith("#"), line
 
     assert "regulatory retail ceiling" in body.lower()
+
+
+def test_the_daemon_can_actually_invoke_every_job_it_schedules():
+    """The bug a real deployment found, and the suite did not.
+
+    The daemon handed its own argument namespace to `run-once`, which
+    defines flags -- --force, --refresh, --no-save -- that the daemon parser
+    does not. Every daily run raised AttributeError. The loop caught it, as
+    it is meant to, so the daemon stayed up, logged the failure and never ran
+    the pipeline again: contained, and invisible unless you read the journal.
+    """
+    from cfdinvest.schedule.app import _run_once_args, build_parser
+
+    daemon_args = build_parser().parse_args(["--no-email", "daemon"])
+    once = _run_once_args(daemon_args, refresh=False)
+
+    # Every flag run-once reads must be present.
+    for flag in ("force", "refresh", "trade_alerts", "no_save"):
+        assert hasattr(once, flag), f"run-once reads --{flag}"
+
+    assert once.refresh is False
+    # The globals the daemon was invoked with survive into the job.
+    assert once.no_email is True
+
+
+def test_the_daemons_job_names_all_map_to_something_runnable():
+    """A job in the schedule with no branch would be a silent no-op."""
+    import inspect
+
+    from cfdinvest.schedule import daemon as daemon_module
+    from cfdinvest.schedule import app as app_module
+
+    body = inspect.getsource(app_module._command_daemon)
+    for job in daemon_module.JOBS:
+        assert f'"{job}"' in body, f"the daemon schedules {job} but cannot run it"

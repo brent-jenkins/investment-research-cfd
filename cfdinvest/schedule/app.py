@@ -415,7 +415,7 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
             )
         elif name == "run-daily":
             _command_run_once(
-                _with(args, refresh=False), app_config, smtp, transport
+                _run_once_args(args, refresh=False), app_config, smtp, transport
             )
         elif name == "monitoring-snapshot":
             _command_monitor(args, app_config, smtp, transport)
@@ -452,14 +452,35 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
     return EXIT_OK
 
 
-def _with(args, **changes):
-    """A shallow copy of the parsed arguments with a few fields changed."""
-    import copy
+#: Options defined on the top-level parser, so they mean the same thing to
+#: every subcommand. Everything else belongs to one subcommand and must come
+#: from that subcommand's own defaults.
+GLOBAL_OPTIONS: tuple[str, ...] = (
+    "config", "data_root", "tickers", "interval", "start", "end",
+    "log_level", "dry_run", "no_email",
+)
 
-    clone = copy.copy(args)
+
+def _run_once_args(args, **changes):
+    """A ``run-once`` namespace, built from ``run-once``'s own defaults.
+
+    The daemon's parser does not define run-once's flags -- ``--force``,
+    ``--refresh`` and the rest -- so handing it the daemon's own namespace
+    raised ``AttributeError`` on the first daily run. The loop caught it, as
+    it is meant to, and carried on: the failure was contained, logged, and
+    otherwise invisible, so the daemon looked healthy while never once
+    running the pipeline.
+
+    Taking the defaults from the parser rather than listing them here means
+    they cannot drift from what ``run-once`` actually accepts.
+    """
+    namespace = build_parser().parse_args(["run-once"])
+    for name in GLOBAL_OPTIONS:
+        if hasattr(args, name):
+            setattr(namespace, name, getattr(args, name))
     for name, value in changes.items():
-        setattr(clone, name, value)
-    return clone
+        setattr(namespace, name, value)
+    return namespace
 
 
 def _command_send_test_email(args, smtp, transport) -> int:
