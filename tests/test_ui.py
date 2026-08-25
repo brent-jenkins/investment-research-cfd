@@ -1991,21 +1991,56 @@ def test_a_session_secret_that_cannot_be_saved_says_so(tmp_path, monkeypatch, ca
     assert "will" in logged and "not survive" in logged
 
 
-def test_the_dashboard_unit_can_write_the_credential_store():
-    """Auth writes; the rest of the dashboard does not.
+def test_every_directory_the_dashboard_writes_is_permitted_by_its_unit():
+    """The bug that landed twice: sign-in, then recording a trade.
 
-    The unit is otherwise read-only over the data root, which is right --
-    but the one directory the dashboard must write has to be named, or
-    sign-in half-works.
+    The unit makes the data root read-only and names its exceptions. Miss
+    one and the page fails at the moment you use it -- which is the worst
+    possible moment to discover a deployment detail. So the list is derived
+    from what the pages actually call rather than kept by hand.
     """
+    import re
+
     unit = (
         Path("deployment/systemd/cfdinvest-dashboard.service")
         .read_text(encoding="utf-8")
     )
+    permitted = set(re.findall(r"^ReadWritePaths=(\S+)", unit, re.M))
 
-    assert "ReadWritePaths=/var/lib/cfdinvest/auth" in unit
-    assert "ReadOnlyPaths=/var/lib/cfdinvest" in unit, "the rest stays read-only"
-    # And it must be bounded, or it competes with the neighbours for memory.
+    # What each writing call lands in, by the store that owns it.
+    from cfdinvest.persist import confirm, journal
+    from cfdinvest.ui import auth
+
+    required = {
+        "confirmations": confirm.CONFIRMATIONS_DIR,
+        "journal": journal.JOURNAL_DIR,
+        "auth": auth.AUTH_DIR,
+    }
+
+    writers = {
+        "confirmations": "write_confirmation",
+        "journal": "append_entry",
+        "auth": "save_credentials",
+    }
+    # auth.py counts: the Account page writes through it rather than
+    # calling the store itself.
+    pages = " ".join(
+        path.read_text(encoding="utf-8") for path in (UI / "views").glob("*.py")
+    ) + (UI / "components.py").read_text(encoding="utf-8") + (
+        UI / "auth.py"
+    ).read_text(encoding="utf-8")
+
+    for label, directory in required.items():
+        assert writers[label] in pages, f"nothing writes {label} any more"
+        assert f"/var/lib/cfdinvest/{directory}" in permitted, (
+            f"the dashboard writes {directory}/ but its unit forbids it"
+        )
+
+    # And the root itself stays read-only, which is the point.
+    assert "ReadOnlyPaths=/var/lib/cfdinvest" in unit
+    assert "/var/lib/cfdinvest" not in permitted, (
+        "permitting the root would let a page overwrite a run artefact"
+    )
     assert "MemoryMax=" in unit
 
 

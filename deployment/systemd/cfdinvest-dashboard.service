@@ -67,12 +67,30 @@ ReadOnlyPaths=/opt/cfdinvest
 ReadOnlyPaths=/var/lib/cfdinvest
 ReadWritePaths=/var/lib/cfdinvest/cache
 
-# The credential store. This is the one artefact the dashboard writes, and
-# it has to be writable or sign-in silently half-works: the session-cookie
-# secret cannot be persisted, so it is regenerated on every call, and a
-# token signed at login never verifies afterwards. The symptom is a login
-# that appears to succeed and then does not stick.
+# What the dashboard legitimately writes. Everything else under the data
+# root stays read-only, which is the property worth keeping: a page that
+# cannot overwrite a run artefact cannot corrupt the record it is showing.
+#
+# Each of these is a *record of what you did*, which is the dashboard's one
+# job beyond rendering. Miss one and the page fails at the moment you use
+# it -- sign-in half-worked for exactly this reason, and recording a trade
+# failed after that.
+#
+#   auth          the credential store; without it the session-cookie
+#                 secret cannot be persisted, so it is regenerated on every
+#                 call and a token signed at login never verifies
+#   confirmations what you actually placed, from Confirm Trades
+#   journal       what you were thinking, from the Journal page
 ReadWritePaths=/var/lib/cfdinvest/auth
+ReadWritePaths=/var/lib/cfdinvest/confirmations
+ReadWritePaths=/var/lib/cfdinvest/journal
+
+# NOT writable, deliberately: accounts.json sits at the data root itself, so
+# permitting it would mean making the whole root writable and losing the
+# protection above. Creating or retiring an account changes where every
+# other layer reads and writes -- that is an operator action on the host,
+# not a dashboard one, and the Accounts page reports the refusal rather
+# than appearing to succeed.
 
 StandardOutput=journal
 StandardError=journal
