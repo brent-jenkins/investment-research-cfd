@@ -89,10 +89,15 @@ class InstrumentRules:
         Decimal places the ticket accepts. ``2`` means ``0.68`` is fine and
         ``0.684`` is not — and Trading 212 does not always say which.
     min_quantity, max_quantity:
-        The size bounds. A calculated size under the minimum is the common
-        case: your risk limit says 0.04 and the instrument will not go below
-        0.1, which means **the trade cannot be taken at your risk limit** —
-        not that it should be rounded up.
+        The size bounds, **in units**. A calculated size under the minimum is
+        the common case: your risk limit says 0.04 and the instrument will not
+        go below 0.1, which means **the trade cannot be taken at your risk
+        limit** — not that it should be rounded up.
+    min_trade_value:
+        The smallest position value the ticket accepts, in the account
+        currency. A separate fact from ``min_quantity`` and usually a much
+        looser one: Trading 212 will take £5 of Lululemon, which is a
+        fractional share. Where both are recorded, both must be cleared.
     leverage:
         Set per instrument by Trading 212, and the divisor that turns exposure
         into margin. Not published in machine-readable form, which is why the
@@ -113,6 +118,19 @@ class InstrumentRules:
     quantity_precision: int | None = None
     min_quantity: float | None = None
     max_quantity: float | None = None
+    #: Smallest position **value** the ticket accepts, in the account
+    #: currency. Distinct from ``min_quantity``, which is in units, and the
+    #: two are not interchangeable: Lululemon's floor is £5, which is about
+    #: 0.04 shares -- recording it as a unit count would overstate the
+    #: minimum by a factor of a hundred and refuse trades the broker allows.
+    #:
+    #: **Both floors vary by instrument type** and neither may be inferred
+    #: from a sibling. A share, an index CFD, an FX pair and a commodity
+    #: future are quoted in different units -- shares, contracts, lots -- so
+    #: a minimum read off one says nothing about another, and even two
+    #: shares can differ. Unrecorded means unverified, which is why the
+    #: default is ``None`` and the check is skipped rather than assumed.
+    min_trade_value: float | None = None
     leverage: float | None = None
     financing_rate: float | None = None
     spread_typical: float | None = None
@@ -227,7 +245,8 @@ class InstrumentRules:
         return tuple(
             name
             for name in (
-                "quantity_precision", "min_quantity", "max_quantity", "leverage",
+                "quantity_precision", "min_quantity", "max_quantity",
+                "min_trade_value", "leverage",
                 "financing_rate", "spread_typical", "currency", "trading_hours",
                 "close_only",
             )
@@ -391,13 +410,22 @@ class RuleIssue:
 
 
 def validate_quantity(
-    quantity: float | None, rules: InstrumentRules
+    quantity: float | None,
+    rules: InstrumentRules,
+    *,
+    value: float | None = None,
 ) -> list[RuleIssue]:
     """Will the ticket take this size?
 
-    Three separate questions — too small, too large, too precise — because the
-    answers are different actions. Too small usually means *do not take the
-    trade*; too precise means round it down.
+    Four separate questions — too small in units, too small in value, too
+    large, too precise — because the answers are different actions. Too small
+    usually means *do not take the trade*; too precise means round it down.
+
+    ``value`` is the position's worth in the account currency, checked
+    against ``min_trade_value`` when both are known. It is a different limit
+    from ``min_quantity`` and much looser: Trading 212 takes £5 of a share
+    whose unit price is over a hundred pounds. Passing nothing skips the
+    check rather than assuming the position clears it.
     """
     if not _finite(quantity) or float(quantity) <= 0:
         return [
@@ -411,6 +439,30 @@ def validate_quantity(
 
     size = float(quantity)
     issues: list[RuleIssue] = []
+
+    stake = float(value) if _finite(value) else None
+    if (
+        rules.min_trade_value is not None
+        and stake is not None
+        and stake < rules.min_trade_value
+    ):
+        issues.append(
+            RuleIssue(
+                check="min_trade_value",
+                severity="critical",
+                message=(
+                    f"{stake:,.2f} is below the {rules.min_trade_value:,.2f} "
+                    f"minimum position value for {rules.ticker}."
+                ),
+                recommendation=(
+                    "Skip it. Sizing up to reach the floor takes a larger "
+                    "position than the risk budget allowed, which is the "
+                    "trade the budget existed to prevent."
+                ),
+                value=stake,
+                limit=float(rules.min_trade_value),
+            )
+        )
 
     if rules.min_quantity is not None and size < rules.min_quantity:
         issues.append(

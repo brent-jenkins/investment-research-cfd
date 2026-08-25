@@ -39,6 +39,10 @@ M66  a regime tilt above 1.0, levering the book
      -> test_the_tilt_never_levers_the_book_up
 M67  an unknown mode falls through to permitting everything
      -> test_an_unknown_regime_mode_is_refused
+M68  the value floor fills in for a missing unit floor
+     -> test_the_value_floor_is_not_read_as_a_unit_count
+M69  an absent position value is assumed to clear the floor
+     -> test_an_unknown_position_value_is_not_assumed_to_clear_the_floor
 """
 
 from __future__ import annotations
@@ -491,3 +495,47 @@ def test_an_unknown_regime_mode_is_refused():
 
     with pytest.raises(ValueError, match="unknown regime filter mode"):
         regime_filter(regimes, calm, macro, index, columns, mode="tlit")
+
+
+# --------------------------------------------------------------------------- #
+# A minimum in pounds is not a minimum in units
+# --------------------------------------------------------------------------- #
+def test_the_value_floor_is_not_read_as_a_unit_count():
+    """M68: min_trade_value conflated with min_quantity.
+
+    Trading 212's floor on Lululemon is £5, which at a three-figure share
+    price is about 0.04 of a share. Recording that as a unit minimum would
+    demand five shares -- roughly £600 -- and refuse almost every trade the
+    broker would actually accept.
+    """
+    from cfdinvest.livehelper.t212_rules import rules_from_mapping, validate_quantity
+
+    rules = rules_from_mapping(
+        {"LULU": {"t212_name": "Lululemon", "min_trade_value": 5.0}}, "test"
+    ).get("LULU")
+
+    assert rules.min_trade_value == pytest.approx(5.0)
+    assert rules.min_quantity is None, "a value floor must not become a unit floor"
+
+    # 0.04 shares worth £12 is fine; the same size worth £4 is not.
+    assert not [
+        i for i in validate_quantity(0.04, rules, value=12.0)
+        if i.check == "min_trade_value"
+    ]
+    blocked = [
+        i for i in validate_quantity(0.04, rules, value=4.0)
+        if i.check == "min_trade_value"
+    ]
+    assert len(blocked) == 1 and blocked[0].blocking
+
+
+def test_an_unknown_position_value_is_not_assumed_to_clear_the_floor():
+    """Absence is named: no value supplied means the check did not run."""
+    from cfdinvest.livehelper.t212_rules import rules_from_mapping, validate_quantity
+
+    rules = rules_from_mapping(
+        {"LULU": {"t212_name": "Lululemon", "min_trade_value": 5.0}}, "test"
+    ).get("LULU")
+
+    issues = validate_quantity(0.04, rules, value=None)
+    assert not [i for i in issues if i.check == "min_trade_value"]
