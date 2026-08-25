@@ -518,6 +518,16 @@ def _check_disk(disk: Source, thresholds: HealthThresholds) -> Check:
     )
 
 
+def _plural(count: float, noun: str) -> str:
+    """``"1 day"`` / ``"2 days"``.
+
+    Deliberately local rather than imported from ``components``: that module
+    imports this one, and a check that formats a string is not worth a cycle.
+    """
+    whole = round(float(count))
+    return f"{whole:,.0f} {noun}{'' if whole == 1 else 's'}"
+
+
 @_safe("calendar_fresh", "Publication calendar freshness")
 def _check_calendar(lake: Source, thresholds: HealthThresholds) -> Check:
     metadata = lake.value or {}
@@ -538,7 +548,7 @@ def _check_calendar(lake: Source, thresholds: HealthThresholds) -> Check:
         triggered=stale,
         severity="warning",
         detail=(
-            f"newest publication is {age:.0f} days old "
+            f"newest publication is {_plural(age, 'day')} old "
             f"(threshold {thresholds.publication_calendar_stale_days:.0f})"
         ),
         remedy="Re-ingest the macro series; stale publication dates make "

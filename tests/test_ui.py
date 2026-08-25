@@ -14,6 +14,7 @@ page that raises on a column the pipeline did not write.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -1504,3 +1505,98 @@ def test_the_read_only_contract_is_stated_where_it_is_enforced():
     """The claim and the code that keeps it true live in the same file."""
     text = (UI / "sources.py").read_text(encoding="utf-8")
     assert "never writes" in text or "Nothing in this module writes" in text
+
+
+# --------------------------------------------------------------------------- #
+# Presentation
+# --------------------------------------------------------------------------- #
+def test_a_count_of_one_reads_as_one():
+    """"1 days old" is small, and it makes the reader trust the number less."""
+    assert components.plural(1, "day") == "1 day"
+    assert components.plural(2, "day") == "2 days"
+    assert components.plural(0, "day") == "0 days"
+    assert components.plural(1.4, "day") == "1 day"
+    assert components.plural(None, "day") == components.DASH
+
+
+def test_the_application_title_has_one_owner():
+    """The tab said "cfdinvest" in two places, spelled out separately.
+
+    The wordmark in the logo slot is a different string with a different job,
+    and it stays as it is -- this is only about what the browser tab says.
+    """
+    from cfdinvest.ui import theme
+
+    assert theme.APP_TITLE == "CFD Invest"
+
+    sources_text = (UI / "app.py").read_text(encoding="utf-8")
+    components_text = (UI / "components.py").read_text(encoding="utf-8")
+    for name, text in (("app.py", sources_text), ("components.py", components_text)):
+        assert "page_title=\"cfdinvest\"" not in text, name
+        assert "· cfdinvest" not in text, name
+        assert "APP_TITLE" in text, f"{name} should read the shared title"
+
+
+def test_the_overview_and_status_pages_agree_on_what_the_lake_facts_are_called():
+    """The same number under two names is a papercut, and one name was wrong.
+
+    ``series_count`` is market *plus* macro, so labelling it "Instruments
+    stored" reported 37 instruments for a lake holding 25 of them.
+    """
+    overview = (UI / "pages" / "00_Overview.py").read_text(encoding="utf-8")
+    status = (UI / "pages" / "01_Status.py").read_text(encoding="utf-8")
+
+    assert "Instruments stored" not in overview
+    for label in ("Newest bar", "Instruments", "Macro series",
+                  "Data quality flags"):
+        assert label in overview, label
+        assert label in status, label
+
+
+def test_a_clock_reading_is_one_fixed_width():
+    """The cards need every timestamp the same shape, and in local time."""
+    text = components.clock("2026-08-25T16:42:03+00:00")
+
+    assert re.fullmatch(r"\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}", text), text
+    assert text.startswith("25/08/2026")
+    assert components.clock(None) == components.DASH
+    assert components.clock("not a date") == components.DASH
+
+
+def test_the_manifest_is_not_shown_as_python():
+    """A table of dict reprs tells a reader nothing and looks like a leak."""
+    frame = pd.DataFrame(
+        {
+            "status": ["ok", "ok"],
+            "rows_total": [10, 20],
+            "first_timestamp": ["2018-01-02", "2018-01-02"],
+            "last_timestamp": ["2026-08-24", "2026-08-24"],
+            "anomalies": [{"close_outside_range": 88}, {}],
+            "error": [None, None],
+            "params": [{"interval": "1d", "auto_adjust": True}, {}],
+            "updated_at": ["2026-08-25T12:15:14+00:00"] * 2,
+        },
+        index=["AUDUSD=X", "DBC"],
+    )
+
+    shown = components.coverage_table(frame)
+
+    # The provenance blob is gone, and the columns read as English.
+    assert "params" not in shown.columns and "Params" not in shown.columns
+    assert list(shown.columns)[:2] == ["Status", "Rows"]
+
+    flags = shown["Data quality flags"].tolist()
+    assert flags[0] == "close outside range: 88", flags
+    assert "{" not in flags[0] and "_" not in flags[0]
+    # An empty mapping is the ordinary case and must read as nothing at all.
+    assert flags[1] == components.DASH
+
+    # "None" down an Error column reads as a fault rather than the absence.
+    assert set(shown["Error"]) == {components.DASH}
+
+
+def test_describe_flags_leaves_a_string_alone():
+    """It runs over columns that may already have been formatted."""
+    assert components.describe_flags("already text") == "already text"
+    assert components.describe_flags({}) == components.DASH
+    assert components.describe_flags(None) == components.DASH

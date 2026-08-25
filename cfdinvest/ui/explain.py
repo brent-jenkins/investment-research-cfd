@@ -115,6 +115,22 @@ def phrase(token: str, vocabulary: dict[str, str]) -> str:
     return key.replace("_", " ")
 
 
+
+#: How the macro series were fetched. The raw tokens are the ingestion
+#: layer's own and read as identifiers on a card -- and "publication_lag" has
+#: no space to break at, so it wrapped mid-word.
+VINTAGE_MODES: dict[str, str] = {
+    "publication_lag": "Publication lag",
+    "initial_release": "Initial release",
+    "latest": "Latest revision",
+}
+
+
+def vintage(name: str | None) -> str:
+    """A vintage mode in words: ``publication_lag`` -> ``Publication lag``."""
+    text = phrase(name, VINTAGE_MODES)
+    return text[:1].upper() + text[1:] if text else text
+
 def reason(text: str | None) -> str:
     """Translate a signal reason into a sentence.
 

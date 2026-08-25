@@ -18,6 +18,7 @@ Streamlit. Neither reads anything or touches disk.
 from __future__ import annotations
 
 __all__ = [
+    "APP_TITLE",
     "BRAND",
     "PALETTES",
     "PALETTE",
@@ -33,6 +34,13 @@ __all__ = [
 ]
 
 MODES: tuple[str, ...] = ("light", "dark")
+
+#: What the browser tab says. Distinct from :data:`BRAND` on purpose: the
+#: wordmark in the logo slot is the company's, while the tab has to say which
+#: application this is, in the reader's own words. Both the entry script and
+#: every page title read this one string -- they used to spell "cfdinvest"
+#: out separately, which is how the tab and the heading drift apart.
+APP_TITLE: str = "CFD Invest"
 
 #: The wordmark, and the line under it.
 #:
@@ -295,6 +303,25 @@ def stylesheet(mode: str = "dark") -> str:
   [data-testid="stMetricValue"] {{
     color: var(--cfd-accent) !important;
     font-variant-numeric: tabular-nums;
+    font-size: 1.6rem;
+    line-height: 1.25;
+  }}
+  /* Streamlit keeps a metric value on one line and ellipsises the overflow,
+     which turned "4 minutes ago" into "4 minut..." and "publication_lag"
+     into "publicat...". A card that hides the fact it is showing is worse
+     than a card that is two lines tall, so let them wrap. `anywhere` is for
+     the long unbroken tokens -- vintage modes and regime labels -- that have
+     no space to break at. */
+  [data-testid="stMetricValue"],
+  [data-testid="stMetricValue"] > div,
+  [data-testid="stMetricValue"] * {{
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    overflow-wrap: anywhere;
+    /* A timestamp breaks at its one space, which puts the date on the first
+       line and the clock on the second -- the shape asked for. */
+    word-break: normal;
   }}
 
   /* Tables: tabular figures so columns of numbers line up on the decimal. */
@@ -311,8 +338,38 @@ def stylesheet(mode: str = "dark") -> str:
   }}
   [data-testid="stExpander"] summary {{ color: var(--cfd-accent2); }}
 
-  .stTabs [data-baseweb="tab-list"] {{ gap: 4px; }}
+  /* Tabs. A 4px gap and a colour change on the selected one left the
+     labels running together as one line of prose -- "Changed from default
+     All settings Left unset" reads as a sentence, not as three choices.
+     Each tab now sits in its own bordered pill so the boundaries are
+     visible before the reader has to parse the words. */
+  .stTabs [data-baseweb="tab-list"] {{
+    gap: 8px;
+    border-bottom: 1px solid var(--cfd-border);
+    padding-bottom: 6px;
+    flex-wrap: wrap;
+  }}
+  .stTabs [data-baseweb="tab"] {{
+    background-color: var(--cfd-panel);
+    border: 1px solid var(--cfd-border);
+    border-radius: 8px 8px 0 0;
+    padding: 6px 14px;
+    margin-bottom: -7px;
+  }}
+  .stTabs [data-baseweb="tab"]:hover {{
+    border-color: var(--cfd-accent);
+  }}
+  /* The selected tab joins the panel below it: same background, and its
+     bottom edge is the one gap in the rule under the tab strip. */
+  .stTabs [data-baseweb="tab"][aria-selected="true"] {{
+    background-color: var(--cfd-bg);
+    border-color: var(--cfd-border);
+    border-bottom-color: var(--cfd-bg);
+  }}
   .stTabs [aria-selected="true"] {{ color: var(--cfd-accent) !important; }}
+  /* Baseweb's sliding underline duplicates what the pill already says. */
+  .stTabs [data-baseweb="tab-highlight"] {{ display: none; }}
+  .stTabs [data-baseweb="tab-border"] {{ display: none; }}
 
   /* The critical banner. Deliberately loud, deliberately off-brand. */
   .cfd-banner {{

@@ -117,11 +117,11 @@ st.markdown(
 
 cells = st.columns(4)
 cells[0].metric(
-    "Last started", components.short_moment(status.get("last_run_started_at"))
+    "Last started", components.clock(status.get("last_run_started_at"))
 )
 cells[1].metric(
     "Last completed",
-    components.short_moment(status.get("last_run_completed_at")),
+    components.clock(status.get("last_run_completed_at")),
     help="Written only when the pipeline finished. A start with no completion "
     "after it is a run that died part-way.",
 )
@@ -344,7 +344,7 @@ with right:
         cells = st.columns(2)
         cells[0].metric("Total", components.money(pnl.get("total_pnl")))
         cells[1].metric(
-            f"Last {pnl.get('recent_bars', 0)} bars",
+            f"Last {components.plural(pnl.get('recent_bars', 0), 'bar')}",
             components.money(pnl.get("recent_pnl")),
         )
         drawdowns = st.columns(2)

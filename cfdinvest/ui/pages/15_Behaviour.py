@@ -60,7 +60,7 @@ cells = st.columns(4)
 cells[0].metric("Standing out", len(report.asserted))
 cells[1].metric("Measured", len(report.measured))
 cells[2].metric("Not enough record", len(report.unmeasured))
-cells[3].metric("Checked", components.short_moment(report.timestamp))
+cells[3].metric("Checked", components.clock(report.timestamp))
 
 components.render_note(
     st,

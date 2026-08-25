@@ -223,8 +223,8 @@ with tabs[3]:
     else:
         st.caption(
             f"Universe: {', '.join(metrics.get('universe') or []) or components.DASH} · "
-            f"{metrics.get('bars', 0):,} bars · "
-            f"{metrics.get('trade_count', 0)} trades"
+            f"{components.plural(metrics.get('bars', 0), 'bar')} · "
+            f"{components.plural(metrics.get('trade_count', 0), 'trade')}"
         )
         flat = metrics.get("metrics") or {}
         rows = {

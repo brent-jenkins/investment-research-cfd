@@ -30,7 +30,9 @@ import streamlit as st  # noqa: E402
 
 from cfdinvest.ui import components, theme  # noqa: E402
 
-st.set_page_config(page_title="cfdinvest", page_icon="📈", layout="wide")
+st.set_page_config(
+    page_title=theme.APP_TITLE, page_icon="📈", layout="wide"
+)
 mode = theme.apply(st)
 
 # The logo slot is the only place above the navigation; st.navigation draws

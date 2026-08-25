@@ -98,10 +98,16 @@ with left:
             ),
             "Checks passing": f"{len(health.checks) - len(health.triggered)}"
             f" of {len(health.checks)}",
-            "Data last updated": components.age(
-                (lake.value or {}).get("last_updated"), now
+            # The same facts the Status page's Lake block shows, under the
+            # same labels -- one number under two names is a papercut. The
+            # old label here also claimed these were all instruments, but
+            # series_count is market *plus* macro, so a lake holding 25
+            # instruments and 12 macro series was reported as 37 of them.
+            "Newest bar": components.day(
+                (lake.value or {}).get("last_updated")
             ),
-            "Instruments stored": (lake.value or {}).get("series_count", 0),
+            "Instruments": (lake.value or {}).get("market_series", 0),
+            "Macro series": (lake.value or {}).get("macro_series", 0),
             "Data quality flags": (lake.value or {}).get("anomalies_count", 0),
         },
     )

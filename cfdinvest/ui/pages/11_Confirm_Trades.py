@@ -284,7 +284,7 @@ else:
     cells[1].metric("Instruments held", len(open_now))
     cells[2].metric(
         "Last confirmed",
-        components.short_moment(confirmations[-1].timestamp),
+        components.clock(confirmations[-1].timestamp),
     )
 
     frame = confirm_store.to_frame(confirmations)

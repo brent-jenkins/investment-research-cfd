@@ -54,32 +54,58 @@ lake = data["lake"]
 
 if not components.render_absent(st, lake, "Lake metadata"):
     metadata = lake.value
+    # Five cards, five different facts. This row used to lead with a
+    # timestamp to the second -- the bars are daily, so the clock was always
+    # midnight and carried no information -- and it collapsed the market and
+    # macro counts into one number labelled as though it were all
+    # instruments. Splitting them says more in the same space.
     columns = st.columns(5)
-    columns[0].metric("Last updated", components.age(metadata["last_updated"], now))
-    columns[1].metric("Instruments and series", metadata["series_count"])
-    columns[2].metric("Data quality flags", metadata["anomalies_count"])
-    columns[3].metric(
-        "Publication calendar",
-        components.DASH
-        if metadata["publication_calendar_freshness"] is None
-        else f"{metadata['publication_calendar_freshness']:.0f} days old",
+    columns[0].metric(
+        "Newest bar",
+        components.day(metadata["last_updated"]),
+        help="The newest observation in the lake, not the time the files "
+        "were written. A lake rewritten today with data ending last month "
+        "is stale, and reads as stale here.",
     )
-    columns[4].metric("Vintage mode", metadata["vintage_mode"] or components.DASH)
+    columns[1].metric("Instruments", metadata["market_series"])
+    columns[2].metric("Macro series", metadata["macro_series"])
+    columns[3].metric(
+        "Data quality flags",
+        f"{metadata['anomalies_count']:,}",
+        help="Bars flagged at ingest and stored **unrepaired** by design. "
+        "These are counts of flags raised, not corrections made. The "
+        "breakdown is in the Data quality flags tab below.",
+    )
+    columns[4].metric(
+        "Vintage mode",
+        explain.vintage(metadata["vintage_mode"]) or components.DASH,
+        help="How the macro series were fetched. Publication lag is the "
+        "look-ahead-safe choice: each figure is dated when it was published, "
+        "not when it describes.",
+    )
 
+    calendar_age = metadata["publication_calendar_freshness"]
     st.caption(
-        f"`{metadata['data_root']}` — {metadata['market_series']} market, "
-        f"{metadata['macro_series']} macro. Freshness is the newest "
-        "observation across every series, not a file timestamp: a lake "
-        "rewritten today with data ending last month is stale."
+        f"`{metadata['data_root']}` — publication calendar "
+        + (
+            "not built yet"
+            if calendar_age is None
+            else f"{components.plural(calendar_age, 'day')} old"
+        )
+        + f", {metadata['publication_calendar_rows']:,} rows."
     )
 
     tabs = st.tabs(
         ["Market data", "Economic data", "Data quality flags", "Disk space"]
     )
     with tabs[0]:
-        components.render_frame(st, metadata["coverage"], height=320)
+        components.render_frame(
+            st, components.coverage_table(metadata["coverage"]), height=320
+        )
     with tabs[1]:
-        components.render_frame(st, metadata["macro_coverage"], height=320)
+        components.render_frame(
+            st, components.coverage_table(metadata["macro_coverage"]), height=320
+        )
     with tabs[2]:
         anomalies = metadata["anomalies"]
         if isinstance(anomalies, pd.DataFrame) and not anomalies.empty:
@@ -131,17 +157,14 @@ if state.get("incomplete_run"):
     )
 
 columns = st.columns(4)
-columns[0].metric("Last started", components.age(state.get("last_run"), now))
+columns[0].metric("Last started", components.clock(state.get("last_run")))
 columns[1].metric(
     "Next due",
-    components.DASH
-    if state.get("next_run") is None
-    else components.moment(state["next_run"]),
+    components.clock(state.get("next_run")),
 )
 columns[2].metric(
     "Last succeeded",
-    components.age(state.get("last_success"), now)
-    if state.get("last_success") else components.DASH,
+    components.clock(state.get("last_success")),
 )
 columns[3].metric(
     "Outcome",
@@ -210,7 +233,7 @@ else:
     cells[1].metric("Warnings", latest_monitor.get("warning_count", 0))
     cells[2].metric("For information", latest_monitor.get("info_count", 0))
     cells[3].metric(
-        "Checked", components.short_moment(latest_monitor.get("timestamp"))
+        "Checked", components.clock(latest_monitor.get("timestamp"))
     )
 
 st.divider()
@@ -244,7 +267,7 @@ else:
     }
     cells = st.columns(4)
     cells[0].metric("Recorded", len(confirmations))
-    cells[1].metric("Last confirmed", components.short_moment(latest.timestamp))
+    cells[1].metric("Last confirmed", components.clock(latest.timestamp))
     cells[2].metric("Age", components.age(latest.timestamp, now))
     cells[3].metric("Instruments held", len(held))
     st.caption(

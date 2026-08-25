@@ -65,7 +65,7 @@ cells[2].metric(
 )
 cells[3].metric(
     "Last modified",
-    components.short_moment(
+    components.clock(
         pd.Timestamp(resolved.stat().st_mtime, unit="s", tz="UTC")
     ) if exists else components.DASH,
 )

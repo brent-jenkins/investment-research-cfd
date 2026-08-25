@@ -59,6 +59,10 @@ __all__ = [
     "short_moment",
     "day",
     "age",
+    "clock",
+    "coverage_table",
+    "describe_flags",
+    "plural",
     "duration",
     "run_moment",
     "direction_badge",
@@ -238,7 +242,8 @@ def page_setup(st, title: str, *, icon: str = "📈", subtitle: str = "") -> dic
     """
     try:
         st.set_page_config(
-            page_title=f"{title} · cfdinvest", page_icon=icon, layout="wide"
+            page_title=f"{title} · {theme.APP_TITLE}", page_icon=icon,
+            layout="wide",
         )
     except Exception:  # noqa: BLE001 - already configured by another page
         pass
@@ -574,6 +579,83 @@ def _label(name: Any) -> str:
     return key.replace("_", " ").strip().capitalize()
 
 
+#: Manifest columns that are provenance rather than fact. ``params`` is the
+#: exact kwargs the download was made with -- worth keeping on disk, and pure
+#: noise in a table a person reads.
+COVERAGE_NOISE: tuple[str, ...] = ("params",)
+
+#: Manifest column -> what to call it on screen, in the order they read best.
+COVERAGE_LABELS: tuple[tuple[str, str], ...] = (
+    ("status", "Status"),
+    ("rows_total", "Rows"),
+    ("first_timestamp", "First bar"),
+    ("last_timestamp", "Last bar"),
+    ("anomalies", "Data quality flags"),
+    ("vintage_mode", "Vintage mode"),
+    ("fell_back", "Fell back"),
+    ("initial_release_supported", "Initial release"),
+    ("error", "Error"),
+    ("updated_at", "Written"),
+)
+
+
+def describe_flags(value: Any) -> str:
+    """``{'close_outside_range': 88}`` as ``close outside range: 88``.
+
+    The manifest stores anomaly counts as a mapping, and putting that in a
+    table renders Python's repr -- braces, quotes and underscores -- which
+    tells a reader nothing and looks like a leak. An empty mapping is the
+    common case and reads as nothing at all rather than ``{}``.
+    """
+    if isinstance(value, str):
+        return value
+    if _missing(value):
+        return DASH
+    if not isinstance(value, dict):
+        return str(value)
+    if not value:
+        return DASH
+    return ", ".join(
+        f"{str(name).replace('_', ' ')}: {count:,}"
+        for name, count in sorted(value.items())
+    )
+
+
+def coverage_table(frame: pd.DataFrame) -> pd.DataFrame:
+    """The ingestion manifest as something a person can read.
+
+    Raw, this frame renders dict reprs, the literal string "None" for every
+    row without an error, and a params column wider than the screen. None of
+    that is wrong -- it is simply the manifest's shape rather than a reader's.
+    """
+    if frame is None or getattr(frame, "empty", True):
+        return frame
+
+    shown = frame.copy()
+    if "anomalies" in shown.columns:
+        shown["anomalies"] = shown["anomalies"].map(describe_flags)
+    if "error" in shown.columns:
+        # "None" in every row of an Error column reads as a fault, not as
+        # the absence of one.
+        shown["error"] = shown["error"].map(
+            lambda v: DASH if _missing(v) else str(v)
+        )
+    for name in ("first_timestamp", "last_timestamp"):
+        if name in shown.columns:
+            shown[name] = pd.to_datetime(
+                shown[name], utc=True, errors="coerce"
+            ).map(day)
+    if "updated_at" in shown.columns:
+        shown["updated_at"] = shown["updated_at"].map(clock)
+
+    shown = shown.drop(columns=[c for c in COVERAGE_NOISE if c in shown.columns])
+
+    ordered = [name for name, _ in COVERAGE_LABELS if name in shown.columns]
+    ordered += [c for c in shown.columns if c not in ordered]
+    shown = shown[ordered]
+    return shown.rename(columns=dict(COVERAGE_LABELS))
+
+
 def for_display(frame: pd.DataFrame) -> pd.DataFrame:
     """A copy with every timestamp moved into the display zone."""
     if frame is None or frame.empty:
@@ -747,6 +829,24 @@ def moment(value: Any) -> str:
     return f"{stamp.day} {stamp:%b %Y, %H:%M %Z}"
 
 
+def clock(value: Any) -> str:
+    """A timestamp as ``25/08/2026 16:42:03``, in the display zone.
+
+    The metric cards want one fixed shape. "14 minutes ago" makes the reader
+    work out when that was and goes stale while they look at it, and the long
+    form ("25 Aug 2026, 16:42 BST") is wide enough that the card clipped it.
+    This is the same width whatever the value, which is what a row of cards
+    needs.
+
+    Relative ages are still the right thing in prose and in tables, where the
+    question really is "how long ago" -- see :func:`age`.
+    """
+    stamp = localise(value)
+    if stamp is None:
+        return DASH
+    return f"{stamp:%d/%m/%Y %H:%M:%S}"
+
+
 def short_moment(value: Any) -> str:
     """A timestamp without the year: ``Mon 24 Aug, 15:30 BST``."""
     stamp = localise(value)
@@ -811,6 +911,23 @@ def age(value: Any, now: pd.Timestamp | None = None) -> str:
     if seconds < 0:
         return f"in {_span(-seconds)}"
     return f"{_span(seconds)} ago"
+
+
+def plural(count: Any, noun: str, suffix: str = "s") -> str:
+    """``"1 day"``, ``"2 days"`` -- a count with its noun agreeing.
+
+    A card reading "1 days old" is the kind of small wrongness that makes a
+    reader trust the rest of the number less, and it appears wherever a
+    count is formatted to zero decimal places.
+    """
+    if _missing(count):
+        return DASH
+    try:
+        number = float(count)
+    except (TypeError, ValueError):
+        return DASH
+    whole = round(number)
+    return f"{whole:,.0f} {noun}{'' if whole == 1 else suffix}"
 
 
 def _span(seconds: float) -> str:

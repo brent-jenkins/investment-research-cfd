@@ -203,7 +203,7 @@ else:
     red = int((history["overall_status"] == "red").sum())
     cells[1].metric("Red", red)
     cells[2].metric(
-        "Last recorded", components.short_moment(history["timestamp"].iloc[-1])
+        "Last recorded", components.clock(history["timestamp"].iloc[-1])
     )
 
     if red and len(history) > 1:

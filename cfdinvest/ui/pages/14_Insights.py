@@ -63,7 +63,7 @@ cells = st.columns(4)
 cells[0].metric("Supported", len(said))
 cells[1].metric("Not enough record", len(unsaid))
 cells[2].metric("Trades read", report.details.get("trades_available", 0))
-cells[3].metric("Checked", components.short_moment(report.timestamp))
+cells[3].metric("Checked", components.clock(report.timestamp))
 
 components.render_note(
     st,

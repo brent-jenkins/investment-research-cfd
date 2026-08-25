@@ -108,7 +108,7 @@ if entries:
     )
     cells[3].metric(
         "Last entry",
-        components.short_moment(entries[-1].timestamp) if entries else components.DASH,
+        components.clock(entries[-1].timestamp) if entries else components.DASH,
     )
 
     st.divider()

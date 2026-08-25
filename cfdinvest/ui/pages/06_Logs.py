@@ -116,7 +116,10 @@ with tabs[5]:
         components.render_frame(st, history, height=420)
         failures = history[history["status"].astype(str) != "ok"]
         if not failures.empty:
-            st.error(f"{len(failures)} of the last {len(history)} runs did not succeed.")
+            st.error(
+                f"{len(failures)} of the last "
+                f"{components.plural(len(history), 'run')} did not succeed."
+            )
     else:
         components.render_note(st, "No run summaries on disk yet.")
 
