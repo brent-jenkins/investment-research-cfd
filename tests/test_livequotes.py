@@ -397,3 +397,85 @@ def test_an_unknown_ticker_is_unmapped_not_absent():
     assert mapping.relationship == "unmapped"
     assert not mapping.tradable
     assert t212_instruments.unmapped(["FTSE", "SPY"]) == ["FTSE"]
+
+
+# --------------------------------------------------------------------------- #
+# The universe, and what may be traded in it
+# --------------------------------------------------------------------------- #
+def test_every_configured_instrument_is_classified():
+    """An unclassified ticker would get no leverage ceiling in the template."""
+    from cfdinvest.config import load_config
+
+    universe = list(load_config().market.tickers)
+    assert len(universe) >= 20, "the universe should span the asset classes"
+
+    unknown = [t for t in universe if t212_instruments.asset_class(t) == "unknown"]
+    assert not unknown, f"unclassified: {unknown}"
+    assert not t212_instruments.unmapped(universe)
+
+
+def test_the_only_untradable_instrument_is_the_one_we_keep_on_purpose():
+    """The VIX earns its place as a regime input, not as a trade."""
+    from cfdinvest.config import load_config
+
+    universe = list(load_config().market.tickers)
+    untradable = [
+        t for t in universe if not t212_instruments.mapping_for(t).tradable
+    ]
+    assert untradable == ["^VIX"]
+
+
+def test_an_untradable_instrument_is_never_given_a_position():
+    """The backtest must not score P&L on a position that could not exist.
+
+    This is the expensive half of the tradability gate. A recommendation you
+    cannot act on merely wastes your time; a *backtest* that trades the VIX
+    reports a strategy nobody could have run.
+    """
+    import numpy as np
+    from cfdinvest.signals.frame import SignalConfig, generate_signals
+    from cfdinvest.preprocessing.frame import AnalysisFrame
+
+    days = pd.date_range("2024-01-01", periods=260, freq="B", tz="UTC")
+    columns = ["^GSPC", "^VIX"]
+    # A hard, clean uptrend in both, so the trend engine wants them both.
+    rising = pd.DataFrame(
+        np.linspace(100, 300, len(days))[:, None].repeat(2, axis=1),
+        index=days, columns=columns,
+    )
+    frame = AnalysisFrame(
+        prices={"close": rising, "high": rising * 1.01, "low": rising * 0.99},
+        returns={}, volatility={}, correlations={}, macro={}, metadata={},
+    )
+
+    signals = generate_signals(frame, config=SignalConfig())
+
+    assert (signals.direction["^VIX"] == "flat").all(), "the VIX was traded"
+    assert (signals.size["^VIX"] == 0).all()
+    # And the gate is targeted, not a blanket off-switch.
+    assert (signals.direction["^GSPC"] != "flat").any(), "the gate caught everything"
+
+
+def test_the_gate_can_be_lifted_for_research_only():
+    """Off is available, and is not the default."""
+    from cfdinvest.signals.frame import SignalConfig
+
+    assert SignalConfig().require_tradable is True
+
+
+def test_the_rules_template_covers_the_universe_and_asserts_no_numbers():
+    """The template makes filling the table quick without filling it in."""
+    from cfdinvest.config import load_config
+
+    body = Path("deployment/scripts/t212_rules.example.toml").read_text(
+        encoding="utf-8"
+    )
+    for ticker in load_config().market.tickers:
+        if t212_instruments.mapping_for(ticker).tradable:
+            assert f'["{ticker}"]' in body, ticker
+
+    # Every line is a comment: nothing here is a value the helper would read.
+    for line in body.splitlines():
+        assert not line.strip() or line.lstrip().startswith("#"), line
+
+    assert "regulatory retail ceiling" in body.lower()

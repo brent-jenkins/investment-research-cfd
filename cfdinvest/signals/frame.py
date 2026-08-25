@@ -47,6 +47,9 @@ class SignalConfig:
     component_weights: dict[str, float] = field(
         default_factory=lambda: {"crossover": 1.0, "breakout": 1.0, "momentum": 1.0}
     )
+    #: Hold instruments with no Trading 212 CFD flat. Off only for
+    #: research on the raw signal, never for a run you would act on.
+    require_tradable: bool = True
     #: Absolute strength required to want a position.
     entry_threshold: float = 0.3
 
@@ -293,6 +296,22 @@ def generate_signals(
         raw, outcome.allow_long, outcome.allow_short, size_ok
     )
 
+    # -- tradability --------------------------------------------------------
+    # An instrument with no Trading 212 CFD is held flat, always. It is in
+    # the universe because something needs it -- the VIX drives the regime
+    # classification -- and taking a position in it would be worse than
+    # useless: the recommendation could not be acted on, and the backtest
+    # would be scoring P&L from a position that could never have existed.
+    untradable = [
+        column for column in columns
+        if not _is_tradable(column, settings)
+    ]
+    if untradable:
+        direction.loc[:, untradable] = "flat"
+        logger.info(
+            "Held flat, not tradable on Trading 212: %s", ", ".join(untradable)
+        )
+
     is_flat = direction == "flat"
     size = size.mask(is_flat, 0.0)
 
@@ -326,6 +345,7 @@ def generate_signals(
             "breakout": settings.breakout_window,
         },
         "active_bars": int((direction != "flat").to_numpy().sum()),
+        "untradable": tuple(untradable),
     }
 
     return SignalFrame(
@@ -345,6 +365,24 @@ def generate_signals(
         },
         metadata=metadata,
     )
+
+
+def _is_tradable(ticker: str, settings) -> bool:
+    """Whether a position in this instrument could actually be opened.
+
+    Unknown instruments are treated as tradable. The mapping table is a
+    record of what has been looked up, not a permission list, and a ticker
+    nobody has classified yet should not be silently dropped from a
+    backtest -- that failure would be invisible.
+    """
+    if not getattr(settings, "require_tradable", True):
+        return True
+    try:
+        from cfdinvest.livehelper.t212_instruments import mapping_for
+
+        return mapping_for(str(ticker)).relationship != "none"
+    except Exception:  # noqa: BLE001 - never fail signal generation over this
+        return True
 
 
 def _base_size(analysis_frame, settings, index, columns) -> pd.DataFrame:

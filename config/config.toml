@@ -12,21 +12,47 @@
 data_root = "data"
 
 [market]
-# The CFD universe. Scales comfortably to 20-50 symbols.
+# The CFD universe: 43 instruments across indices, commodities, FX and
+# single stocks. Every tradable entry corresponds to a Trading 212 CFD --
+# cfdinvest/livehelper/t212_instruments.py names the match for each, and the
+# signal layer holds anything unmatched flat.
+#
+# Two notes on how this list was chosen.
+#
+# These are the *indices and commodities themselves*, not ETFs that track
+# them. SPY and Trading 212's US 500 both follow the S&P 500, but modelling
+# an ETF and trading an index CFD are different things. ^GSPC is what the
+# CFD is priced on.
+#
+# The single stocks were picked for liquidity, volatility and sector spread
+# -- not for having gone up or down. A universe assembled from what already
+# worked is fitted to the past, and every backtest over it flatters itself.
+# The strategy trades both directions and the signal decides which; the job
+# of this list is to offer instruments that *trend*, in enough different
+# markets that they do not all turn at once.
 tickers = [
-    # US equity indices / ETFs
-    "SPY", "QQQ", "IWM", "DIA",
-    # Sector proxies
-    "XLK", "XLF", "XLE", "XLV",
-    # International
-    "EFA", "EEM", "EWJ", "EWG",
-    # Rates & credit
-    "TLT", "IEF", "HYG", "LQD",
-    # Commodities
-    "GLD", "SLV", "USO", "DBC",
-    # FX (yfinance spot pairs)
+    # Indices -> US 500, US Tech 100, US 30, US 2000
+    "^GSPC", "^NDX", "^DJI", "^RUT",
+    #         -> UK 100, Germany 40, France 40, Europe 50
+    "^FTSE", "^GDAXI", "^FCHI", "^STOXX50E",
+    #         -> Japan 225, Hong Kong 50
+    "^N225", "^HSI",
+    # Metals -> Gold, Silver, Copper, Platinum
+    "GC=F", "SI=F", "HG=F", "PL=F",
+    # Energy -> Oil - Crude (WTI), Oil - Brent, Natural Gas
+    "CL=F", "BZ=F", "NG=F",
+    # FX majors and two crosses
     "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X",
-    # Volatility
+    "USDCAD=X", "USDCHF=X", "NZDUSD=X", "EURGBP=X",
+    # Large-cap technology. High beta, and they trend hard in both
+    # directions -- which is what a trend system needs, not a rising line.
+    "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
+    # Other sectors, for spread rather than for a view: financials, energy,
+    # healthcare, industrials, semis, fintech and two consumer names.
+    "JPM", "XOM", "JNJ", "BA", "INTC", "PYPL", "NKE", "LULU", "DIS",
+    # Volatility. NOT tradable and never recommended -- it is an input to
+    # the regime classification, and the tradability gate keeps it out of
+    # the signals. Removing it would cost the risk-off detection.
     "^VIX",
 ]
 interval = "1d"          # "1d", "1h" or "1wk"

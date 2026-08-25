@@ -1,30 +1,575 @@
 # Trading 212 instrument rules — copy to ~/.config/cfdinvest/t212_rules.toml
 # and fill in from what the ticket shows you.
 #
-#     cfdinvest-helper "long SPX500 0.68 entry=4434.8 stop=4390" \
-#         --rules ~/.config/cfdinvest/t212_rules.toml
+# Every instrument in the configured universe is stubbed below, grouped by
+# asset class, with each field commented out. Uncomment what you read in the
+# app and leave the rest alone.
 #
-# These numbers are NOT shipped filled in, and that is deliberate. Nothing
-# publishes a machine-readable table of Trading 212's instrument rules, and
-# this project makes no broker API calls. A plausible invented table would be
-# the worst of both worlds: numbers that look measured, are not, and get
-# trusted because they sit next to numbers that are.
+# NOTHING HERE IS FILLED IN, AND THAT IS DELIBERATE
+# -------------------------------------------------
+# Nothing publishes a machine-readable table of Trading 212's instrument
+# rules and this project makes no broker API calls, so an invented table
+# would be the worst of both worlds: numbers that look measured, are not, and
+# get trusted because they sit beside numbers that are.
 #
-# An instrument you have not recorded is reported as *unverified*, never as
-# compliant — every check returns "not checked" rather than "passed".
+# An instrument you have not recorded is reported *unverified*, never
+# compliant. Every check returns "not checked" rather than "passed". A
+# partial entry is better than none: it makes the checks it covers real and
+# leaves the rest honestly unchecked.
 #
-# Every field is optional. A partial entry is better than none: it makes the
-# checks it covers real and leaves the rest honestly unchecked.
+# ON LEVERAGE
+# -----------
+# Trading 212 applies leverage automatically and it differs by asset class,
+# so each group below carries the FCA/ESMA **regulatory retail ceiling**.
+#
+# That ceiling is NOT Trading 212's figure. It is the most a retail account
+# may be given, so use it as a sanity check on what you read:
+#
+#   * a figure ABOVE the ceiling means the account is classified
+#     professional — worth knowing before you size anything
+#   * a figure BELOW it is perfectly ordinary; brokers routinely offer less
+#
+# The number that goes in `leverage` is the one the ticket shows you for that
+# instrument. Nothing else is a measurement.
+#
+# Generated for the 43-instrument universe in config/config.toml.
 
-# [SPX500]
-# quantity_precision = 2          # decimal places the ticket accepts
-# min_quantity       = 0.1        # below this the order will not go
-# max_quantity       = 100.0
-# leverage           = 20.0       # T212 sets this per instrument
-# financing_rate     = 0.0295     # annual, as a fraction, on the notional
-# spread_typical     = 0.7        # instrument currency, not basis points
-# currency           = "USD"
-# trading_hours      = "23:00-22:00"   # UTC; wrapping midnight is normal
+
+# ====================================================================
+# Indices
+#
+# Regulatory retail ceiling: 20:1 for major indices, 10:1 for minor ones.
+# Confirm the actual figure per instrument in the app.
+
+# ["^GSPC"]                       # Trading 212: US 500
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
 # close_only         = false
-# source             = "T212 ticket, 2026-08-25"   # so future-you can tell
-                                                   # a transcript from a guess
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["^NDX"]                       # Trading 212: US Tech 100
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["^DJI"]                       # Trading 212: US 30
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["^RUT"]                       # Trading 212: US 2000
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["^FTSE"]                       # Trading 212: UK 100
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["^GDAXI"]                       # Trading 212: Germany 40
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["^FCHI"]                       # Trading 212: France 40
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["^STOXX50E"]                       # Trading 212: Europe 50
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["^N225"]                       # Trading 212: Japan 225
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["^HSI"]                       # Trading 212: Hong Kong 50
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+
+# ====================================================================
+# Commodities
+#
+# Regulatory retail ceiling: 20:1 for gold, 10:1 for other commodities.
+# Confirm the actual figure per instrument in the app.
+
+# ["GC=F"]                       # Trading 212: Gold
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["SI=F"]                       # Trading 212: Silver
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["HG=F"]                       # Trading 212: Copper
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["PL=F"]                       # Trading 212: Platinum
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["CL=F"]                       # Trading 212: Oil - Crude (WTI)
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["BZ=F"]                       # Trading 212: Oil - Brent
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["NG=F"]                       # Trading 212: Natural Gas
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 20 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+
+# ====================================================================
+# Forex
+#
+# Regulatory retail ceiling: 30:1 for major pairs, 20:1 for non-majors.
+# Confirm the actual figure per instrument in the app.
+
+# ["EURUSD=X"]                       # Trading 212: EURUSD
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 30 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["GBPUSD=X"]                       # Trading 212: GBPUSD
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 30 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["USDJPY=X"]                       # Trading 212: USDJPY
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 30 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["AUDUSD=X"]                       # Trading 212: AUDUSD
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 30 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["USDCAD=X"]                       # Trading 212: USDCAD
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 30 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["USDCHF=X"]                       # Trading 212: USDCHF
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 30 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["NZDUSD=X"]                       # Trading 212: NZDUSD
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 30 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["EURGBP=X"]                       # Trading 212: EURGBP
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 30 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+
+# ====================================================================
+# Shares
+#
+# Regulatory retail ceiling: 5:1 for individual shares.
+# Confirm the actual figure per instrument in the app.
+
+# ["NVDA"]                       # Trading 212: NVIDIA
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["AAPL"]                       # Trading 212: Apple
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["MSFT"]                       # Trading 212: Microsoft
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["AMZN"]                       # Trading 212: Amazon
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["GOOGL"]                       # Trading 212: Alphabet (Class A)
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["META"]                       # Trading 212: Meta Platforms
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["TSLA"]                       # Trading 212: Tesla
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["AMD"]                       # Trading 212: Advanced Micro Devices
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["JPM"]                       # Trading 212: JPMorgan Chase
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["XOM"]                       # Trading 212: Exxon Mobil
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["JNJ"]                       # Trading 212: Johnson & Johnson
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["BA"]                       # Trading 212: Boeing
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["INTC"]                       # Trading 212: Intel
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["PYPL"]                       # Trading 212: PayPal
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["NKE"]                       # Trading 212: Nike
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["LULU"]                       # Trading 212: Lululemon Athletica
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+# ["DIS"]                       # Trading 212: Walt Disney
+# quantity_precision =              # decimal places the ticket accepts
+# min_quantity       =              # below this the order will not go
+# max_quantity       =
+# leverage           =              # <= 5 for retail
+# financing_rate     =              # annual, as a fraction of notional
+# spread_typical     =              # instrument currency, not bps
+# currency           =
+# trading_hours      =              # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, YYYY-MM-DD"
+
+
+# ====================================================================
+# Not tradable — no entry needed
+#
+#   ^VIX is an index level that feeds the regime
+#   classification. It is never a suggested trade, so it needs no
+#   rules and the signal layer holds it flat.
