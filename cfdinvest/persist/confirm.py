@@ -78,7 +78,16 @@ ACTIONS: tuple[str, ...] = ("open", "close", "flip", "ignore")
 #: it is without being opened.
 FILENAME_FORMAT = "%Y%m%d-%H%M%S"
 
-_TICKER = re.compile(r"^[A-Za-z0-9._\-]{1,32}$")
+#: Yahoo's symbols carry ``^`` for an index and ``=`` for a future or an FX
+#: pair -- ^GSPC, GC=F, EURUSD=X. The original pattern allowed neither, so
+#: 22 of the 41 configured instruments could not be recorded at all: the
+#: form refused the trade you had just placed. Still deliberately narrow, so
+#: a path or a shell fragment cannot arrive as a ticker.
+_TICKER = re.compile(r"^[A-Za-z0-9._^=\-]{1,32}$")
+
+#: Characters that are legal in a ticker but awkward in a filename. The
+#: record keeps the real symbol; only the name on disk is sanitised.
+_FILENAME_SAFE = str.maketrans({"^": "_", "=": "_"})
 
 
 def _utc(value: Any) -> pd.Timestamp:
@@ -269,7 +278,8 @@ def confirmations_root(config=None, account: str | None = None) -> Path:
 def confirmation_filename(confirmation: Confirmation) -> str:
     return (
         f"{confirmation.timestamp.strftime(FILENAME_FORMAT)}-"
-        f"{confirmation.action.upper()}-{confirmation.ticker}.json"
+        f"{confirmation.action.upper()}-"
+        f"{confirmation.ticker.translate(_FILENAME_SAFE)}.json"
     )
 
 

@@ -1090,3 +1090,131 @@ def test_the_confirm_page_records_a_correction_rather_than_editing():
     # It must not delete or rewrite anything.
     for destructive in ("unlink(", "rmtree", "os.remove", "truncate"):
         assert destructive not in page, destructive
+
+
+# --------------------------------------------------------------------------- #
+# What your recorded trades actually returned
+# --------------------------------------------------------------------------- #
+def a_confirmation(ticker, action, **kwargs):
+    from cfdinvest.persist.confirm import Confirmation
+
+    return Confirmation.of(ticker, action, **kwargs)
+
+
+def test_every_configured_instrument_can_actually_be_recorded():
+    """22 of 41 could not be.
+
+    Yahoo carries ^ for an index and = for a future or FX pair, and the
+    ticker pattern allowed neither -- so the form refused the trade you had
+    just placed, for more than half the universe.
+    """
+    from cfdinvest.config import load_config
+    from cfdinvest.persist.confirm import _TICKER
+
+    rejected = [t for t in load_config().market.tickers if not _TICKER.match(t)]
+    assert not rejected, rejected
+
+
+def test_a_ticker_still_cannot_be_a_path_or_a_shell_fragment():
+    from cfdinvest.persist.confirm import _TICKER
+
+    for nasty in ("../etc/passwd", "a/b", "x;rm -rf /", "", " ", "a" * 40):
+        assert not _TICKER.match(nasty), nasty
+
+
+def test_a_correction_does_not_become_a_second_round_trip():
+    """A second open on an instrument already open restates the same
+    position. Counting it as a new trade would invent one that never
+    happened -- and would do it every time you fix a typo."""
+    from cfdinvest.confirm.performance import realised_trades
+
+    trips = realised_trades([
+        a_confirmation("NKE", "open", direction="short", quantity=2.0,
+                       price=68.0, currency="GBP", financing_rate=0.0,
+                       timestamp=pd.Timestamp("2026-08-01 10:00", tz="UTC")),
+        a_confirmation("NKE", "open", direction="short", quantity=3.0,
+                       price=69.0, currency="GBP", financing_rate=0.0,
+                       timestamp=pd.Timestamp("2026-08-01 11:00", tz="UTC")),
+        a_confirmation("NKE", "close", price=60.0,
+                       timestamp=pd.Timestamp("2026-08-02 11:00", tz="UTC")),
+    ])
+
+    assert len(trips) == 1
+    # Valued on the corrected entry, not the mistyped one.
+    assert trips[0].quantity == pytest.approx(3.0)
+    assert trips[0].open_price == pytest.approx(69.0)
+
+
+def test_an_open_position_is_not_counted_as_a_result():
+    """An unrealised move is not a result, and counting it as one is how a
+    losing book reports a win rate."""
+    from cfdinvest.confirm.performance import realised_trades
+
+    trips = realised_trades([
+        a_confirmation("NKE", "open", direction="long", quantity=1.0, price=10.0,
+                       timestamp=pd.Timestamp("2026-08-01", tz="UTC")),
+    ])
+    assert trips == []
+
+
+def test_costs_are_taken_out_of_the_recorded_result():
+    """The gap this closes. On the backtest, financing was the largest cost
+    line -- a figure computed from price movement alone flatters a
+    leveraged, multi-week strategy by exactly what it costs to carry."""
+    from cfdinvest.confirm.performance import realised_trades, summarise
+
+    trips = realised_trades([
+        a_confirmation("X", "open", direction="long", quantity=1.0, price=36500.0,
+                       currency="GBP", leverage=1.0, financing_rate=0.10,
+                       timestamp=pd.Timestamp("2026-08-01", tz="UTC")),
+        a_confirmation("X", "close", price=36500.0,
+                       timestamp=pd.Timestamp("2026-08-11", tz="UTC")),
+    ])
+
+    trip = trips[0]
+    assert trip.gross_pnl_gbp == pytest.approx(0.0)   # price did not move
+    assert trip.financing_gbp == pytest.approx(100.0)  # 10 days at £10
+    assert trip.net_pnl_gbp == pytest.approx(-100.0)   # and it cost you
+
+    total = summarise(trips)
+    assert total["net_pnl_gbp"] == pytest.approx(-100.0)
+    assert total["costs_gbp"] == pytest.approx(100.0)
+
+
+def test_a_trip_missing_its_terms_is_reported_not_dropped():
+    """A win rate over the trades that happened to carry an exchange rate is
+    not a win rate, and the difference is invisible unless it is stated."""
+    from cfdinvest.confirm.performance import realised_trades, summarise
+
+    trips = realised_trades([
+        a_confirmation("NKE", "open", direction="long", quantity=1.0, price=10.0,
+                       currency="USD",  # no fx_rate, no financing rate
+                       timestamp=pd.Timestamp("2026-08-01", tz="UTC")),
+        a_confirmation("NKE", "close", price=12.0,
+                       timestamp=pd.Timestamp("2026-08-02", tz="UTC")),
+    ])
+
+    assert len(trips) == 1
+    assert not trips[0].complete
+    assert trips[0].won is None, "unvalued is not a loss"
+
+    total = summarise(trips)
+    assert total["valued"] == 0 and total["unvalued"] == 1
+    assert total["win_rate"] is None
+    assert "fx_rate" in total["missing"]
+
+
+def test_leverage_alone_missing_does_not_stop_a_trip_being_valued():
+    """Leverage decides the margin, not the result."""
+    from cfdinvest.confirm.performance import realised_trades
+
+    trips = realised_trades([
+        a_confirmation("X", "open", direction="long", quantity=1.0, price=100.0,
+                       currency="GBP", financing_rate=0.0,
+                       timestamp=pd.Timestamp("2026-08-01", tz="UTC")),
+        a_confirmation("X", "close", price=110.0,
+                       timestamp=pd.Timestamp("2026-08-02", tz="UTC")),
+    ])
+
+    assert trips[0].complete
+    assert trips[0].net_pnl_gbp == pytest.approx(10.0)
