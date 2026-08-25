@@ -50,6 +50,11 @@ from cfdinvest.analytics.montecarlo import (
     compute_montecarlo_metrics,
     resample_trades,
 )
+from cfdinvest.analytics.persisted import (
+    execution_frame_from_run,
+    score_every_run,
+    score_run,
+)
 from cfdinvest.analytics.store import (
     load_montecarlo_summary,
     load_run_attribution,
@@ -100,6 +105,9 @@ __all__ = [
     "ResampledPath",
     "resample_trades",
     "compute_montecarlo_metrics",
+    "score_run",
+    "score_every_run",
+    "execution_frame_from_run",
     "load_run_metrics",
     "load_run_attribution",
     "load_walkforward_summary",

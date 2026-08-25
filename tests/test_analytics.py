@@ -802,6 +802,193 @@ def test_analytics_never_writes_into_a_run_directory(written_lake, scored):
 
 
 # --------------------------------------------------------------------------- #
+# Scoring what is already on disk
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def recorded_run(tmp_path):
+    """A lake with one run persisted by the real scheduler."""
+    from cfdinvest.backtest.runner import BacktestConfig as Cfg
+    from cfdinvest.schedule.runner import RunConfig
+    from cfdinvest.schedule.runner import run_pipeline as run_scheduled
+
+    config = build_lake(tmp_path / "data", bars=260)
+    summary = run_scheduled(
+        list(TICKERS),
+        RunConfig(backtest=Cfg(interval=INTERVAL)),
+        repository=DataRepository(config),
+        now=pd.Timestamp("2026-08-25 07:00", tz="UTC"),
+    )
+    assert summary.status == "ok", summary.error
+    return config, summary.run_id
+
+
+def test_a_stored_run_scores_without_running_anything(recorded_run):
+    from cfdinvest.analytics import persisted
+
+    config, run_id = recorded_run
+    result = persisted.score_run(config, run_id)
+
+    assert result.ok, result.error
+    assert result.label == run_id
+    assert result.bars > 0
+    assert "sharpe_ratio" in result.metrics
+
+
+def test_scoring_a_stored_run_matches_running_it(recorded_run):
+    """Reading and running must not give two different answers."""
+    from cfdinvest.analytics import persisted
+
+    config, run_id = recorded_run
+    stored = persisted.score_run(config, run_id)
+    live = backtest.run_backtest(
+        BacktestConfig(tickers=list(TICKERS), interval=INTERVAL),
+        repository=DataRepository(config),
+    )
+
+    assert stored.metrics["sharpe_ratio"] == pytest.approx(
+        live.metrics["sharpe_ratio"]
+    )
+    assert stored.trade_count == live.trade_count
+    assert stored.attribution["total_pnl"] == pytest.approx(
+        live.attribution["total_pnl"], abs=1e-6
+    )
+
+
+def test_a_stored_run_uses_the_real_decomposition(recorded_run):
+    """Not the reconstruction: the run persisted its own P&L frame."""
+    from cfdinvest.analytics import persisted
+
+    config, run_id = recorded_run
+    result = persisted.score_run(config, run_id)
+
+    assert not result.attribution.get("reconstructed", False)
+    assert sum(
+        result.attribution[term] for term in attribution.ATTRIBUTION_TERMS
+    ) == pytest.approx(result.attribution["total_pnl"], abs=1e-6)
+
+
+def test_scoring_a_run_that_does_not_exist(written_lake):
+    from cfdinvest.analytics import persisted
+
+    result = persisted.score_run(written_lake, "NOPE")
+    assert not result.ok
+    assert result.error
+
+
+def test_scoring_with_no_runs_at_all(written_lake):
+    from cfdinvest.analytics import persisted
+
+    result = persisted.score_run(written_lake)
+    assert not result.ok
+    assert "no run" in result.error
+
+
+def test_every_stored_run_scores_into_one_table(recorded_run):
+    from cfdinvest.analytics import persisted
+
+    config, run_id = recorded_run
+    table = persisted.score_every_run(config)
+
+    assert run_id in table.index
+    assert "sharpe_ratio" in table.columns
+
+
+def test_an_execution_frame_rebuilt_from_disk_reports_absences(recorded_run):
+    """Exposure is not persisted, so leverage must read as unknown."""
+    from cfdinvest.analytics import persisted
+
+    config, run_id = recorded_run
+    frame = persisted.execution_frame_from_run(config, run_id)
+
+    assert not frame.trades.empty
+    assert not frame.pnl.empty
+    assert frame.exposure.empty
+    assert np.isnan(metrics.compute_leverage_stats(frame)["mean_leverage"])
+
+
+# --------------------------------------------------------------------------- #
+# Sharing one analysis frame across a sweep
+# --------------------------------------------------------------------------- #
+def test_a_grid_of_execution_settings_can_share_the_analysis():
+    assert backtest.shares_analysis({"execution.max_leverage": [2, 5]})
+    assert backtest.shares_analysis({"signal.min_size": [0.1, 0.2]})
+    assert backtest.shares_analysis({})
+
+
+def test_a_grid_that_changes_the_analysis_cannot_share_it():
+    """Reusing it would score every point against the first point's data."""
+    assert not backtest.shares_analysis({"preprocess.volatility_window": [21, 63]})
+    assert not backtest.shares_analysis({"tickers": [["SPY"], ["GLD"]]})
+    assert not backtest.shares_analysis({"start": ["2022-01-01", "2023-01-01"]})
+    assert not backtest.shares_analysis({"interval": ["1d", "1h"]})
+
+
+def test_sharing_the_analysis_gives_identical_results(universe, repository):
+    """The optimisation must be invisible in the numbers."""
+    grid = {"execution.default_spread_bps": [1.0, 8.0]}
+    shared = backtest.run_parameter_sweep(universe, grid, repository=repository)
+
+    slow = [
+        backtest.run_backtest(universe, repository=repository, overrides=point)
+        for point in backtest.expand_grid(grid)
+    ]
+
+    for fast, full in zip(shared, slow):
+        assert fast.metrics["sharpe_ratio"] == pytest.approx(
+            full.metrics["sharpe_ratio"]
+        )
+        assert fast.trade_count == full.trade_count
+
+
+def test_the_analysis_is_only_shared_when_the_grid_allows_it(
+    universe, repository, monkeypatch
+):
+    """The guard, tested where it acts rather than by its downstream effect.
+
+    Whether two preprocessing settings happen to produce different trades is
+    a property of the strategy, not of this optimisation — so asserting on
+    that would pass or fail for reasons unrelated to the guard. What matters
+    is that the shared frame is not built at all when the grid varies what
+    the frame is made of.
+    """
+    built: list[str] = []
+    real = backtest._analysis_for
+
+    def watched(repo, config):
+        built.append("built")
+        return real(repo, config)
+
+    monkeypatch.setattr(backtest, "_analysis_for", watched)
+
+    backtest.run_parameter_sweep(
+        universe, {"execution.default_spread_bps": [1.0, 8.0]},
+        repository=repository,
+    )
+    assert built == ["built"], "an execution grid should share one frame"
+
+    built.clear()
+    backtest.run_parameter_sweep(
+        universe, {"preprocess.volatility_window": [21, 84]},
+        repository=repository,
+    )
+    assert built == [], "a preprocessing grid must not share a frame"
+
+
+def test_a_single_point_sweep_does_not_bother_sharing(
+    universe, repository, monkeypatch
+):
+    """Building a frame to use once costs more than it saves."""
+    built: list[str] = []
+    monkeypatch.setattr(
+        backtest, "_analysis_for", lambda *a: built.append("built") or None
+    )
+    backtest.run_parameter_sweep(
+        universe, {"execution.default_spread_bps": [5.0]}, repository=repository
+    )
+    assert built == []
+
+
+# --------------------------------------------------------------------------- #
 # Command line
 # --------------------------------------------------------------------------- #
 def test_the_parser_accepts_options_after_the_subcommand():

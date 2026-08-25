@@ -29,7 +29,11 @@ import pandas as pd
 
 from cfdinvest.analytics import attribution as attribution_module
 from cfdinvest.analytics import metrics as metrics_module
-from cfdinvest.backtest.runner import BacktestConfig, run_pipeline
+from cfdinvest.backtest.runner import (
+    BacktestConfig,
+    run_from_analysis,
+    run_pipeline,
+)
 from cfdinvest.repository import DataRepository
 
 logger = logging.getLogger(__name__)
@@ -44,7 +48,36 @@ __all__ = [
     "sweep_frame",
     "config_snapshot",
     "apply_overrides",
+    "shares_analysis",
+    "SHARED_ANALYSIS_PREFIXES",
 ]
+
+#: Settings that change what the *analysis frame* contains. A grid touching
+#: any of them cannot reuse one frame across its points, because each point
+#: would need a different one — and silently reusing it would score every
+#: combination against the first point's indicators while reporting them
+#: under their own labels.
+SHARED_ANALYSIS_PREFIXES: tuple[str, ...] = (
+    "preprocess.",
+    "tickers",
+    "series_ids",
+    "interval",
+    "start",
+    "end",
+)
+
+
+def shares_analysis(grid) -> bool:
+    """Whether every point in a grid can use the same analysis frame.
+
+    Pure. ``False`` when the grid varies the universe, the date range or any
+    preprocessing setting — the things the analysis frame is built from.
+    """
+    return not any(
+        str(key) == prefix.rstrip(".") or str(key).startswith(prefix)
+        for key in (grid or {})
+        for prefix in SHARED_ANALYSIS_PREFIXES
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,6 +334,7 @@ def run_backtest(
     metrics_config: metrics_module.MetricsConfig | None = None,
     thresholds: WarningThresholds | None = None,
     label: str | None = None,
+    analysis_frame=None,
 ) -> BacktestResult:
     """Run one configuration through the pipeline and score it.
 
@@ -315,13 +349,18 @@ def run_backtest(
         ``app_config`` when not supplied.
     overrides:
         Dotted-path settings applied on top of ``config``.
+    analysis_frame:
+        A pre-computed analysis frame to run regimes, signals and execution
+        over. Skips ingestion and preprocessing, which is what makes a sweep
+        affordable. **Only correct when the configuration does not change
+        what that frame contains** — see :func:`shares_analysis`.
     """
     settings = config or BacktestConfig()
     changes = dict(overrides or {})
     if changes:
         settings = apply_overrides(settings, changes)
 
-    if repository is None:
+    if repository is None and analysis_frame is None:
         from cfdinvest.config import load_config
 
         repository = DataRepository(app_config or load_config())
@@ -330,7 +369,11 @@ def run_backtest(
     name = label or _label(changes)
 
     try:
-        result = run_pipeline(repository, settings)
+        result = (
+            run_from_analysis(analysis_frame, settings)
+            if analysis_frame is not None
+            else run_pipeline(repository, settings)
+        )
     except Exception as error:  # noqa: BLE001 - one bad point must not stop a sweep
         logger.exception("Backtest %s failed", name)
         return BacktestResult(
@@ -427,7 +470,24 @@ def run_parameter_sweep(
         repository = DataRepository(app_config or load_config())
 
     combinations = expand_grid(param_grid)
-    logger.info("Parameter sweep: %d combinations", len(combinations))
+
+    # Ingestion and preprocessing are the expensive causal stages, and for a
+    # grid that only varies regimes, signals or execution they produce the
+    # same frame every time. Computing it once turns fifty pipeline runs into
+    # one plus fifty cheap ones.
+    #
+    # A grid that varies the universe, the date range or any preprocessing
+    # setting cannot share -- reusing the frame there would score every point
+    # against the first point's indicators while labelling them as their own.
+    analysis = None
+    if len(combinations) > 1 and shares_analysis(param_grid):
+        analysis = _analysis_for(repository, base_config)
+
+    logger.info(
+        "Parameter sweep: %d combinations, analysis %s",
+        len(combinations),
+        "computed once" if analysis is not None else "recomputed per point",
+    )
 
     return [
         run_backtest(
@@ -436,9 +496,37 @@ def run_parameter_sweep(
             overrides=overrides,
             metrics_config=metrics_config,
             thresholds=thresholds,
+            analysis_frame=analysis,
         )
         for overrides in combinations
     ]
+
+
+def _analysis_for(repository: DataRepository, config: BacktestConfig):
+    """Build the analysis frame once, or ``None`` if it cannot be built.
+
+    A failure here is not fatal: the sweep falls back to running the whole
+    pipeline per point, which is slower and identical.
+    """
+    try:
+        from cfdinvest.preprocessing.frame import analysis_frame_from_repository
+
+        frame = analysis_frame_from_repository(
+            repository,
+            config.tickers,
+            config.series_ids,
+            interval=config.interval,
+            start=config.start,
+            end=config.end,
+            config=config.preprocess,
+        )
+        return None if frame.close.empty else frame
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            "Could not pre-compute the analysis frame (%s); each point will "
+            "run the whole pipeline", error,
+        )
+        return None
 
 
 def run_scenario_set(

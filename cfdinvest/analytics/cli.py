@@ -124,6 +124,15 @@ def build_parser() -> argparse.ArgumentParser:
         "run-once", parents=[common], help="score one configuration"
     )
 
+    scored = commands.add_parser(
+        "score", parents=[common],
+        help="score a run already on disk, without running the pipeline",
+    )
+    scored.add_argument(
+        "--all", action="store_true",
+        help="score every stored run and print them as one table",
+    )
+
     sweep = commands.add_parser("sweep", parents=[common], help="run a parameter grid")
     sweep.add_argument(
         "--grid",
@@ -206,6 +215,32 @@ def _command_run_once(args, app_config, repository, run_id: str) -> int:
 
     store.save_backtest_result(app_config, run_id, result)
     _report(args, {"run_id": run_id, **result.headline,
+                   "warnings": list(result.warnings)})
+    return 0
+
+
+def _command_score(args, app_config, repository, run_id: str) -> int:
+    """Score what the pipeline already wrote. Runs nothing."""
+    from cfdinvest.analytics import persisted
+
+    if args.all:
+        table = persisted.score_every_run(app_config)
+        if table.empty:
+            print("No runs have been recorded yet.", file=sys.stderr)
+            return 1
+        if args.json:
+            _report(args, {"runs": table.reset_index().to_dict("records")})
+        else:
+            print(table.to_string())
+        return 0
+
+    result = persisted.score_run(app_config, args.run_id)
+    if not result.ok:
+        print(f"Could not score: {result.error}", file=sys.stderr)
+        return 1
+
+    store.save_backtest_result(app_config, result.label, result)
+    _report(args, {"run_id": result.label, **result.headline,
                    "warnings": list(result.warnings)})
     return 0
 
@@ -379,6 +414,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     commands = {
         "run-once": _command_run_once,
+        "score": _command_score,
         "sweep": _command_sweep,
         "walkforward": _command_walkforward,
         "montecarlo": _command_montecarlo,

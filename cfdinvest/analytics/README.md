@@ -289,13 +289,66 @@ Three bugs the tests caught during the build:
 
 ---
 
+## Scoring a run that already happened
+
+```bash
+cfdinvest-analytics score              # the newest run
+cfdinvest-analytics score --all        # every stored run, as one table
+```
+
+```python
+from cfdinvest.analytics import score_run
+result = score_run(config, run_id)     # runs nothing
+```
+
+Once the pipeline persists its trades, equity and per-bar decomposition,
+scoring a past run is a read. Measured on a three-asset, 900-bar run: **485 ms
+to run and score, 40 ms to score what is on disk — about 12× faster**, with
+identical numbers.
+
+It also gets a *better* answer. A stored run carries the engine's own
+decomposition, so the attribution separates the overnight gap from the
+intraday move; scoring live without one falls back to reconstructing from the
+trade log, which is exact for costs but cannot split the market leg. Runs
+recorded before the persistence layer take that fallback, and say so.
+
+Nothing is recomputed. `exposure` is not persisted, so leverage statistics
+come back as NaN rather than as zero — an absence, not a number nobody stored.
+
+---
+
+## Sweeps share one analysis frame
+
+A grid that only varies regimes, signals or execution produces the same
+analysis frame at every point, so it is built once and each point runs from
+it. `shares_analysis()` decides: a grid touching `preprocess.*`, the universe,
+the interval or the date range **cannot** share, because reusing the frame
+there would score every combination against the first point's indicators
+while labelling them as their own.
+
+**Be honest about the size of this.** Preprocessing is not where the time
+goes:
+
+| Universe | Preprocessing | Rest of the pipeline | Best possible speedup |
+| --- | --- | --- | --- |
+| 3 assets | 17% | 83% | 1.21× |
+| 8 assets | 18% | 82% | 1.22× |
+| 20 assets | 30% | 70% | 1.43× |
+
+The execution loop dominates, and it is irreducibly sequential — today's
+position depends on yesterday's. The saving is real and grows with the
+universe, but it is tens of per cent, not an order of magnitude. Anyone
+expecting a fifty-point sweep to become instant should look at the table
+above first.
+
+---
+
 ## Known limitations
 
-**Analytics re-runs the pipeline rather than reading persisted frames.** The
-pipeline persists trades, positions, equity and a summary, but not the
-analysis frame, the regime frame or the per-bar P&L decomposition — so a sweep
-of fifty points runs the pipeline fifty times. A persistence layer that stored
-those frames would make sweeps and walk-forward dramatically cheaper.
+**The execution loop is the cost, and it cannot be shared.** Sweeps reuse the
+analysis frame, which is roughly a fifth of a small run and a third of a
+twenty-asset one. The rest is the bar-by-bar simulation, which has to happen
+once per configuration because that is what a configuration changes.
 
 **The instrument-versus-currency split needs the currency map.** A run summary
 records the FX *policy* but not which instrument is quoted in which currency,
