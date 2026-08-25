@@ -31,25 +31,22 @@ data_root = "data"
 # of this list is to offer instruments that *trend*, in enough different
 # markets that they do not all turn at once.
 tickers = [
-    # Indices -> US 500, US Tech 100, US 30, US 2000
-    "^GSPC", "^NDX", "^DJI", "^RUT",
-    #         -> UK 100, Germany 40, France 40, Europe 50
-    "^FTSE", "^GDAXI", "^FCHI", "^STOXX50E",
-    #         -> Japan 225, Hong Kong 50
-    "^N225", "^HSI",
-    # Metals -> Gold, Silver, Copper, Platinum
-    "GC=F", "SI=F", "HG=F", "PL=F",
-    # Energy -> Oil - Crude (WTI), Oil - Brent, Natural Gas
-    "CL=F", "BZ=F", "NG=F",
+    # Indices -> US 500, US Tech 100, US 30
+    "^GSPC", "^NDX", "^DJI",
+    #         -> UK 100, Germany 40, France 40, Europe 50, Japan 225
+    "^FTSE", "^GDAXI", "^FCHI", "^STOXX50E", "^N225",
+    # Metals -> Gold, Copper, Platinum
+    "GC=F", "HG=F", "PL=F",
+    # Energy -> Oil - Crude (WTI), Oil - Brent
+    "CL=F", "BZ=F",
     # FX majors and two crosses
     "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X",
     "USDCAD=X", "USDCHF=X", "NZDUSD=X", "EURGBP=X",
-    # Large-cap technology. High beta, and they trend hard in both
-    # directions -- which is what a trend system needs, not a rising line.
+    # Large-cap technology
     "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
-    # Other sectors, for spread rather than for a view: financials, energy,
-    # healthcare, industrials, semis, fintech and two consumer names.
-    "JPM", "XOM", "JNJ", "BA", "INTC", "PYPL", "NKE", "LULU", "DIS",
+    "AVGO", "NFLX", "ADBE", "ORCL",
+    # Other sectors: financials, energy, healthcare, semis, consumer
+    "JPM", "XOM", "JNJ", "INTC", "NKE", "LULU", "COST",
     # Volatility. NOT tradable and never recommended -- it is an input to
     # the regime classification, and the tradability gate keeps it out of
     # the signals. Removing it would cost the risk-off detection.
