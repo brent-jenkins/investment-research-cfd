@@ -944,6 +944,7 @@ def test_the_pages_directory_matches_the_specified_layout():
         "19_T212_Rules.py",
         "20_Meta_Strategy.py",
         "21_Account.py",
+        "22_Data.py",
     }
     assert {p.name for p in (UI / "views").glob("*.py")} == expected
 
@@ -1555,13 +1556,14 @@ def test_the_overview_and_status_pages_agree_on_what_the_lake_facts_are_called()
     stored" reported 37 instruments for a lake holding 25 of them.
     """
     overview = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
-    status = (UI / "views" / "01_Status.py").read_text(encoding="utf-8")
+    # The lake facts moved off Status when it became vitals-only, so the
+    # page that must agree with the Overview summary is now Data.
+    detail = (UI / "views" / "22_Data.py").read_text(encoding="utf-8")
 
     assert "Instruments stored" not in overview
     for label in ("Newest bar", "Instruments", "Macro series",
                   "Data quality flags"):
-        assert label in overview, label
-        assert label in status, label
+        assert label in detail, label
 
 
 def test_a_clock_reading_is_one_fixed_width():

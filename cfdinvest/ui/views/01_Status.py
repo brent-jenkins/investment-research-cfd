@@ -1,4 +1,16 @@
-"""Status — lake, scheduler, market, errors and every health check."""
+"""System status: is the machine doing its job?
+
+Deliberately narrow. This page answers "is the system healthy" and nothing
+else — no coverage tables, no vintage modes, no regime. Market data moved to
+the Data page, because a status page that also carries market detail is one
+where a red scheduler row sits below a table nobody was reading, and the two
+questions are asked at different moments by a different sort of worry.
+
+What each job last did is read from the **artefacts it writes**, not from the
+daemon. The daemon's own record lives in memory and dies with the process,
+and it is written whether a job succeeded or not; the artefact is only there
+if the work actually happened.
+"""
 
 from __future__ import annotations
 
@@ -12,301 +24,151 @@ if _ROOT not in sys.path:
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from cfdinvest.ui import components, explain  # noqa: E402
+from cfdinvest.ui import components, explain, vitals  # noqa: E402
 
+components.render_crumb(st, "Status")
 data = components.page_setup(
     st,
     "System status",
     icon="🩺",
-    subtitle="Whether the data, the scheduler and the market are in the "
-    "state the rest of this dashboard assumes.",
+    subtitle="Whether the machine is doing its job. Market data lives on the "
+    "Data page; this one is vitals only.",
 )
 now = data["now"]
+scheduler = data["scheduler"].value or {}
+summary = data["summary"]
+record = summary.value or {}
+disk = data["disk"]
 
 # --------------------------------------------------------------------------- #
-# Critical warnings, expanded
+# The header tiles
 # --------------------------------------------------------------------------- #
-st.subheader("Health checks")
 health = data["health"]
-
-if health.triggered:
-    for check in health.triggered:
-        with st.expander(
-            f"{'🔴' if check.severity == 'critical' else '🟠'}  {check.title}",
-            expanded=check.severity == "critical",
-        ):
-            st.markdown(f"**What was found:** {check.detail}")
-            if check.remedy:
-                st.markdown(f"**What to do:** {check.remedy}")
+if health.show_banner:
+    overall, overall_level = "Critical", "critical"
+elif health.triggered:
+    overall, overall_level = "Warnings", "warning"
 else:
-    st.success("Every check passing.")
+    overall, overall_level = "Healthy", "pass"
 
-with st.expander("All checks", expanded=not health.triggered):
-    components.render_frame(st, health.to_frame())
-
-st.divider()
-
-# --------------------------------------------------------------------------- #
-# Lake
-# --------------------------------------------------------------------------- #
-st.subheader("Lake")
-lake = data["lake"]
-
-if not components.render_absent(st, lake, "Lake metadata"):
-    metadata = lake.value
-    # Five cards, five different facts. This row used to lead with a
-    # timestamp to the second -- the bars are daily, so the clock was always
-    # midnight and carried no information -- and it collapsed the market and
-    # macro counts into one number labelled as though it were all
-    # instruments. Splitting them says more in the same space.
-    columns = st.columns(5)
-    columns[0].metric(
-        "Newest bar",
-        components.day(metadata["last_updated"]),
-        help="The newest observation in the lake, not the time the files "
-        "were written. A lake rewritten today with data ending last month "
-        "is stale, and reads as stale here.",
-    )
-    columns[1].metric("Instruments", metadata["market_series"])
-    columns[2].metric("Macro series", metadata["macro_series"])
-    columns[3].metric(
-        "Data quality flags",
-        f"{metadata['anomalies_count']:,}",
-        help="Bars flagged at ingest and stored **unrepaired** by design. "
-        "These are counts of flags raised, not corrections made. The "
-        "breakdown is in the Data quality flags tab below.",
-    )
-    columns[4].metric(
-        "Vintage mode",
-        explain.vintage(metadata["vintage_mode"]) or components.DASH,
-        help="How the macro series were fetched. Publication lag is the "
-        "look-ahead-safe choice: each figure is dated when it was published, "
-        "not when it describes.",
-    )
-
-    calendar_age = metadata["publication_calendar_freshness"]
-    st.caption(
-        f"`{metadata['data_root']}` — publication calendar "
-        + (
-            "not built yet"
-            if calendar_age is None
-            else f"{components.plural(calendar_age, 'day')} old"
-        )
-        + f", {metadata['publication_calendar_rows']:,} rows."
-    )
-
-    tabs = st.tabs(
-        ["Market data", "Economic data", "Data quality flags", "Disk space"]
-    )
-    with tabs[0]:
-        components.render_frame(
-            st, components.coverage_table(metadata["coverage"]), height=320
-        )
-    with tabs[1]:
-        components.render_frame(
-            st, components.coverage_table(metadata["macro_coverage"]), height=320
-        )
-    with tabs[2]:
-        anomalies = metadata["anomalies"]
-        if isinstance(anomalies, pd.DataFrame) and not anomalies.empty:
-            components.render_note(
-                st,
-                "Anomalous bars are stored **unrepaired** by design. These "
-                "are counts of flags raised at ingest, not corrections.",
-            )
-        components.render_frame(st, anomalies, height=320)
-    with tabs[3]:
-        disk = data["disk"]
-        if not components.render_absent(st, disk, "Disk usage"):
-            usage = disk.value
-            free, total = st.columns(2)
-            free.metric("Free", f"{usage['free_gb']:.1f} GB")
-            total.metric("Free share", components.percent(usage["free_fraction"]))
-            st.caption(f"Volume holding `{usage['path']}`")
-
-st.divider()
-
-# --------------------------------------------------------------------------- #
-# Scheduler
-# --------------------------------------------------------------------------- #
-st.subheader("Scheduler")
-scheduler = data["scheduler"]
-state = scheduler.value or {}
-
-if state.get("derived", True):
-    components.render_note(
-        st,
-        "No scheduler state file yet, so these are **derived from the run "
-        "directory**: they say when a run last *completed*, not whether one "
-        "started and died. The next scheduled run will record its own state.",
-    )
-else:
-    components.render_note(
-        st,
-        "Read from the scheduler's own state file. `Last started` is written "
-        "before the pipeline runs, so a start with no matching success is a "
-        "run that began and did not finish — something the run directory "
-        "alone could never show.",
-    )
-
-if state.get("incomplete_run"):
-    st.error(
-        "**A run started and did not finish.** The last start is newer than "
-        "the last success, so the pipeline died part-way. Check the error "
-        "below and the Logs page."
-    )
-
-columns = st.columns(4)
-columns[0].metric("Last started", components.clock(state.get("last_run")))
-columns[1].metric(
-    "Next due",
-    components.clock(state.get("next_run")),
+usage = disk.value if not disk.failed else {}
+free_gb = (usage or {}).get("free_gb")
+free_share = (usage or {}).get("free_fraction")
+# Below a tenth free, a run that writes artefacts is the thing that fills it.
+disk_level = (
+    "unchecked" if free_share is None
+    else "critical" if free_share < 0.05
+    else "warning" if free_share < 0.15
+    else "pass"
 )
-columns[2].metric(
-    "Last succeeded",
-    components.clock(state.get("last_success")),
+
+last_run = components.clock(scheduler.get("last_run"))
+last_success = components.clock(scheduler.get("last_success"))
+outcome = explain.outcome(scheduler.get("last_status")) or components.DASH
+
+components.render_tiles(st, [
+    ("Overall", overall, f"{len(health.checks) - len(health.triggered)} of "
+     f"{len(health.checks)} checks passing", overall_level),
+    ("Last run", last_run, components.age(scheduler.get("last_run"), now),
+     "pass" if scheduler.get("last_run") else "unchecked"),
+    ("Last success", last_success, outcome,
+     "pass" if scheduler.get("last_status") == "ok" else "warning"),
+])
+
+components.render_tiles(st, [
+    ("Disk free", components.DASH if free_gb is None else f"{free_gb:.1f} GB",
+     components.percent(free_share) + " free" if free_share is not None else "",
+     disk_level),
+    ("Bars processed", f"{record.get('bars', 0):,}",
+     f"{len(record.get('universe') or [])} instruments", "pass"),
+    ("Run duration", components.duration(record.get("duration_seconds")),
+     f"run {record.get('run_id', '?')}", "pass"),
+])
+
+# --------------------------------------------------------------------------- #
+# Scheduler health
+# --------------------------------------------------------------------------- #
+st.divider()
+st.subheader("Scheduler health")
+
+held = components.confirmed_open_count(data)
+st.caption(
+    "Each job's last run is taken from the artefact it wrote, not from the "
+    "daemon's own memory — a record written whether or not the work "
+    "succeeded is not evidence that it did."
 )
-with columns[3]:
-    components.render_state_card(
-        st,
-        "Outcome",
-        explain.outcome(state.get("last_status")) or components.DASH,
-        note="the run's recorded status",
-    )
 
-extra = st.columns(3)
-extra[0].metric("Time taken", components.duration(state.get("last_duration")))
-extra[1].metric("Runs recorded", state.get("recorded_runs", state.get("run_count", 0)))
-extra[2].metric("Failures recorded", state.get("recorded_failures", 0))
+rows = vitals.job_report(
+    vitals.gather_evidence(data["config"], account=data.get("account")),
+    now=now,
+    quotes_expected=held > 0,
+)
 
-if state.get("next_run_asset"):
-    st.caption(
-        f"Next event: {state['next_run_kind']} of `{state['next_run_asset']}`."
-    )
-
-if state.get("last_error"):
-    when = state.get("last_error_at")
-    st.error(
-        f"**Last recorded error**"
-        f"{f' ({components.short_moment(when)})' if when else ''}: "
-        f"{state['last_error']}"
-    )
-if state.get("state_file"):
-    st.caption(f"State file: `{state['state_file']}`")
-
-with st.expander("Run history", expanded=False):
-    components.render_frame(st, state.get("history", pd.DataFrame()), height=320)
-
-st.divider()
-
-# --------------------------------------------------------------------------- #
-# Operational monitoring
-# --------------------------------------------------------------------------- #
-st.subheader("Operational monitoring")
-
-try:
-    from cfdinvest.persist import monitoring as monitoring_store
-
-    latest_monitor = monitoring_store.load_latest_monitoring_snapshot(data["config"])
-except Exception as error:  # noqa: BLE001 - a status page must not go dark
-    st.warning(f"Could not read the monitoring history: {error}")
-    latest_monitor = None
-
-if latest_monitor is None:
-    components.render_note(
-        st,
-        "No monitoring pass has been recorded. The scheduler files one after "
-        "every run — see the **Operational Monitoring** page to run the "
-        "checks now.",
-    )
-else:
-    colour = {"green": "#2E7D32", "yellow": "#B26A00", "red": "#C62828"}.get(
-        str(latest_monitor.get("overall_status")), "#B26A00"
-    )
-    st.markdown(
-        f'<div style="background:{colour};color:#fff;padding:10px 16px;'
-        f'border-radius:8px;font-weight:700;">'
-        f"{str(latest_monitor.get('overall_status', '?')).upper()} &nbsp;·&nbsp; "
-        f"{latest_monitor.get('headline', '')}</div>",
-        unsafe_allow_html=True,
-    )
-    cells = st.columns(4)
-    cells[0].metric("Critical", latest_monitor.get("critical_count", 0))
-    cells[1].metric("Warnings", latest_monitor.get("warning_count", 0))
-    cells[2].metric("For information", latest_monitor.get("info_count", 0))
-    cells[3].metric(
-        "Checked", components.clock(latest_monitor.get("timestamp"))
-    )
-
-st.divider()
-
-# --------------------------------------------------------------------------- #
-# Confirmations
-# --------------------------------------------------------------------------- #
-st.subheader("Confirmations")
-
-try:
-    from cfdinvest.persist import confirm as confirm_store
-
-    confirmations = confirm_store.load_confirmations(data["config"])
-except Exception as error:  # noqa: BLE001 - a status page must not go dark
-    st.warning(f"Could not read the confirmations: {error}")
-    confirmations = []
-
-if not confirmations:
-    components.render_note(
-        st,
-        "Nothing has been confirmed. Every page is showing the **simulated** "
-        "positions — which is correct until you say otherwise, but it does "
-        "mean the numbers assume the recommendations were followed exactly.",
-    )
-else:
-    latest = confirmations[-1]
-    held = {
-        name: entry
-        for name, entry in confirm_store.confirmed_positions(confirmations).items()
-        if entry["quantity"]
+table = pd.DataFrame([
+    {
+        "Job": row.name,
+        "Schedule": row.schedule,
+        "Last run": components.clock(row.last_run),
+        "Next due": components.clock(row.next_due),
+        "Status": row.status,
+        "Detail": row.detail,
     }
-    cells = st.columns(4)
-    cells[0].metric("Recorded", len(confirmations))
-    cells[1].metric("Last confirmed", components.clock(latest.timestamp))
-    cells[2].metric("Age", components.age(latest.timestamp, now))
-    cells[3].metric("Instruments held", len(held))
-    st.caption(
-        f"Most recent: {latest.action} {latest.ticker}"
-        + (f" at {latest.price:,.4f}" if latest.price is not None else "")
+    for row in rows
+])
+components.render_frame(st, table)
+
+overdue = [row for row in rows if row.overdue]
+if overdue:
+    st.warning(
+        "**Behind schedule:** "
+        + ", ".join(f"{row.name} — {row.detail}" for row in overdue)
+        + "  \nCheck `systemctl status cfdinvest` on the host."
+    )
+else:
+    components.render_note(st, "Every scheduled job is up to date.")
+
+# --------------------------------------------------------------------------- #
+# The checks themselves
+# --------------------------------------------------------------------------- #
+st.divider()
+st.subheader("Health checks")
+
+# A failing check is rendered in full, not as a row. What was found and what
+# to do are the two things you need, and putting them in a table column means
+# reading a truncated cell to discover the machine wants something.
+failing = [check for check in health.checks if check.triggered]
+for check in failing:
+    st.markdown(
+        f"**{check.title}** — {check.detail}  \n"
+        + (f"*What to do:* {check.remedy}" if check.remedy else "")
     )
 
+if not health.checks:
+    components.render_note(st, "No checks ran.")
+elif not failing:
+    components.render_note(
+        st, f"All {len(health.checks)} checks passed."
+    )
+
+with st.expander(f"Every check ({len(health.checks)})", expanded=not health.checks):
+    components.render_frame(st, pd.DataFrame([
+        {
+            "Check": check.title,
+            "Status": "warning" if check.triggered else "pass",
+            "Detail": check.detail,
+            "What to do": check.remedy if check.triggered else "",
+        }
+        for check in health.checks
+    ]), empty="No checks ran.")
+
+# --------------------------------------------------------------------------- #
+# Recent log
+# --------------------------------------------------------------------------- #
 st.divider()
+st.subheader("Recent log")
+st.caption("The tail, newest last. The Logs page has filtering and history.")
 
-# --------------------------------------------------------------------------- #
-# Market
-# --------------------------------------------------------------------------- #
-st.subheader("Market")
-market = data["market"]
-
-if not components.render_absent(st, market, "Market status"):
-    sessions = market.value["sessions"]
-    open_count = int(sessions["is_open"].sum()) if "is_open" in sessions else 0
-    left, right = st.columns([1, 3])
-    left.metric("Open now", f"{open_count} / {len(sessions)}")
-    with right:
-        components.render_frame(st, sessions, height=260)
-
-    holidays = market.value.get("holidays") or []
-    if holidays:
-        with st.expander(f"US market holidays ({now.year})", expanded=False):
-            st.write(", ".join(components.day(d) for d in holidays))
-
-st.divider()
-
-# --------------------------------------------------------------------------- #
-# Recent errors
-# --------------------------------------------------------------------------- #
-st.subheader("Recent errors")
 errors = data["errors"]
-
-if not components.render_absent(st, errors, "The error log"):
-    recent = list(errors.value)[-10:]
-    st.code("\n".join(recent) or "(nothing)", language="text")
-    st.caption(f"Last {len(recent)} lines. Complete logs are on the Logs page.")
+if not components.render_absent(st, errors, "The log"):
+    lines = list(errors.value or [])
+    st.code("\n".join(lines[-40:]) or "(nothing recorded)", language="text")

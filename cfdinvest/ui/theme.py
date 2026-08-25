@@ -488,6 +488,46 @@ def stylesheet(mode: str = "dark") -> str:
     word-break: normal;
   }}
   .cfd-stat .n {{ color: var(--cfd-subtle); font-size: 0.78rem; }}
+
+  /* Status tiles. A metric card carries a measurement; a tile carries a
+     fact with a judgement attached, and the accent bar is that judgement --
+     legible before the words are read, which is the whole job of a status
+     header. */
+  .cfd-tile {{
+    background-color: var(--cfd-panel);
+    border: 1px solid var(--cfd-border);
+    border-left: 3px solid var(--cfd-border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }}
+  .cfd-tile .k {{
+    color: var(--cfd-subtle);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+  }}
+  .cfd-tile .v {{
+    font-size: 1.15rem;
+    font-weight: 700;
+    line-height: 1.3;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }}
+  .cfd-tile .n {{ color: var(--cfd-subtle); font-size: 0.78rem; }}
+
+  /* The breadcrumb above a page title. */
+  .cfd-crumb {{
+    font-size: 0.78rem;
+    letter-spacing: 0.1em;
+    color: var(--cfd-subtle);
+    margin-bottom: -0.4rem;
+  }}
+  .cfd-crumb b {{ color: {BRAND["colour"]}; letter-spacing: 0.14em; }}
 </style>
 """
 

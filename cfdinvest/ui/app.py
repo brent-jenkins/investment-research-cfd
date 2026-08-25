@@ -67,6 +67,7 @@ PAGES: tuple[tuple[str, str, str], ...] = (
     ("views/19_T212_Rules.py", "T212 Rules", "📐"),
     ("views/20_Meta_Strategy.py", "Meta-Strategy", "🎚"),
     ("views/21_Account.py", "Account", "🔑"),
+    ("views/22_Data.py", "Data", "🗃"),
 )
 
 def _sign_in() -> None:

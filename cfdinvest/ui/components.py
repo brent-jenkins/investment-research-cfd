@@ -63,6 +63,9 @@ __all__ = [
     "clock",
     "coverage_table",
     "render_state_card",
+    "render_tiles",
+    "render_crumb",
+    "confirmed_open_count",
     "require_login",
     "hide_sidebar",
     "current_user",
@@ -628,6 +631,61 @@ def render_section(st, title: str, note: str = "") -> None:
     st.subheader(title)
     if note:
         render_note(st, note)
+
+
+def confirmed_open_count(data: Mapping[str, Any] | None = None) -> int:
+    """How many instruments you have actually confirmed open. Never raises.
+
+    From the confirm layer, which is the only record of what you hold. Zero
+    is a real answer and a common one: it means the live-quote poller has
+    nothing to price, and silence from it is correct rather than a fault.
+    """
+    try:
+        from cfdinvest.persist.confirm import confirmed_positions, load_confirmations
+
+        config = (data or {}).get("config")
+        account = (data or {}).get("account")
+        book = confirmed_positions(load_confirmations(config, account=account))
+        return sum(1 for entry in (book or {}).values() if (entry or {}).get("quantity"))
+    except Exception as error:  # noqa: BLE001 - not knowing is not zero-with-a-crash
+        logger.warning("Could not count confirmed positions: %s", error)
+        return 0
+
+
+def render_crumb(st, page: str) -> None:
+    """The wordmark and page name above a title."""
+    st.markdown(
+        f'<div class="cfd-crumb"><b>{html.escape(theme.BRAND["name"])}</b> &nbsp; '
+        f"{html.escape(str(page))}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_tiles(st, tiles) -> None:
+    """A row of status tiles: label, value, note, and a severity accent.
+
+    ``tiles`` is a sequence of ``(label, value, note, level)``. ``level`` is
+    a state word -- "pass", "warning", "critical", "unchecked" -- and it
+    colours the left edge only. The value keeps the body colour so a tile
+    is legible before the accent has been interpreted, and so a row of them
+    does not read as a warning because one of them is.
+    """
+    if not tiles:
+        return
+    mode = theme.active_mode(st)
+    columns = st.columns(len(tiles))
+    for column, (label, value, note, level) in zip(columns, tiles):
+        colour = state_colour(level, mode) or theme.palette_for(mode)["border"]
+        text = DASH if _missing(value) else str(value)
+        footer = (
+            f'<span class="n">{html.escape(str(note))}</span>' if note else ""
+        )
+        column.markdown(
+            f'<div class="cfd-tile" style="border-left-color:{colour};">'
+            f'<span class="k">{html.escape(str(label))}</span>'
+            f'<span class="v">{html.escape(text)}</span>{footer}</div>',
+            unsafe_allow_html=True,
+        )
 
 
 def render_state_card(st, label: str, value: Any, note: str | None = None) -> None:
