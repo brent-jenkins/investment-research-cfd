@@ -146,23 +146,52 @@ def write_document(payload: Any, run_dir: Path, artefact: str) -> str | None:
 # Frames
 # --------------------------------------------------------------------------- #
 def _to_long(panels: dict[str, pd.DataFrame], value_name: str) -> pd.DataFrame:
-    """Stack a dictionary of ``timestamp x ticker`` panels into one long frame.
+    """Stack a dictionary of panels into one long frame.
 
     Long rather than wide because the number of panels varies with
     configuration — a run with correlations enabled has more than one without
     — and a wide file whose columns depend on settings is one no reader can
     have a fixed schema for.
+
+    **Panels do not all have the same shape.** Prices and returns are
+    ``timestamp x ticker`` and stack into two levels; correlations are
+    already ``(timestamp, pair) x ticker`` and stack into three. Assuming two
+    was the bug that stopped the analysis frame being written at all, so the
+    level count is read rather than assumed, and anything beyond the
+    timestamp is folded into one ``series`` column — ``SPY`` for a price,
+    ``SPY|GLD`` for a correlation pair.
     """
     blocks = []
     for name, panel in (panels or {}).items():
         if panel is None or getattr(panel, "empty", True):
             continue
-        stacked = panel.stack(future_stack=True).rename(value_name).to_frame()
-        stacked.index.names = ["timestamp", "ticker"]
-        stacked.insert(0, "panel", name)
-        blocks.append(stacked.reset_index())
+        try:
+            stacked = panel.stack(future_stack=True).rename(value_name).to_frame()
+        except Exception as error:  # noqa: BLE001 - one odd panel, not the lot
+            logger.warning("Could not stack panel %s: %s", name, error)
+            continue
+
+        levels = stacked.index.nlevels
+        names = ["timestamp"] + [f"level_{n}" for n in range(1, levels)]
+        stacked.index = stacked.index.set_names(names)
+        flat = stacked.reset_index()
+
+        keys = names[1:]
+        if keys:
+            flat["series"] = (
+                flat[keys].astype(str).agg("|".join, axis=1)
+                if len(keys) > 1
+                else flat[keys[0]].astype(str)
+            )
+            flat = flat.drop(columns=keys)
+        else:
+            flat["series"] = ""
+
+        flat.insert(1, "panel", name)
+        blocks.append(flat[["timestamp", "panel", "series", value_name]])
+
     if not blocks:
-        return pd.DataFrame(columns=["timestamp", "ticker", "panel", value_name])
+        return pd.DataFrame(columns=["timestamp", "panel", "series", value_name])
     return pd.concat(blocks, ignore_index=True)
 
 
@@ -187,20 +216,40 @@ def write_analysis_frame(run_dir: Path, analysis_frame) -> str | None:
     return write_frame(_to_long(panels, "value"), run_dir, "analysis")
 
 
+#: The five classifications a RegimeFrame carries. Each is a **market-level
+#: Series**, one label per bar — not a per-asset panel. Writing them as
+#: columns of one frame is both simpler and truer than stacking, which was
+#: the second reason the regime artefact never appeared.
+REGIME_SERIES: tuple[str, ...] = (
+    "volatility_regime",
+    "trend_regime",
+    "correlation_regime",
+    "macro_regime",
+    "combined_regime",
+)
+
+
 def write_regime_frame(run_dir: Path, regime_frame) -> str | None:
-    """Regime classifications in long form.
+    """Regime classifications, one column per classifier.
 
     Computed in memory today and discarded, which is why the dashboard can
     only show the reason string the signal layer embedded.
     """
     if regime_frame is None:
         return None
-    panels = {
-        name: getattr(regime_frame, name)
-        for name in ("volatility", "trend", "correlation", "macro", "combined")
-        if isinstance(getattr(regime_frame, name, None), pd.DataFrame)
-    }
-    return write_frame(_to_long(panels, "regime"), run_dir, "regimes")
+
+    columns = {}
+    for name in REGIME_SERIES:
+        series = getattr(regime_frame, name, None)
+        if isinstance(series, pd.Series) and not series.empty:
+            columns[name] = series
+
+    if not columns:
+        return None
+
+    frame = pd.DataFrame(columns)
+    frame.index.name = "timestamp"
+    return write_frame(frame.reset_index(), run_dir, "regimes")
 
 
 def write_execution_frame(run_dir: Path, execution_frame) -> dict[str, str]:

@@ -102,6 +102,39 @@ def test_json_roundtrip(config):
     assert storage.read_json(path.with_name("missing.json"), default={}) == {}
 
 
+def test_a_categorical_column_index_survives_the_round_trip(tmp_path):
+    """It did not, and the file it produced could never be read.
+
+    A panel pivoted from a tidy frame inherits a CategoricalIndex for its
+    columns. pyarrow records that in the file's pandas metadata, and pandas
+    then refuses to read it back with "data type 'categorical' not
+    understood" -- a file that writes cleanly and is lost on read. Every
+    positions.parquet written before this was unreadable.
+    """
+    frame = pd.DataFrame(
+        {"SPY": [1.0, 2.0], "GLD": [3.0, 4.0]},
+        index=pd.date_range("2026-01-01", periods=2, tz="UTC", name="timestamp"),
+    )
+    frame.columns = pd.CategoricalIndex(frame.columns, name="ticker")
+    path = tmp_path / "panel.parquet"
+
+    storage.write_parquet(frame, path)
+    read = storage.read_parquet(path)
+
+    assert list(read.columns) == ["SPY", "GLD"]
+    assert read["SPY"].tolist() == [1.0, 2.0]
+    assert not isinstance(read.columns, pd.CategoricalIndex)
+
+
+def test_categorical_data_is_left_alone(tmp_path):
+    """Only the column *index* is flattened; row data keeps its encoding."""
+    frame = pd.DataFrame({"regime": pd.Categorical(["low", "high"])})
+    path = tmp_path / "rows.parquet"
+
+    storage.write_parquet(frame, path)
+    assert storage.read_parquet(path)["regime"].tolist() == ["low", "high"]
+
+
 def test_read_many_skips_missing(config, caplog):
     good = storage.market_path(config.paths, "AAA", "1d")
     storage.write_parquet(_frame("2020-01-01", 2, 1.0), good, config.storage)

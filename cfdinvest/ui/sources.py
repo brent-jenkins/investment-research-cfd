@@ -61,6 +61,7 @@ __all__ = [
     "disk_usage",
     "load_run_analytics",
     "load_stored_analytics",
+    "load_persisted_run",
 ]
 
 #: Files a run directory may contain, and what each holds.
@@ -460,6 +461,7 @@ def load_scheduler_status(
     moment = utcnow(now)
     runs = list_runs(config, output_dir)
     summary = load_last_pipeline_summary(config, output_dir)
+    recorded = _recorded_scheduler_state(config)
 
     status: dict[str, Any] = {
         "last_run": None,
@@ -498,13 +500,61 @@ def load_scheduler_status(
         except Exception as error:  # noqa: BLE001
             logger.debug("Could not compute the next scheduled event: %s", error)
 
+    # The scheduler now records its own state, which answers a question the
+    # run directory cannot: a run that *started* and never finished leaves a
+    # last_run with no matching last_success. Where the file exists it wins;
+    # where it does not, the derived figures stand and say so.
+    if recorded:
+        status.update(
+            {
+                "last_run": _timestamp(recorded.get("last_run")) or status["last_run"],
+                "last_success": _timestamp(recorded.get("last_success")),
+                "last_error": recorded.get("last_error") or status["last_error"],
+                "last_error_at": _timestamp(recorded.get("last_error_at")),
+                "last_duration": recorded.get("last_duration")
+                if recorded.get("last_duration") is not None
+                else status["last_duration"],
+                "recorded_runs": recorded.get("runs", 0),
+                "recorded_failures": recorded.get("failures", 0),
+                "state_file": recorded.get("_path"),
+                "derived": False,
+            }
+        )
+        started, succeeded = status["last_run"], status["last_success"]
+        status["incomplete_run"] = bool(
+            started is not None and (succeeded is None or succeeded < started)
+        )
+    else:
+        status["derived"] = True
+        status["incomplete_run"] = False
+
     if summary.failed:
         return Source.broken(summary.error or "run summary unreadable", value=status)
-    if not summary.available:
+    if not summary.available and not recorded:
         return Source.missing(
             summary.note or "the pipeline has not run yet", value=status
         )
     return Source(value=status)
+
+
+def _recorded_scheduler_state(config: AppConfig) -> dict[str, Any] | None:
+    """The scheduler's own state file, or ``None`` when it has never written.
+
+    Absent is meaningful: it means no run has passed through a scheduler that
+    records state, and the derived figures are all there is.
+    """
+    try:
+        from cfdinvest.persist import scheduler_state, storage as persist_storage
+
+        path = persist_storage.get_scheduler_state_path(config)
+        if not path.is_file():
+            return None
+        state = dict(scheduler_state.load_scheduler_state(config))
+        state["_path"] = str(path)
+        return state
+    except Exception as error:  # noqa: BLE001 - a dashboard must not crash
+        logger.warning("Scheduler state unreadable: %s", error)
+        return None
 
 
 def _run_history(directories: list[Path], limit: int = 20) -> pd.DataFrame:
@@ -741,16 +791,32 @@ def load_run_analytics(config: AppConfig, output_dir: str = "runs") -> Source:
     summary = load_last_pipeline_summary(config, output_dir)
     metadata = dict((summary.value or {}).get("metrics") or {})
 
+    # The engine's own per-bar decomposition, if the run stored one. With it
+    # the gap and intraday legs are separable; without it they are folded into
+    # one market leg and the reconstruction says so.
+    stored_pnl = pd.DataFrame()
+    try:
+        from cfdinvest.persist import readers as persist_readers
+
+        stored_pnl = persist_readers.load_pnl_frame(None, config)
+    except Exception as error:  # noqa: BLE001
+        logger.debug("No persisted P&L frame: %s", error)
+
     try:
         frame = ExecutionFrame(
             positions=positions if positions is not None else pd.DataFrame(),
             trades=trades if trades is not None else pd.DataFrame(),
             equity_curve=equity,
+            pnl=stored_pnl,
             metadata=metadata,
         )
         computed = metrics_module.compute_all_metrics(frame)
-        attribution = attribution_module.attribution_from_trades(trades, equity)
-        costs = attribution_module.cost_breakdown_from_trades(trades, equity)
+        if not stored_pnl.empty:
+            attribution = attribution_module.compute_pnl_attribution(frame)
+            costs = attribution_module.compute_cost_breakdown(frame)
+        else:
+            attribution = attribution_module.attribution_from_trades(trades, equity)
+            costs = attribution_module.cost_breakdown_from_trades(trades, equity)
         per_instrument = attribution_module.compute_instrument_attribution(frame)
     except Exception as error:  # noqa: BLE001 - a dashboard must not crash
         logger.warning("Could not compute analytics: %s", error)
@@ -765,6 +831,51 @@ def load_run_analytics(config: AppConfig, output_dir: str = "runs") -> Source:
             "run_id": (summary.value or {}).get("run_id"),
         }
     )
+
+
+def load_persisted_run(config: AppConfig, run_id: str | None = None) -> Source:
+    """The artefacts the runner now writes beyond trades and equity.
+
+    The per-bar P&L decomposition, the regime classifications, the execution
+    settings and the analysis panels. Each is reported present or absent
+    individually, because a run from before this layer existed has the first
+    five artefacts and none of these — and "written by an older runner" is a
+    different statement from "something went wrong".
+    """
+    try:
+        from cfdinvest.persist import readers as persist_readers
+    except Exception as error:  # noqa: BLE001
+        return Source.broken(f"persistence unavailable: {error}", value={})
+
+    try:
+        chosen = run_id or persist_readers.load_latest_run(config)
+        if chosen is None:
+            return Source.missing("no run has been recorded yet", value={})
+
+        payload = {
+            "run_id": chosen,
+            "pnl": persist_readers.load_pnl_frame(chosen, config),
+            "regimes": persist_readers.load_regime_frame(chosen, config),
+            "analysis": persist_readers.load_analysis_frame(chosen, config),
+            "attribution": persist_readers.load_attribution(chosen, config),
+            "costs": persist_readers.load_cost_breakdown(chosen, config),
+            "execution_metadata": persist_readers.load_execution_metadata(
+                chosen, config
+            ),
+            "run_metadata": persist_readers.load_run_metadata(chosen, config),
+            "warnings": persist_readers.load_run_warnings(chosen, config),
+            "status": persist_readers.artefact_status(chosen, config),
+        }
+    except Exception as error:  # noqa: BLE001
+        return Source.broken(f"persisted artefacts unreadable: {error}", value={})
+
+    if payload["pnl"].empty and payload["run_metadata"] is None:
+        return Source.missing(
+            f"run {chosen} predates the persistence layer, so it carries only "
+            "trades, positions and equity",
+            value=payload,
+        )
+    return Source(value=payload)
 
 
 def load_stored_analytics(config: AppConfig, run_id: str | None = None) -> Source:

@@ -161,6 +161,7 @@ def read_everything(
             "disk": sources.disk_usage(config.paths.data_root),
             "market": sources.market_status(universe, now=now),
             "analytics": sources.load_run_analytics(config),
+            "persisted": sources.load_persisted_run(config),
         }
 
     stamp = st.session_state.get("cfd_refresh_stamp", "initial")
@@ -475,6 +476,16 @@ def for_display(frame: pd.DataFrame) -> pd.DataFrame:
             if getattr(values.dtype, "tz", None) is None:
                 values = values.dt.tz_localize("UTC")
             shown[name] = values.dt.tz_convert(display_zone())
+
+    # A column holding both timestamps and strings -- a settings table, say --
+    # cannot be converted to Arrow, and Streamlit recovers by guessing. Doing
+    # the cast here means the table renders from a known shape rather than a
+    # repaired one, and the console stops carrying a traceback per page.
+    for name in shown.columns:
+        if shown[name].dtype == object:
+            kind = pd.api.types.infer_dtype(shown[name], skipna=True)
+            if kind not in ("string", "unicode", "empty", "boolean"):
+                shown[name] = shown[name].astype(str)
 
     if isinstance(shown.index, pd.DatetimeIndex):
         index = shown.index

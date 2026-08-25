@@ -265,6 +265,12 @@ def run_pipeline(
 
         backtest_config = _replace(backtest_config, tickers=list(tickers))
 
+    # Recorded at the *start*, so a run that dies mid-pipeline still leaves
+    # a trace. A last_run newer than last_success is exactly the signal that
+    # something began and did not finish -- which deriving "last run" from
+    # directory timestamps could never say.
+    _record_start(repository, run_id, started)
+
     try:
         if settings.refresh_data:
             _refresh(repository, tickers, backtest_config)
@@ -299,14 +305,21 @@ def run_pipeline(
         if settings.save_outputs and status != "empty":
             directory = _run_directory(repository, settings, run_id)
             paths = _persist(result, summary.to_dict(), directory)
+            paths.update(
+                _persist_extras(
+                    repository, result, summary, backtest_config, directory, run_id
+                )
+            )
             summary = _with_paths(summary, paths)
             _prune_old_runs(repository, settings)
 
+        _record_finish(repository, summary)
         logger.info(summary.headline())
         return summary
 
     except Exception as error:  # noqa: BLE001 - an unattended run must not die silently
         logger.exception("Scheduled run %s failed", run_id)
+        _record_failure(repository, run_id, error)
         return RunSummary(
             run_id=run_id,
             started_at=started,
@@ -317,6 +330,96 @@ def run_pipeline(
             market_state=pd.DataFrame(),
             metrics={"traceback": traceback.format_exc()},
         )
+
+
+def _persist_extras(
+    repository, result, summary, backtest_config, directory, run_id: str
+) -> dict[str, str]:
+    """Write the artefacts the run used to discard.
+
+    The per-bar P&L decomposition, the execution settings, the analysis and
+    regime panels, the cost split and the attribution. None of them changes
+    what the pipeline did; all of them are things a later reader could
+    otherwise only reconstruct approximately, or not at all.
+
+    Never raises. Failing to *record* a completed run must not also destroy
+    it, so a write problem is logged and the run still returns.
+    """
+    try:
+        from cfdinvest.persist import build_run_metadata, writers
+
+        metadata = build_run_metadata(
+            run_id,
+            config=backtest_config,
+            started_at=summary.started_at,
+            finished_at=summary.finished_at,
+            status=summary.status,
+            tickers=summary.universe,
+            interval=getattr(backtest_config, "interval", None),
+            bars=summary.bars,
+            as_of=summary.as_of,
+            warnings=(),
+            error=summary.error,
+        )
+        return writers.write_all(
+            directory,
+            analysis_frame=getattr(result, "analysis", None),
+            regime_frame=getattr(result, "regimes", None),
+            execution_frame=getattr(result, "execution", None),
+            run_metadata=metadata,
+        )
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not persist the extended artefacts: %s", error)
+        return {}
+
+
+def _record_start(repository, run_id: str, started) -> None:
+    """Note in the scheduler state that a run began."""
+    try:
+        from cfdinvest.persist import scheduler_state
+
+        scheduler_state.update_last_run(
+            started, run_id=run_id, config=repository.config
+        )
+    except Exception as error:  # noqa: BLE001 - never fail a run over bookkeeping
+        logger.debug("Could not record the run start: %s", error)
+
+
+def _record_finish(repository, summary: RunSummary) -> None:
+    """Note the outcome, clearing any stale error on success."""
+    try:
+        from cfdinvest.persist import scheduler_state
+
+        if summary.status == "failed":
+            scheduler_state.update_last_error(
+                summary.error or "run failed",
+                summary.finished_at,
+                run_id=summary.run_id,
+                config=repository.config,
+            )
+        else:
+            scheduler_state.update_last_success(
+                summary.finished_at,
+                run_id=summary.run_id,
+                duration=summary.duration_seconds,
+                config=repository.config,
+            )
+    except Exception as error:  # noqa: BLE001
+        logger.debug("Could not record the run outcome: %s", error)
+
+
+def _record_failure(repository, run_id: str, error: Exception) -> None:
+    """Note that a run raised."""
+    try:
+        from cfdinvest.persist import scheduler_state
+
+        scheduler_state.update_last_error(
+            f"{type(error).__name__}: {error}",
+            run_id=run_id,
+            config=repository.config,
+        )
+    except Exception as recording_error:  # noqa: BLE001
+        logger.debug("Could not record the failure: %s", recording_error)
 
 
 def _with_paths(summary: RunSummary, paths: dict[str, str]) -> RunSummary:

@@ -263,6 +263,36 @@ with tabs[3]:
 
 st.divider()
 
+# --------------------------------------------------------------------------- #
+# What the engine was configured to do
+# --------------------------------------------------------------------------- #
+st.subheader("Settings this run used")
+
+execution_metadata = (data["persisted"].value or {}).get("execution_metadata")
+if not execution_metadata:
+    components.render_absent(st, data["persisted"], "The execution settings")
+else:
+    interesting = {
+        key: value
+        for key, value in execution_metadata.items()
+        if isinstance(value, (int, float, str, bool)) or value is None
+    }
+    components.render_note(
+        st,
+        "Recorded by the run itself, so these are what the engine actually "
+        "ran under — not the built-in defaults the Configuration page has to "
+        "fall back on.",
+    )
+    components.render_frame(
+        st,
+        pd.DataFrame(
+            {"setting": list(interesting), "value": list(interesting.values())}
+        ).set_index("setting"),
+        height=320,
+    )
+
+st.divider()
+
 if summary.ok and summary.value.get("latest_trades"):
     with st.expander("Latest trades as recorded in the run summary", expanded=False):
         components.render_frame(st, pd.DataFrame(summary.value["latest_trades"]))

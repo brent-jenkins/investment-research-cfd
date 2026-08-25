@@ -101,6 +101,12 @@ with tabs[4]:
             components.render_absent(st, source, "Execution logs")
 
 with tabs[5]:
+    recorded_warnings = (data["persisted"].value or {}).get("warnings") or []
+    if recorded_warnings:
+        st.subheader("Warnings the last run recorded")
+        for warning in recorded_warnings:
+            st.warning(warning)
+
     # Every run writes a summary.json carrying its own status and error.
     # With no log file configured, this is the only durable record of what
     # happened, which makes it worth its own tab.

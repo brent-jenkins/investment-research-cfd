@@ -105,6 +105,35 @@ def merge_frames(existing: pd.DataFrame, incoming: pd.DataFrame) -> pd.DataFrame
 # --------------------------------------------------------------------------- #
 # I/O
 # --------------------------------------------------------------------------- #
+def _writable_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return a frame whose column index survives a Parquet round trip.
+
+    A **categorical column index** does not. pyarrow records it in the
+    file's pandas metadata as ``"categorical"``, and pandas then refuses to
+    read the file back with ``TypeError: data type 'categorical' not
+    understood`` — a file that writes without complaint and can never be
+    read.
+
+    Panels built by pivoting a tidy frame inherit exactly that: the ticker
+    column is categorical, so the pivot's columns are a ``CategoricalIndex``.
+    Every ``positions.parquet`` written before this was unreadable, and the
+    only symptom was the dashboard reporting the artefact as corrupt.
+
+    A categorical *column* index carries no information Parquet can use — the
+    categories are the column names — so flattening it to plain labels loses
+    nothing. Row-wise categorical *data* is untouched, where the encoding is
+    genuinely worth keeping.
+    """
+    if isinstance(frame.columns, pd.CategoricalIndex):
+        flattened = frame.copy()
+        flattened.columns = pd.Index(
+            frame.columns.astype(frame.columns.categories.dtype),
+            name=frame.columns.name,
+        )
+        return flattened
+    return frame
+
+
 def write_parquet(
     frame: pd.DataFrame,
     path: Path,
@@ -116,6 +145,9 @@ def write_parquet(
     so a crash mid-write can never leave a truncated Parquet file that later
     reads would choke on.
 
+    A categorical column index is flattened first; see
+    :func:`_writable_columns` for why.
+
     Returns
     -------
     pathlib.Path
@@ -124,6 +156,7 @@ def write_parquet(
     settings = config or StorageConfig()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(".parquet.tmp")
+    frame = _writable_columns(frame)
 
     try:
         frame.to_parquet(

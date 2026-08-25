@@ -107,29 +107,52 @@ st.subheader("Scheduler")
 scheduler = data["scheduler"]
 state = scheduler.value or {}
 
-components.render_note(
-    st,
-    "The scheduler keeps **no state file**, so these are read from the run "
-    "directory rather than from the scheduler process. This says when a run "
-    "last *completed*; it cannot say whether a scheduler is alive right now. "
-    "A dead one shows up as a last run that keeps getting older.",
-)
+if state.get("derived", True):
+    components.render_note(
+        st,
+        "No scheduler state file yet, so these are **derived from the run "
+        "directory**: they say when a run last *completed*, not whether one "
+        "started and died. The next scheduled run will record its own state.",
+    )
+else:
+    components.render_note(
+        st,
+        "Read from the scheduler's own state file. `Last started` is written "
+        "before the pipeline runs, so a start with no matching success is a "
+        "run that began and did not finish — something the run directory "
+        "alone could never show.",
+    )
+
+if state.get("incomplete_run"):
+    st.error(
+        "**A run started and did not finish.** The last start is newer than "
+        "the last success, so the pipeline died part-way. Check the error "
+        "below and the Logs page."
+    )
 
 columns = st.columns(4)
-columns[0].metric("Last run", components.age(state.get("last_run"), now))
+columns[0].metric("Last started", components.age(state.get("last_run"), now))
 columns[1].metric(
     "Next due",
     components.DASH
     if state.get("next_run") is None
     else components.moment(state["next_run"]),
 )
-columns[2].metric("Time taken", components.duration(state.get("last_duration")))
+columns[2].metric(
+    "Last succeeded",
+    components.age(state.get("last_success"), now)
+    if state.get("last_success") else components.DASH,
+)
 columns[3].metric(
     "Outcome",
     explain.outcome(state.get("last_status")) or components.DASH,
-    help="Derived from the run's recorded status; the process exit code is "
-    "not stored.",
+    help="From the run's recorded status; the process exit code is not stored.",
 )
+
+extra = st.columns(3)
+extra[0].metric("Time taken", components.duration(state.get("last_duration")))
+extra[1].metric("Runs recorded", state.get("recorded_runs", state.get("run_count", 0)))
+extra[2].metric("Failures recorded", state.get("recorded_failures", 0))
 
 if state.get("next_run_asset"):
     st.caption(
@@ -137,7 +160,14 @@ if state.get("next_run_asset"):
     )
 
 if state.get("last_error"):
-    st.error(state["last_error"])
+    when = state.get("last_error_at")
+    st.error(
+        f"**Last recorded error**"
+        f"{f' ({components.short_moment(when)})' if when else ''}: "
+        f"{state['last_error']}"
+    )
+if state.get("state_file"):
+    st.caption(f"State file: `{state['state_file']}`")
 
 with st.expander("Run history", expanded=False):
     components.render_frame(st, state.get("history", pd.DataFrame()), height=320)

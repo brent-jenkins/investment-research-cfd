@@ -156,9 +156,10 @@ ARTEFACTS: dict[str, ArtefactSpec] = {
         kind="parquet",
         description=(
             "Preprocessed panels in long form — prices, returns, volatility, "
-            "ATR. Stored so analytics need not re-run preprocessing for every "
-            "point of a parameter sweep."
+            "ATR, correlations. Stored so analytics need not re-run "
+            "preprocessing for every point of a parameter sweep."
         ),
+        required=("timestamp", "panel", "series", "value"),
         index="timestamp",
     ),
     "regimes": ArtefactSpec(
@@ -166,9 +167,15 @@ ARTEFACTS: dict[str, ArtefactSpec] = {
         filename="regime.parquet",
         kind="parquet",
         description=(
-            "Regime classifications in long form. Computed in memory today "
-            "and discarded, which is why the Signals page can only show the "
-            "reason string."
+            "Regime classifications, one column per classifier. They are "
+            "market-level Series — one label per bar, not per instrument. "
+            "Computed in memory today and discarded, which is why the Signals "
+            "page can only show the reason string."
+        ),
+        required=("timestamp",),
+        optional=(
+            "volatility_regime", "trend_regime", "correlation_regime",
+            "macro_regime", "combined_regime",
         ),
         index="timestamp",
     ),
