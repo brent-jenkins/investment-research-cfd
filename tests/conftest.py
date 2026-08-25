@@ -33,6 +33,26 @@ def config(tmp_path) -> AppConfig:
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_broker_rules(monkeypatch, tmp_path):
+    """Point the Trading 212 rules table at a path that does not exist.
+
+    Not a convenience. ``DEFAULT_RULES_PATH`` is under ``~/.config``, so
+    without this the suite reads whatever the developer happens to have
+    filled in -- and two tests asserting the "not checked" wording passed
+    for years only because the file was absent. They failed the moment a
+    real table was installed, on a machine where nothing about the code had
+    changed. The deployment box has one, so the suite was green here and
+    would not have been there.
+
+    A test that wants a table builds one and passes it explicitly.
+    """
+    monkeypatch.setattr(
+        "cfdinvest.livehelper.t212_rules.DEFAULT_RULES_PATH",
+        str(tmp_path / "no-such-rules.toml"),
+    )
+
+
 @pytest.fixture
 def sessions() -> pd.DatetimeIndex:
     """Ten tz-naive business days, as yfinance returns for daily bars."""

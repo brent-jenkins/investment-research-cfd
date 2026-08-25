@@ -121,6 +121,7 @@ def fx_close_costs(
     realized_pnl=None,
     financing=None,
     converts=None,
+    charges_fee=None,
 ) -> dict[str, np.ndarray]:
     """The cost of converting back into the account currency on a close.
 
@@ -140,6 +141,7 @@ def fx_close_costs(
         realized_pnl=realized_pnl,
         financing=financing,
         converts=converts,
+        charges_fee=charges_fee,
     )
 
 

@@ -200,6 +200,9 @@ def run_execution(signal_frame, analysis_frame, config):
     # Which instruments genuinely cross a currency boundary. A domestic
     # instrument converts nothing and is charged nothing.
     fx_converts = fx_module.converting_assets(columns, fx_config)
+    # Which of those the broker actually charges its conversion fee on --
+    # a smaller set, and not derivable from the currency.
+    fx_fee_mask = fx_module.fee_charging_assets(columns, fx_config)
 
     close = fills_module.convert_prices(
         _as_matrix(close_panel, index, columns), fx_rates
@@ -392,12 +395,12 @@ def run_execution(signal_frame, analysis_frame, config):
         if fx_config.enabled:
             fx_open = fills_module.fx_open_costs(
                 effective_fill, opened_units, fx_rate_row, fx_config,
-                converts=fx_converts,
+                converts=fx_converts, charges_fee=fx_fee_mask,
             )
             fx_close = pnl_module.fx_close_costs(
                 effective_fill, closed_units, fx_rate_row, fx_config,
                 realized_pnl=realized, financing=-carry,
-                converts=fx_converts,
+                converts=fx_converts, charges_fee=fx_fee_mask,
             )
             fx_cost = np.nan_to_num(fx_open["total"]) + np.nan_to_num(
                 fx_close["total"]

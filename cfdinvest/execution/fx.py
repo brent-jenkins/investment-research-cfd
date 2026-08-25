@@ -66,6 +66,7 @@ __all__ = [
     "effective_fx_rate",
     "resolve_fx_rates",
     "converting_assets",
+    "fee_charging_assets",
     "split_open_close",
     "apply_fx_conversion_open",
     "apply_fx_conversion_close",
@@ -179,6 +180,19 @@ class FXConfig:
     enabled: bool = False
     account_currency: str = "GBP"
     instrument_currencies: dict[str, str] | None = None
+    #: Per-instrument ``{ticker: bool}``: whether the 0.5% conversion fee is
+    #: charged at all. Recorded from the broker, never inferred.
+    #:
+    #: Separate from the currency on purpose, because the two are separate
+    #: facts and conflating them was wrong in both directions. Germany 40 is
+    #: quoted in euros against a sterling account -- it needs the EUR rate to
+    #: be marked at all -- and Trading 212 charges no conversion fee on it.
+    #: USA 500 is funded in sterling and charges one. Deriving the fee from
+    #: the currency gets that pair backwards.
+    #:
+    #: An unlisted ticker falls back to the currency rule, which is the
+    #: behaviour this had before and understates rather than invents.
+    fx_fee_applies: dict[str, bool] | None = None
 
     fx_conversion_fee_pct: float = 0.005
     fx_spread_bps: float = 0.0
@@ -373,6 +387,29 @@ def converting_assets(columns: pd.Index, config: FXConfig) -> np.ndarray:
     )
 
 
+def fee_charging_assets(columns: pd.Index, config: FXConfig) -> np.ndarray:
+    """Which instruments pay the conversion fee. Pure.
+
+    Not the same question as :func:`converting_assets`, though it was the
+    same code until real broker data said otherwise. An instrument can need
+    a rate and charge no fee (Germany 40), and the reverse holds too. Where
+    nothing is recorded this falls back to the currency rule, so an
+    unmapped instrument behaves exactly as it did before.
+    """
+    converts = converting_assets(columns, config)
+    recorded = config.fx_fee_applies or {}
+    if not recorded:
+        return converts
+
+    return np.array(
+        [
+            bool(recorded.get(str(ticker), converts[position]))
+            for position, ticker in enumerate(columns)
+        ],
+        dtype=bool,
+    )
+
+
 def resolve_fx_rates(
     columns: pd.Index,
     config: FXConfig,
@@ -481,23 +518,32 @@ def _charges(
     *,
     with_fee: bool,
     converts: np.ndarray | None = None,
+    charges_fee: np.ndarray | None = None,
 ) -> dict:
     """The three charges on one conversion of ``amount`` account currency.
 
     ``converts`` masks out instruments that never cross a currency boundary:
     a GBP instrument in a GBP account is converted zero times and charged
     zero times.
+
+    ``charges_fee`` masks the conversion fee separately, because the broker
+    waives it on some instruments it still converts. Absent, the fee follows
+    ``converts`` -- the behaviour before the two were distinguished.
     """
     magnitude = np.abs(np.asarray(amount, dtype="float64"))
     if converts is not None:
         magnitude = np.where(np.asarray(converts, dtype=bool), magnitude, 0.0)
     spread = magnitude * config.spread_fraction
     slippage = magnitude * config.slippage_fraction
-    fee = (
-        magnitude * config.fx_conversion_fee_pct
-        if with_fee
-        else np.zeros_like(magnitude)
-    )
+    if with_fee:
+        chargeable = magnitude
+        if charges_fee is not None:
+            chargeable = np.where(
+                np.asarray(charges_fee, dtype=bool), magnitude, 0.0
+            )
+        fee = chargeable * config.fx_conversion_fee_pct
+    else:
+        fee = np.zeros_like(magnitude)
     return {
         "fx_spread": spread,
         "fx_slippage": slippage,
@@ -513,6 +559,7 @@ def apply_fx_conversion_open(
     config: FXConfig,
     *,
     converts=None,
+    charges_fee=None,
 ) -> dict[str, np.ndarray]:
     """Convert account currency into instrument currency to fund an open.
 
@@ -542,7 +589,10 @@ def apply_fx_conversion_open(
     notional = np.nan_to_num(units * converted)
 
     if config.charges_on_open:
-        charges = _charges(notional, config, with_fee=True, converts=converts)
+        charges = _charges(
+            notional, config, with_fee=True,
+            converts=converts, charges_fee=charges_fee,
+        )
     else:
         # No conversion happens at open under this basis, so the spread and
         # slippage on it do not happen either.
@@ -566,6 +616,7 @@ def apply_fx_conversion_close(
     realized_pnl=None,
     financing=None,
     converts=None,
+    charges_fee=None,
 ) -> dict[str, np.ndarray]:
     """Convert instrument currency back into account currency on a close.
 
@@ -603,7 +654,10 @@ def apply_fx_conversion_close(
     else:
         crossing = np.nan_to_num(units * converted)
 
-    charges = _charges(crossing, config, with_fee=True, converts=converts)
+    charges = _charges(
+        crossing, config, with_fee=True,
+        converts=converts, charges_fee=charges_fee,
+    )
 
     return {
         "fx_rate": rate,

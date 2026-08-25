@@ -271,6 +271,64 @@ def _app_config(args):
     return load_config(args.config, overrides=overrides)
 
 
+def _execution_config(tickers):
+    """The cost model, built from what the broker actually charges.
+
+    The engine has always been able to take per-asset financing rates and a
+    currency map; nothing populated them, so every run financed the whole
+    universe at a flat 8% long and *earned* 2% short. Trading 212 charges
+    both sides on everything recorded -- 25.33% to hold a US share long,
+    9.16% to hold one short -- and the difference over the 2005-2026 run was
+    £24,666 of understated cost, most of it from shorts that were being paid
+    to exist.
+
+    Anything with no recorded pair keeps the house rate. That is a real
+    approximation and it is logged by name rather than absorbed, because a
+    run financed partly at broker rates and partly at a default has a total
+    that is neither and looks like neither.
+    """
+    from cfdinvest.execution import ExecutionConfig
+    from cfdinvest.execution.fx import FXConfig
+    from cfdinvest.livehelper import broker_costs
+
+    universe = list(tickers or ())
+    try:
+        rates = broker_costs.financing_overrides(universe)
+        currencies = broker_costs.instrument_currencies(universe)
+        fee_flags = broker_costs.fx_fee_flags(universe)
+        missing = broker_costs.unpriced(universe)
+    except Exception as error:  # noqa: BLE001 - an unreadable table is not an outage
+        logger.warning(
+            "Could not read the broker rules; financing falls back to the "
+            "house rate for the whole universe: %s", error
+        )
+        return ExecutionConfig()
+
+    if missing:
+        logger.warning(
+            "No recorded financing for %d of %d instruments, charged at the "
+            "house rate instead: %s",
+            len(missing), len(universe), ", ".join(missing),
+        )
+    logger.info(
+        "Financing %d instruments at recorded broker rates; %d of %d pay the "
+        "conversion fee.",
+        len(rates), sum(fee_flags.values()), len(fee_flags),
+    )
+
+    return ExecutionConfig(
+        financing_rates=rates or None,
+        fx=FXConfig(
+            enabled=True,
+            account_currency="GBP",
+            instrument_currencies=currencies or None,
+            fx_fee_applies=fee_flags or None,
+            fx_conversion_fee_pct=0.005,
+            fx_rate_source="lake",
+        ),
+    )
+
+
 def _backtest_config(args, app_config) -> BacktestConfig:
     """Build the pipeline config from CLI arguments and the app config."""
     tickers = _universe(args) or list(app_config.market.tickers) or None
@@ -280,6 +338,7 @@ def _backtest_config(args, app_config) -> BacktestConfig:
         interval=args.interval,
         start=args.start,
         end=args.end,
+        execution=_execution_config(tickers),
     )
 
 

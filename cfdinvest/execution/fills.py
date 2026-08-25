@@ -172,6 +172,7 @@ def fx_open_costs(
     fx_config,
     *,
     converts=None,
+    charges_fee=None,
 ) -> dict[str, np.ndarray]:
     """The cost of converting into instrument currency to fund an open.
 
@@ -190,6 +191,7 @@ def fx_open_costs(
         fx_rates,
         fx_config,
         converts=converts,
+        charges_fee=charges_fee,
     )
 
 
