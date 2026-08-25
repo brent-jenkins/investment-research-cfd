@@ -2031,3 +2031,39 @@ def test_the_dashboard_does_not_load_the_analysis_frame_to_draw_a_page():
     # and a lambda in there breaks caching for everything else in it.
     assert callable(sources.load_analysis_artefact)
     assert "lambda" not in body
+
+
+def test_the_sign_in_screen_has_no_sidebar_at_all():
+    """Signed out there is nothing to put in it.
+
+    The navigation is hidden and the wordmark is already in the middle of
+    the page, so what was left beside the form was an empty 360px panel --
+    which reads as a page that failed to load rather than one with nothing
+    to show.
+    """
+    body = (UI / "app.py").read_text(encoding="utf-8")
+
+    gate = body.index("if not components.current_user(st):")
+    stop = body.index("st.stop()", gate)
+
+    assert "components.hide_sidebar(st)" in body[gate:stop], (
+        "the signed-out path must hide the sidebar before it stops"
+    )
+    # The wordmark goes in the sidebar's logo slot, so drawing it before the
+    # gate would keep an otherwise-empty sidebar alive.
+    assert body.index("components.render_brand(st, mode)") > stop, (
+        "the brand must not be drawn until someone is signed in"
+    )
+
+
+def test_hiding_the_sidebar_also_hides_the_control_that_reopens_it():
+    """An arrow inviting someone to open a panel with nothing behind it."""
+    import inspect
+
+    from cfdinvest.ui import components
+
+    css = inspect.getsource(components.hide_sidebar)
+
+    assert '[data-testid="stSidebar"]' in css
+    assert "CollapsedControl" in css or "collapsedControl" in css
+    assert "display: none" in css

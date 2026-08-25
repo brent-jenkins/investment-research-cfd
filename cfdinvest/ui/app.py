@@ -35,12 +35,6 @@ st.set_page_config(
 )
 mode = theme.apply(st)
 
-# The logo slot is the only place above the navigation; st.navigation draws
-# the links at the very top of the sidebar regardless of call order. Setting
-# it here as well as in page_setup costs nothing -- Streamlit keeps one logo
-# and the last call wins.
-components.render_brand(st, mode)
-
 #: (file, title, icon) — the title is both the nav label and the page heading.
 #:
 #: The directory is `views/`, not `pages/`, and that is load-bearing.
@@ -91,8 +85,17 @@ def _sign_in() -> None:
 # Signed out, that navigation holds one hidden page: the sign-in form, and
 # nothing else in the sidebar.
 if not components.current_user(st):
+    # No sidebar at all on the sign-in screen. The wordmark is already in
+    # the middle of the page, and an empty panel beside the form reads as a
+    # page that failed to load.
+    components.hide_sidebar(st)
     st.navigation([st.Page(_sign_in, title="Sign in")], position="hidden").run()
     st.stop()
+
+# The logo slot is the only place above the navigation; st.navigation draws
+# the links at the very top of the sidebar regardless of call order. Drawn
+# only once signed in, so it cannot keep an otherwise-empty sidebar alive.
+components.render_brand(st, mode)
 
 navigation = st.navigation(
     [

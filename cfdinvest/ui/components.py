@@ -64,6 +64,7 @@ __all__ = [
     "coverage_table",
     "render_state_card",
     "require_login",
+    "hide_sidebar",
     "current_user",
     "sign_out",
     "render_sign_out",
@@ -303,6 +304,27 @@ def sign_out(st) -> None:
     """End the session here and in the browser."""
     st.session_state.pop(auth_module.SESSION_KEY, None)
     _write_cookie(st, "", 0)
+
+
+def hide_sidebar(st) -> None:
+    """Remove the sidebar entirely, for the sign-in screen.
+
+    Signed out there is nothing to put in it: no navigation, and the
+    wordmark is already in the middle of the page. What was left was an
+    empty 360px panel beside the form, which reads as a page that failed to
+    load rather than as a page with nothing to show.
+
+    Also hides the collapse control, so there is no arrow inviting someone
+    to open a panel with nothing behind it.
+    """
+    st.markdown(
+        "<style>"
+        '[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],'
+        '[data-testid="collapsedControl"] { display: none !important; }'
+        '[data-testid="stAppViewContainer"] > .main { margin-left: 0 !important; }'
+        "</style>",
+        unsafe_allow_html=True,
+    )
 
 
 def require_login(st) -> str | None:
