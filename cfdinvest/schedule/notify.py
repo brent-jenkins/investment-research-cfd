@@ -74,6 +74,10 @@ class SmtpConfig:
     enabled: bool = False
     #: Prefix on every subject line, so rules can filter on it.
     subject_prefix: str = "[cfdinvest]"
+    #: Which account this deployment trades. Appended to every subject, so an
+    #: alert about a demo account never reads like one about real money.
+    #: ``None`` when account separation is not enabled.
+    account: str | None = None
 
     def __repr__(self) -> str:  # pragma: no cover - defensive against leaks
         return (
@@ -109,7 +113,18 @@ class SmtpConfig:
             else bool(recipients and username)
         )
 
+        from cfdinvest.env import resolve_account
+
+        try:
+            account = resolve_account(env=source)
+        except ValueError:
+            # A bad mode must not stop mail going out; the monitoring layer
+            # reports it, and an alert about the broken configuration is
+            # exactly the alert you want to receive.
+            account = None
+
         return cls(
+            account=account,
             host=source.get("CFD_SMTP_HOST", "smtp.gmail.com"),
             port=int(source.get("CFD_SMTP_PORT", "587")),
             username=username,
@@ -206,9 +221,16 @@ def smtp_transport(config: SmtpConfig) -> Transport:
 # Message builders (pure)
 # --------------------------------------------------------------------------- #
 def _compose(config: SmtpConfig, subject: str, body: str) -> EmailMessage:
-    """Assemble a plain-text message. Pure."""
+    """Assemble a plain-text message. Pure.
+
+    The account mode goes in every subject line, at the end, where a phone
+    still shows it. Two deployments send to the same inbox, and an alert about
+    a demo account that reads identically to one about real money is an alert
+    that will eventually be acted on as the wrong one.
+    """
     message = EmailMessage()
-    message["Subject"] = f"{config.subject_prefix} {subject}".strip()
+    suffix = f" ({config.account})" if config.account else ""
+    message["Subject"] = f"{config.subject_prefix} {subject}{suffix}".strip()
     message["From"] = config.sender or "cfdinvest@localhost"
     message["To"] = ", ".join(config.recipients) or "undisclosed-recipients:;"
     message.set_content(body)

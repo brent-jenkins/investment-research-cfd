@@ -39,7 +39,9 @@ __all__ = [
 ]
 
 
-def execution_frame_from_run(config, run_id: str | None = None) -> ExecutionFrame:
+def execution_frame_from_run(
+    config, run_id: str | None = None, *, account: str | None = None
+) -> ExecutionFrame:
     """Rebuild an :class:`ExecutionFrame` from what a run persisted.
 
     Only the fields that were actually written are populated. The rest keep
@@ -50,16 +52,16 @@ def execution_frame_from_run(config, run_id: str | None = None) -> ExecutionFram
     """
     from cfdinvest.persist import readers
 
-    chosen = run_id or readers.load_latest_run(config)
+    chosen = run_id or readers.load_latest_run(config, account)
     if chosen is None:
         return ExecutionFrame()
 
-    parts = readers.load_execution_frame(chosen, config)
+    parts = readers.load_execution_frame(chosen, config, account)
     equity = parts.get("equity_curve")
     if equity is None or equity.empty:
         equity = pd.Series(dtype="float64", name="equity")
 
-    metadata = dict(readers.load_execution_metadata(chosen, config) or {})
+    metadata = dict(readers.load_execution_metadata(chosen, config, account) or {})
     metadata.setdefault("run_id", chosen)
     # Which book was scored. The reader prefers your confirmed fills where you
     # recorded any, and a metric computed on confirmed positions is a
@@ -71,7 +73,7 @@ def execution_frame_from_run(config, run_id: str | None = None) -> ExecutionFram
         positions=parts.get("positions", pd.DataFrame()),
         trades=parts.get("trades", pd.DataFrame()),
         stop_events=parts.get("stop_events", pd.DataFrame()),
-        pnl=readers.load_pnl_frame(chosen, config),
+        pnl=readers.load_pnl_frame(chosen, config, account),
         equity_curve=equity,
         metadata=metadata,
     )
@@ -81,6 +83,7 @@ def score_run(
     config,
     run_id: str | None = None,
     *,
+    account: str | None = None,
     metrics_config: metrics_module.MetricsConfig | None = None,
     thresholds: WarningThresholds | None = None,
 ) -> BacktestResult:
@@ -92,14 +95,14 @@ def score_run(
     """
     from cfdinvest.persist import readers
 
-    chosen = run_id or readers.load_latest_run(config)
+    chosen = run_id or readers.load_latest_run(config, account)
     if chosen is None:
         return BacktestResult(
             label="persisted",
             error="no run has been recorded yet",
         )
 
-    execution = execution_frame_from_run(config, chosen)
+    execution = execution_frame_from_run(config, chosen, account=account)
     if execution.equity_curve.empty:
         return BacktestResult(
             label=chosen,
@@ -150,6 +153,7 @@ def score_run(
 def score_every_run(
     config,
     *,
+    account: str | None = None,
     limit: int | None = 20,
     metrics_config: metrics_module.MetricsConfig | None = None,
 ) -> pd.DataFrame:
@@ -162,7 +166,7 @@ def score_every_run(
     """
     from cfdinvest.persist import readers
 
-    runs = readers.list_runs(config)
+    runs = readers.list_runs(config, account)
     if limit is not None:
         runs = runs[:limit]
     if not runs:

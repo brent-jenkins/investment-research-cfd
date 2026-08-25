@@ -142,8 +142,14 @@ def read_everything(
     """
     from cfdinvest.ui import sources
 
+    # The account is part of the cache key, not just an argument: switching
+    # from virtual to live has to re-read everything, and a cache keyed only on
+    # the refresh stamp would hand back the other account's numbers under the
+    # new label -- which is the exact confusion the separation exists to stop.
+    account = current_account(st)
+
     @st.cache_data(ttl=30, show_spinner=False)
-    def _read(_stamp: str) -> dict[str, Any]:
+    def _read(_stamp: str, account: str | None) -> dict[str, Any]:
         config_source = sources.load_app_config()
         config = config_source.value
         universe = list(getattr(config.market, "tickers", ()) or ())
@@ -152,23 +158,26 @@ def read_everything(
             "config_source": config_source,
             "config": config,
             "universe": universe,
+            "account": account,
             "lake": sources.load_lake_metadata(config, now=now),
-            "summary": sources.load_last_pipeline_summary(config),
-            "scheduler": sources.load_scheduler_status(config, universe, now=now),
-            "execution": sources.load_execution_frame(config),
-            "signals": sources.load_signal_frame(config),
+            "summary": sources.load_last_pipeline_summary(config, account=account),
+            "scheduler": sources.load_scheduler_status(
+                config, universe, now=now, account=account
+            ),
+            "execution": sources.load_execution_frame(config, account=account),
+            "signals": sources.load_signal_frame(config, account=account),
             "errors": sources.load_error_log(config),
             "disk": sources.disk_usage(config.paths.data_root),
             "market": sources.market_status(universe, now=now),
-            "analytics": sources.load_run_analytics(config),
+            "analytics": sources.load_run_analytics(config, account=account),
             "persisted": sources.load_persisted_run(config),
         }
 
     stamp = st.session_state.get("cfd_refresh_stamp", "initial")
     try:
-        data = _read(stamp)
+        data = _read(stamp, account)
     except Exception:  # noqa: BLE001 - never let caching break the dashboard
-        data = _read.__wrapped__(stamp)  # type: ignore[attr-defined]
+        data = _read.__wrapped__(stamp, account)  # type: ignore[attr-defined]
 
     # A Streamlit server keeps imported modules in sys.modules across reruns
     # even though it re-reads the page scripts, so a bundle cached before a
@@ -217,6 +226,7 @@ def _empty_bundle() -> dict[str, Any]:
     bundle["config_source"] = Source(value=AppConfig())
     bundle["config"] = AppConfig()
     bundle["universe"] = []
+    bundle["account"] = None
     return bundle
 
 
@@ -280,6 +290,9 @@ def _render_sidebar(st, data: dict) -> None:
         )
 
         st.divider()
+        render_account(st, data)
+
+        st.divider()
         account_balance(st, data)
 
         st.divider()
@@ -291,6 +304,71 @@ def _render_sidebar(st, data: dict) -> None:
             "Read-only. This dashboard never places an order. "
             f"Times shown in {display_zone().key}."
         )
+
+
+#: Where the chosen account lives between reruns.
+ACCOUNT_KEY = "cfd_account"
+
+
+def render_account(st, data: dict) -> None:
+    """Which account is being shown, and the control to change it.
+
+    Deliberately loud when it is live. Every number on every page changes
+    meaning between the two, and a demo drawdown read as a live one is the
+    kind of mistake that only looks obvious afterwards.
+
+    The selector appears only when separation is enabled -- on a shared tree
+    there is one set of artefacts and offering a choice would imply otherwise.
+    """
+    from cfdinvest.env import ACCOUNT_MODES, read_environment
+
+    try:
+        environment = read_environment()
+    except Exception:  # noqa: BLE001 - the sidebar must not take a page down
+        return
+
+    if not environment.account_configured:
+        st.caption("One account. Set CFD_ACCOUNT_MODE to separate virtual from live.")
+        return
+
+    current = st.session_state.get(ACCOUNT_KEY, environment.account or ACCOUNT_MODES[0])
+    labels = {"virtual": "Virtual account", "live": "Live account"}
+    chosen = st.radio(
+        "Account",
+        options=list(ACCOUNT_MODES),
+        index=list(ACCOUNT_MODES).index(current) if current in ACCOUNT_MODES else 0,
+        format_func=lambda name: labels.get(name, name),
+        key=ACCOUNT_KEY,
+    )
+
+    if chosen == "live":
+        st.markdown(
+            '<div style="background:#C62828;color:#fff;padding:6px 10px;'
+            'border-radius:6px;font-weight:700;text-align:center;">'
+            "LIVE — real money</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("Demo account. Nothing here is real money.")
+
+    if chosen != environment.account:
+        st.caption(
+            f"Showing **{labels.get(chosen, chosen)}**; this deployment runs "
+            f"as **{labels.get(environment.account, environment.account)}**."
+        )
+
+
+def current_account(st) -> str | None:
+    """The account the dashboard is reading, or ``None`` for the shared tree."""
+    from cfdinvest.env import resolve_account
+
+    chosen = st.session_state.get(ACCOUNT_KEY)
+    if chosen:
+        return chosen
+    try:
+        return resolve_account()
+    except ValueError:
+        return None
 
 
 def render_brand(st, mode: str = "dark") -> None:

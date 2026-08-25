@@ -1,0 +1,16 @@
+# Copy to /etc/logrotate.d/cfdinvest.
+#
+# The services log to the journal, which systemd already rotates. This covers
+# the application's own file log when CFD_LOG_FILE is set, and Caddy's access
+# log if it is not left to Caddy's built-in roller.
+
+/var/log/cfdinvest/*.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 cfdinvest cfdinvest
+    su cfdinvest cfdinvest
+}

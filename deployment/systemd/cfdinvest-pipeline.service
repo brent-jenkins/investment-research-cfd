@@ -1,0 +1,45 @@
+# One pipeline run. Triggered by the timer, not enabled directly.
+#
+#   sudo systemctl enable --now cfdinvest-pipeline.timer
+#   systemctl list-timers cfdinvest-pipeline
+
+[Unit]
+Description=cfdinvest pipeline run
+Documentation=https://github.com/brent-jenkins/cfdinvest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=cfdinvest
+Group=cfdinvest
+WorkingDirectory=/opt/cfdinvest
+EnvironmentFile=/etc/cfdinvest/env
+
+ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule run-once --refresh
+
+# Unlike the dashboard, this one writes: run artefacts, the scheduler state,
+# monitoring snapshots. Everything else stays read-only.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+ReadOnlyPaths=/opt/cfdinvest
+ReadWritePaths=/var/lib/cfdinvest
+
+# A run that hangs on a vendor must not hold the timer open forever.
+TimeoutStartSec=30min
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cfdinvest-pipeline

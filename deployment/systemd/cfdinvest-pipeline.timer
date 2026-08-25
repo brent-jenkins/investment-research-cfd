@@ -1,0 +1,19 @@
+# When the pipeline runs. Market-aware scheduling lives in the application
+# (`cfdinvest-schedule crontab` prints session-derived times); this timer is
+# the simple daily fallback for a deployment that wants one line.
+
+[Unit]
+Description=Run the cfdinvest pipeline daily after the US close
+
+[Timer]
+# 21:30 UTC is after the US cash close year-round, on both sides of the
+# daylight-saving change. Deliberately UTC: a wall-clock schedule drifts by an
+# hour twice a year and the drift is invisible until a run lands mid-session.
+OnCalendar=Mon..Fri 21:30 UTC
+# A machine that was asleep at 21:30 still runs, rather than skipping the day
+# in silence.
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

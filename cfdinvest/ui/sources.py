@@ -268,13 +268,35 @@ def _latest_end(*frames: pd.DataFrame) -> pd.Timestamp | None:
 # --------------------------------------------------------------------------- #
 # Runs
 # --------------------------------------------------------------------------- #
-def list_runs(config: AppConfig, output_dir: str = "runs") -> Source:
+def runs_root(
+    config: AppConfig, output_dir: str = "runs", account: str | None = None
+) -> Path:
+    """Where this account's runs live.
+
+    ``account=None`` resolves from ``CFD_ACCOUNT_MODE`` and falls back to the
+    shared root, which is what a deployment that has not enabled separation
+    still uses. Every run reader goes through here so the dashboard's account
+    selector reaches all of them at once.
+    """
+    from cfdinvest.persist.storage import account_root
+
+    try:
+        return account_root(config, account) / output_dir
+    except ValueError:
+        # An unknown account must not take the dashboard down; the page that
+        # would tell you the account is wrong still has to render.
+        return Path(config.paths.data_root) / output_dir
+
+
+def list_runs(
+    config: AppConfig, output_dir: str = "runs", account: str | None = None
+) -> Source:
     """Every run directory, newest first.
 
     Run ids sort lexicographically in time order, which is what makes
     "newest" a sort rather than a stat of every directory.
     """
-    root = Path(config.paths.data_root) / output_dir
+    root = runs_root(config, output_dir, account)
     try:
         if not root.is_dir():
             return Source.missing(
@@ -296,14 +318,14 @@ def list_runs(config: AppConfig, output_dir: str = "runs") -> Source:
 
 
 def load_last_pipeline_summary(
-    config: AppConfig, output_dir: str = "runs"
+    config: AppConfig, output_dir: str = "runs", account: str | None = None
 ) -> Source:
     """The most recent run's ``summary.json``.
 
     The single most informative file in the system: it carries the run's
     status, duration, universe, metrics, latest signals and latest trades.
     """
-    runs = list_runs(config, output_dir)
+    runs = list_runs(config, output_dir, account)
     if not runs.ok:
         return Source(
             value={}, available=False, error=runs.error, note=runs.note, path=runs.path
@@ -345,14 +367,16 @@ def _read_parquet(path: Path, *columns: str) -> Source:
         )
 
 
-def load_signal_frame(config: AppConfig, output_dir: str = "runs") -> Source:
+def load_signal_frame(
+    config: AppConfig, output_dir: str = "runs", account: str | None = None
+) -> Source:
     """The last run's signals, in long ``(timestamp, ticker)`` form.
 
     Only *active* signals are persisted by the pipeline — flat cells are the
     overwhelming majority and are dropped before writing — so an instrument
     absent from this frame is flat, not missing.
     """
-    summary = load_last_pipeline_summary(config, output_dir)
+    summary = load_last_pipeline_summary(config, output_dir, account)
     if not summary.ok:
         return Source(
             value=_empty("direction", "size", "confidence", "reason"),
@@ -364,7 +388,9 @@ def load_signal_frame(config: AppConfig, output_dir: str = "runs") -> Source:
     )
 
 
-def load_execution_frame(config: AppConfig, output_dir: str = "runs") -> Source:
+def load_execution_frame(
+    config: AppConfig, output_dir: str = "runs", account: str | None = None
+) -> Source:
     """The last run's execution artefacts: trades, positions and equity.
 
     Not an :class:`~cfdinvest.execution.frame.ExecutionFrame` — that object
@@ -377,7 +403,7 @@ def load_execution_frame(config: AppConfig, output_dir: str = "runs") -> Source:
     reconstructs what it can from the trade log and reports the rest from
     the run summary's metrics. See the README.
     """
-    summary = load_last_pipeline_summary(config, output_dir)
+    summary = load_last_pipeline_summary(config, output_dir, account)
     empty = {
         "trades": _empty(), "positions": _empty(), "equity": _empty(),
         "positions_source": "simulated",
@@ -418,7 +444,9 @@ def load_execution_frame(config: AppConfig, output_dir: str = "runs") -> Source:
     return Source(value=parts, path=str(directory), note="; ".join(notes) or None)
 
 
-def load_regime_frame(config: AppConfig, output_dir: str = "runs") -> Source:
+def load_regime_frame(
+    config: AppConfig, output_dir: str = "runs", account: str | None = None
+) -> Source:
     """Regime classifications — **not persisted by the pipeline**.
 
     The runner writes signals, trades, positions and equity; regimes are
@@ -436,7 +464,9 @@ def load_regime_frame(config: AppConfig, output_dir: str = "runs") -> Source:
     )
 
 
-def load_analysis_frame(config: AppConfig, output_dir: str = "runs") -> Source:
+def load_analysis_frame(
+    config: AppConfig, output_dir: str = "runs", account: str | None = None
+) -> Source:
     """Preprocessed panels — **not persisted by the pipeline**.
 
     Same reason as :func:`load_regime_frame`. Prices themselves are always
@@ -459,6 +489,7 @@ def load_scheduler_status(
     *,
     settings: scheduler.SchedulerConfig | None = None,
     output_dir: str = "runs",
+    account: str | None = None,
     now: pd.Timestamp | None = None,
 ) -> Source:
     """When the pipeline last ran, and when it is next due.
@@ -474,9 +505,9 @@ def load_scheduler_status(
     universe and the schedule settings it is a pure function of the clock.
     """
     moment = utcnow(now)
-    runs = list_runs(config, output_dir)
-    summary = load_last_pipeline_summary(config, output_dir)
-    recorded = _recorded_scheduler_state(config)
+    runs = list_runs(config, output_dir, account)
+    summary = load_last_pipeline_summary(config, output_dir, account)
+    recorded = _recorded_scheduler_state(config, account)
 
     status: dict[str, Any] = {
         "last_run": None,
@@ -552,7 +583,9 @@ def load_scheduler_status(
     return Source(value=status)
 
 
-def _recorded_scheduler_state(config: AppConfig) -> dict[str, Any] | None:
+def _recorded_scheduler_state(
+    config: AppConfig, account: str | None = None
+) -> dict[str, Any] | None:
     """The scheduler's own state file, or ``None`` when it has never written.
 
     Absent is meaningful: it means no run has passed through a scheduler that
@@ -561,10 +594,10 @@ def _recorded_scheduler_state(config: AppConfig) -> dict[str, Any] | None:
     try:
         from cfdinvest.persist import scheduler_state, storage as persist_storage
 
-        path = persist_storage.get_scheduler_state_path(config)
+        path = persist_storage.get_scheduler_state_path(config, account)
         if not path.is_file():
             return None
-        state = dict(scheduler_state.load_scheduler_state(config))
+        state = dict(scheduler_state.load_scheduler_state(config, account))
         state["_path"] = str(path)
         return state
     except Exception as error:  # noqa: BLE001 - a dashboard must not crash
@@ -766,7 +799,9 @@ def load_scheduler_log(config: AppConfig, lines: int = 200) -> Source:
     )
 
 
-def load_run_analytics(config: AppConfig, output_dir: str = "runs") -> Source:
+def load_run_analytics(
+    config: AppConfig, output_dir: str = "runs", account: str | None = None
+) -> Source:
     """Metrics and attribution for the last run, computed from what it wrote.
 
     **Computed here rather than read.** The analytics command-line tool
@@ -803,7 +838,7 @@ def load_run_analytics(config: AppConfig, output_dir: str = "runs") -> Source:
         equity_frame.iloc[:, 0], errors="coerce"
     ).rename("equity")
 
-    summary = load_last_pipeline_summary(config, output_dir)
+    summary = load_last_pipeline_summary(config, output_dir, account)
     metadata = dict((summary.value or {}).get("metrics") or {})
 
     # The engine's own per-bar decomposition, if the run stored one. With it

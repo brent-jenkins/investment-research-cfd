@@ -90,18 +90,29 @@ def data_root(config=None) -> Path:
 
 
 def account_root(config=None, account: str | None = None) -> Path:
-    """The root for one account, or the shared root when ``account`` is None.
+    """The root for one account, or the shared root when there is no account.
 
-    ``None`` is the current behaviour and stays the default: switching it on
-    silently would strand every artefact written so far one directory above
-    where the readers now look.
+    ``account=None`` means "resolve from the environment", which yields an
+    account only when ``CFD_ACCOUNT_MODE`` is set. Separation is opt-in for a
+    reason: turning it on by default would strand every artefact written
+    before it existed one directory above where the readers now look, and a
+    lake that appears to have lost its history is a bad way to find out about
+    a new feature. See ``deployment/README.md`` for the one-line migration.
+
+    **The lake itself is not under here.** Raw prices are the same prices
+    whichever account you trade them in, and ingesting the S&P twice to keep
+    two identical copies would burn the FRED rate limit for nothing. What
+    separates is everything downstream: runs, confirmations, monitoring, risk.
     """
+    from cfdinvest.env import resolve_account
+
     root = data_root(config)
-    if account is None:
+    resolved = resolve_account(account)
+    if resolved is None:
         return root
-    if account not in ACCOUNTS:
-        raise ValueError(f"unknown account {account!r}; expected one of {ACCOUNTS}")
-    return root / account
+    if resolved not in ACCOUNTS:
+        raise ValueError(f"unknown account {resolved!r}; expected one of {ACCOUNTS}")
+    return root / resolved
 
 
 def runs_root(config=None, account: str | None = None) -> Path:

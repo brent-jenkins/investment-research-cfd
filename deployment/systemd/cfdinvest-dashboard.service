@@ -1,0 +1,66 @@
+# The Streamlit dashboard, bound to localhost and reached only through Caddy.
+#
+#   sudo cp deployment/systemd/*.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now cfdinvest-dashboard
+#
+# Logs go to the journal:  journalctl -u cfdinvest-dashboard -f
+
+[Unit]
+Description=cfdinvest dashboard (Streamlit)
+Documentation=https://github.com/brent-jenkins/cfdinvest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cfdinvest
+Group=cfdinvest
+WorkingDirectory=/opt/cfdinvest
+
+# Secrets live here, owned by root and readable by the service user only.
+# Never in the repository, never in this unit, never on a command line -- a
+# password in ExecStart is a password in `ps`.
+EnvironmentFile=/etc/cfdinvest/env
+
+# --server.address 127.0.0.1 is the load-bearing argument. Without it
+# Streamlit binds every interface and the dashboard is reachable directly on
+# port 8501, going round Caddy and therefore round the basic auth.
+ExecStart=/opt/cfdinvest/.venv/bin/streamlit run cfdinvest/ui/app.py \
+    --server.address 127.0.0.1 \
+    --server.port 8501 \
+    --server.headless true \
+    --browser.gatherUsageStats false
+
+Restart=on-failure
+RestartSec=10s
+
+# The dashboard is read-only over the lake. It needs to write nothing except
+# a scratch directory, so it is given nothing else.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Read-only: the code, and the lake. If the dashboard ever needs to write into
+# the lake, that is a bug in the dashboard rather than a line to add here.
+ReadOnlyPaths=/opt/cfdinvest
+ReadOnlyPaths=/var/lib/cfdinvest
+ReadWritePaths=/var/lib/cfdinvest/cache
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cfdinvest-dashboard
+
+[Install]
+WantedBy=multi-user.target

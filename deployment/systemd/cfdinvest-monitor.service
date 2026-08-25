@@ -1,0 +1,34 @@
+# The operational health check, on its own schedule.
+#
+# Separate from the pipeline timer on purpose: a box that drifts into trouble
+# at 3am does so between two runs, and a check that only fires with the
+# pipeline would date the problem to the next run.
+
+[Unit]
+Description=cfdinvest operational monitoring
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=cfdinvest
+Group=cfdinvest
+WorkingDirectory=/opt/cfdinvest
+EnvironmentFile=/etc/cfdinvest/env
+
+ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule monitor --alert
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadOnlyPaths=/opt/cfdinvest
+ReadWritePaths=/var/lib/cfdinvest
+
+# A red status exits 1. That is the check working, not the unit failing, and
+# without this systemd would mark the service failed every time it did its job.
+SuccessExitStatus=0 1
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cfdinvest-monitor

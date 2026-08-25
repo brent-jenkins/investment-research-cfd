@@ -1,0 +1,56 @@
+# cfd.example.com — the cfdinvest dashboard, behind HTTPS and basic auth.
+#
+#   sudo cp deployment/caddy/Caddyfile /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# There is no password in this file and there must never be one. The bcrypt
+# hash is read from the environment at start-up; generate it with
+# deployment/scripts/make-basicauth-hash.sh, which prints the hash and never
+# the password.
+#
+# Caddy reads its environment from /etc/default/caddy (Debian/Ubuntu package)
+# or from an EnvironmentFile= in its unit. Put CFD_BASIC_AUTH_USER and
+# CFD_BASIC_AUTH_HASH there, mode 0640, root:caddy.
+
+cfd.example.com {
+	# Automatic HTTPS. Caddy obtains and renews the certificate itself; there
+	# is no cron job to forget and no certificate to let expire.
+	encode zstd gzip
+
+	basic_auth {
+		{$CFD_BASIC_AUTH_USER} {$CFD_BASIC_AUTH_HASH}
+	}
+
+	# Streamlit binds to localhost only (see the systemd unit), so the app is
+	# unreachable except through this proxy. That is what makes the basic auth
+	# above a boundary rather than a suggestion: without it, port 8501 would
+	# still answer to anyone who found the host.
+	reverse_proxy 127.0.0.1:8501 {
+		# Streamlit's live updates run over a websocket. Without these the
+		# page loads and then silently stops updating, which looks like a
+		# broken app rather than a broken proxy.
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	header {
+		# The dashboard shows position sizes and account balances. None of it
+		# should be framed, sniffed, or leaked in a referrer to anywhere.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/cfd.example.com.log {
+			roll_size 10MiB
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format json
+	}
+}

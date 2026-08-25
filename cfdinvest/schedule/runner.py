@@ -53,6 +53,10 @@ class RunConfig:
     refresh_data: bool = False
     #: Keep at most this many run directories. ``None`` keeps everything.
     keep_runs: int | None = 30
+    #: Which account's tree to write into. ``None`` resolves from
+    #: ``CFD_ACCOUNT_MODE``, and falls back to the shared root when that is
+    #: unset -- separation is opt-in, so an existing lake keeps working.
+    account: str | None = None
     #: Check the machine's health after each run and record what was found.
     monitoring: bool = True
     #: Persist each monitoring pass. The history is how you tell a status that
@@ -139,10 +143,23 @@ class RunSummary:
 
 
 def _run_directory(repository: DataRepository, config: RunConfig, run_id: str) -> Path:
-    """Resolve (and create) the directory for one run's artefacts."""
-    root = Path(repository.paths.data_root) / config.output_dir / run_id
+    """Resolve (and create) the directory for one run's artefacts.
+
+    Under the account tree when separation is on, so a virtual run cannot land
+    where a live one is read from.
+    """
+    root = _account_output_root(repository, config) / run_id
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _account_output_root(repository: DataRepository, config: RunConfig) -> Path:
+    """Where this account's runs live."""
+    from cfdinvest.persist.storage import account_root
+
+    return account_root(
+        getattr(repository, "config", None), config.account
+    ) / config.output_dir
 
 
 def _prune_old_runs(repository: DataRepository, config: RunConfig) -> None:
@@ -154,7 +171,7 @@ def _prune_old_runs(repository: DataRepository, config: RunConfig) -> None:
     if config.keep_runs is None:
         return
 
-    root = Path(repository.paths.data_root) / config.output_dir
+    root = _account_output_root(repository, config)
     if not root.is_dir():
         return
 
@@ -277,7 +294,7 @@ def run_pipeline(
     # a trace. A last_run newer than last_success is exactly the signal that
     # something began and did not finish -- which deriving "last run" from
     # directory timestamps could never say.
-    _record_start(repository, run_id, started)
+    _record_start(repository, run_id, started, settings.account)
 
     try:
         if settings.refresh_data:
@@ -318,18 +335,22 @@ def run_pipeline(
                     repository, result, summary, backtest_config, directory, run_id
                 )
             )
-            paths.update(_persist_confirmed(repository, directory, run_id))
+            paths.update(
+                _persist_confirmed(
+                    repository, directory, run_id, settings.account
+                )
+            )
             summary = _with_paths(summary, paths)
             _prune_old_runs(repository, settings)
 
-        _record_finish(repository, summary)
+        _record_finish(repository, summary, settings.account)
         _run_monitoring(repository, settings, summary)
         logger.info(summary.headline())
         return summary
 
     except Exception as error:  # noqa: BLE001 - an unattended run must not die silently
         logger.exception("Scheduled run %s failed", run_id)
-        _record_failure(repository, run_id, error)
+        _record_failure(repository, run_id, error, settings.account)
         return RunSummary(
             run_id=run_id,
             started_at=started,
@@ -403,6 +424,7 @@ def _run_monitoring(repository, settings, summary: RunSummary) -> None:
 
         snapshot = run_monitoring(
             getattr(repository, "config", None),
+            account=settings.account,
             run_id=summary.run_id,
             notify_state=notify.delivery_state(),
             store=settings.store_monitoring,
@@ -413,7 +435,9 @@ def _run_monitoring(repository, settings, summary: RunSummary) -> None:
         logger.warning("Monitoring pass failed: %s", error)
 
 
-def _persist_confirmed(repository, directory, run_id: str) -> dict[str, str]:
+def _persist_confirmed(
+    repository, directory, run_id: str, account=None
+) -> dict[str, str]:
     """Write the run's positions with your confirmations overlaid.
 
     **As a separate artefact, never over the top of ``positions.parquet``.**
@@ -431,7 +455,9 @@ def _persist_confirmed(repository, directory, run_id: str) -> dict[str, str]:
     try:
         from cfdinvest.persist import confirm, writers
 
-        confirmations = confirm.load_confirmations(getattr(repository, "config", None))
+        confirmations = confirm.load_confirmations(
+            getattr(repository, "config", None), account
+        )
         if not confirmations:
             return {}
 
@@ -460,19 +486,19 @@ def _persist_confirmed(repository, directory, run_id: str) -> dict[str, str]:
         return {}
 
 
-def _record_start(repository, run_id: str, started) -> None:
+def _record_start(repository, run_id: str, started, account=None) -> None:
     """Note in the scheduler state that a run began."""
     try:
         from cfdinvest.persist import scheduler_state
 
         scheduler_state.update_last_run(
-            started, run_id=run_id, config=repository.config
+            started, run_id=run_id, config=repository.config, account=account
         )
     except Exception as error:  # noqa: BLE001 - never fail a run over bookkeeping
         logger.debug("Could not record the run start: %s", error)
 
 
-def _record_finish(repository, summary: RunSummary) -> None:
+def _record_finish(repository, summary: RunSummary, account=None) -> None:
     """Note the outcome, clearing any stale error on success."""
     try:
         from cfdinvest.persist import scheduler_state
@@ -483,6 +509,7 @@ def _record_finish(repository, summary: RunSummary) -> None:
                 summary.finished_at,
                 run_id=summary.run_id,
                 config=repository.config,
+                account=account,
             )
         else:
             scheduler_state.update_last_success(
@@ -490,12 +517,13 @@ def _record_finish(repository, summary: RunSummary) -> None:
                 run_id=summary.run_id,
                 duration=summary.duration_seconds,
                 config=repository.config,
+                account=account,
             )
     except Exception as error:  # noqa: BLE001
         logger.debug("Could not record the run outcome: %s", error)
 
 
-def _record_failure(repository, run_id: str, error: Exception) -> None:
+def _record_failure(repository, run_id: str, error: Exception, account=None) -> None:
     """Note that a run raised."""
     try:
         from cfdinvest.persist import scheduler_state
@@ -504,6 +532,7 @@ def _record_failure(repository, run_id: str, error: Exception) -> None:
             f"{type(error).__name__}: {error}",
             run_id=run_id,
             config=repository.config,
+            account=account,
         )
     except Exception as recording_error:  # noqa: BLE001
         logger.debug("Could not record the failure: %s", recording_error)
