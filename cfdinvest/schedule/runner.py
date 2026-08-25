@@ -53,6 +53,10 @@ class RunConfig:
     refresh_data: bool = False
     #: Keep at most this many run directories. ``None`` keeps everything.
     keep_runs: int | None = 30
+    #: Path to the Trading 212 instrument rules. ``None`` looks at the
+    #: default location; the table is optional and its absence means the
+    #: broker checks report themselves not consulted rather than passed.
+    rules_path: str | None = None
     #: Which account's tree to write into. ``None`` resolves from
     #: ``CFD_ACCOUNT_MODE``, and falls back to the shared root when that is
     #: unset -- separation is opt-in, so an existing lake keeps working.
@@ -402,6 +406,35 @@ def _persist_extras(
     except Exception as error:  # noqa: BLE001
         logger.warning("Could not persist the extended artefacts: %s", error)
         return {}
+
+
+def load_rules_once(settings) -> object | None:
+    """Read the instrument rules table, once per run.
+
+    Loaded here rather than per trade so every decision in a run is judged
+    against the same table -- a file edited mid-run would otherwise give two
+    trades two different answers, and nothing would say which.
+
+    Never raises. A missing table is the normal state.
+    """
+    try:
+        from cfdinvest.livehelper.t212_rules import load_rules
+
+        table = load_rules(getattr(settings, "rules_path", None))
+        if len(table):
+            logger.info(
+                "Trading 212 rules loaded for %d instrument(s) from %s",
+                len(table), table.path,
+            )
+        else:
+            logger.info(
+                "No Trading 212 instrument rules at %s; the broker checks "
+                "will report themselves not consulted", table.path,
+            )
+        return table
+    except Exception as error:  # noqa: BLE001 - an absent table is not a fault
+        logger.warning("Could not load the Trading 212 rules: %s", error)
+        return None
 
 
 def _run_monitoring(repository, settings, summary: RunSummary) -> None:

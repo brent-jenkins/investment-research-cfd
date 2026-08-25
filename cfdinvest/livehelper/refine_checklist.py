@@ -168,13 +168,7 @@ def refine_checklist(
                               ("margin",)))
     items.append(from_finding("fx", "Is the currency exposure acceptable?",
                               ("fx", "fx_rate")))
-    items.append(
-        from_finding(
-            "broker", "Will the Trading 212 ticket accept this order?",
-            ("quantity_precision", "min_quantity", "max_quantity",
-             "close_only", "quantity"),
-        )
-    )
+    items.append(_broker_item(assessment))
     items.append(
         from_finding(
             "conditions", "Are the spread and volatility reasonable?",
@@ -193,6 +187,69 @@ def refine_checklist(
         verdict=getattr(assessment, "status", None),
         missing=where.missing,
         details={"limits": limits.__class__.__name__},
+    )
+
+
+def _broker_item(assessment) -> ChecklistItem:
+    """Will the Trading 212 ticket accept this order?
+
+    Answered from the rule checks, and reporting **coverage** rather than a
+    bare pass. Eight checks with two rules recorded is two checks and six
+    blanks, and an item that said "yes" would be claiming the other six.
+    """
+    findings = getattr(assessment, "broker_findings", ())
+    coverage = getattr(assessment, "broker_coverage", None) or {}
+
+    if not findings:
+        return ChecklistItem(
+            "broker", "Will the Trading 212 ticket accept this order?",
+            "unchecked",
+            detail="No rules table was supplied, so none of this was tested.",
+            action=(
+                "Record the instrument's precision, minimum size and leverage "
+                "from the ticket; see cfdinvest/livehelper/README.md."
+            ),
+            blocking=False,
+        )
+
+    failed = [f for f in findings if f.severity in ("critical", "warning")]
+    checked, total = coverage.get("checked", 0), coverage.get("total", 0)
+
+    if failed:
+        return ChecklistItem(
+            "broker", "Will the Trading 212 ticket accept this order?", "fail",
+            detail="; ".join(f.message for f in failed[:2]),
+            action=next(
+                (f.recommendation for f in failed if f.recommendation), ""
+            ),
+            blocking=any(f.severity == "critical" for f in failed),
+        )
+
+    if checked == 0:
+        return ChecklistItem(
+            "broker", "Will the Trading 212 ticket accept this order?",
+            "unchecked",
+            detail=f"This instrument is in the table with no fields recorded.",
+            blocking=False,
+        )
+
+    if checked < total:
+        # Passed everything that could run, and that is not the same as
+        # passing. Reported as a pass with the gap named rather than as a
+        # failure, because nothing is actually wrong.
+        return ChecklistItem(
+            "broker", "Will the Trading 212 ticket accept this order?", "pass",
+            detail=(
+                f"{checked} of {total} rules recorded, and all of them pass. "
+                f"Not checked: "
+                f"{', '.join(coverage.get('missing_titles', ()))}."
+            ),
+            blocking=False,
+        )
+
+    return ChecklistItem(
+        "broker", "Will the Trading 212 ticket accept this order?", "pass",
+        detail=f"All {total} recorded rules pass.",
     )
 
 

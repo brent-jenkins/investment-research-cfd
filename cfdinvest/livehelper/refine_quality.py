@@ -53,11 +53,12 @@ GRADES: tuple[tuple[float, str, str], ...] = (
 #: What each component is worth. A judgement, written down so it can be
 #: argued with rather than inferred from the arithmetic.
 WEIGHTS: dict[str, float] = {
-    "safety_margin": 0.30,
+    "safety_margin": 0.25,
     "reward_risk": 0.20,
     "expectancy_alignment": 0.20,
     "regime_alignment": 0.15,
-    "psychological_stability": 0.10,
+    "broker_rules": 0.10,
+    "psychological_stability": 0.05,
     "execution_consistency": 0.05,
 }
 
@@ -141,6 +142,7 @@ def refine_quality(
     components.append(_reward_risk(assessment, reasons))
     components.append(_expectancy_alignment(where, reasons))
     components.append(_regime_alignment(where, reasons))
+    components.append(_broker_rules(assessment, reasons))
     components.append(_psychological_stability(where, reasons))
     components.append(_execution_consistency(execution_history, reasons))
 
@@ -289,6 +291,40 @@ def _regime_alignment(where, reasons) -> QualityComponent:
             "setup is being taken in a harder market than the average one."
         )
     return QualityComponent("regime", score, weight, True)
+
+
+def _broker_rules(assessment, reasons) -> QualityComponent:
+    """How much of the broker's own rulebook this trade was checked against.
+
+    Scored on *coverage*, not on passing. A trade that passed two recorded
+    rules has not been checked against the other six, and scoring it as if it
+    had would make an empty table look like a clean bill.
+    """
+    weight = WEIGHTS["broker_rules"]
+    coverage = getattr(assessment, "broker_coverage", None) or {}
+    total = coverage.get("total", 0)
+
+    if not total:
+        return QualityComponent(
+            "broker rules", UNMEASURED, weight, False,
+            note="no rules table supplied",
+        )
+
+    if coverage.get("failed"):
+        reasons.append(
+            f"{coverage['failed']} of the {coverage['checked']} recorded "
+            "Trading 212 rules are not satisfied."
+        )
+        return QualityComponent("broker rules", 0.0, weight, True)
+
+    share = coverage.get("coverage") or 0.0
+    if share < 1.0:
+        reasons.append(
+            f"Checked against {coverage['checked']} of {total} Trading 212 "
+            f"rules; {coverage['not_checked']} are not recorded and were not "
+            "tested."
+        )
+    return QualityComponent("broker rules", float(share), weight, True)
 
 
 def _psychological_stability(where, reasons) -> QualityComponent:

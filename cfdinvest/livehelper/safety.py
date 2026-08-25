@@ -43,7 +43,16 @@ __all__ = [
 
 #: Worst first, which is also the order they are reported in.
 STATUSES: tuple[str, ...] = ("UNSAFE", "BORDERLINE", "SAFE")
-SEVERITIES: tuple[str, ...] = ("critical", "warning", "info")
+#: Ordered worst first.
+#:
+#: ``pass`` means a check ran and was satisfied; ``unchecked`` means there was
+#: no rule to test against. Both exist because the broker-rule checks often
+#: cannot run -- the table is one you fill in by hand -- and a report that
+#: showed nothing would read the same whether eight rules passed or none were
+#: recorded. Neither moves the verdict, and neither appears among the reasons:
+#: they are coverage, and coverage belongs in its own section rather than
+#: padding the list of things wrong with a trade.
+SEVERITIES: tuple[str, ...] = ("critical", "warning", "info", "pass", "unchecked")
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +139,7 @@ class TradeSafetyAssessment:
         return [
             f.message
             for f in sorted(self.findings, key=lambda f: order.get(f.severity, 9))
+            if f.severity not in ("pass", "unchecked")
         ]
 
     @property
@@ -150,6 +160,35 @@ class TradeSafetyAssessment:
     @property
     def critical(self) -> tuple[Finding, ...]:
         return tuple(f for f in self.findings if f.blocking)
+
+    @property
+    def broker_findings(self) -> tuple[Finding, ...]:
+        """The Trading 212 rule checks, in the order they were asked."""
+        from cfdinvest.livehelper.t212_checks import CHECKS
+
+        order = {name: index for index, (name, _) in enumerate(CHECKS)}
+        return tuple(
+            sorted(
+                (f for f in self.findings if f.check in order),
+                key=lambda f: order[f.check],
+            )
+        )
+
+    @property
+    def broker_coverage(self) -> dict:
+        """How much of this trade the rules table could speak to.
+
+        Eight checks with two rules recorded is two checks and six blanks. A
+        report that did not say so would look like eight passes.
+        """
+        from cfdinvest.livehelper.t212_checks import coverage_of
+
+        found = self.broker_findings
+        if not found:
+            return {"total": 0, "checked": 0, "passed": 0, "failed": 0,
+                    "not_checked": 0, "coverage": None, "missing": (),
+                    "missing_titles": ()}
+        return coverage_of(found)
 
 
 def _finite(value: Any) -> bool:
@@ -261,7 +300,9 @@ def evaluate_trade_safety(
     spread_flag = _check_spread(trade_intent, market, limits, price, findings)
     reward_risk = _check_reward_risk(trade_intent, price, findings)
     _check_broker_state(market, findings)
-    _check_broker_rules(trade_intent, rules, findings, unknowns, now)
+    _check_broker_rules(
+        trade_intent, rules, findings, unknowns, now, limits, market
+    )
 
     status = _verdict(findings, unknowns)
 
@@ -282,15 +323,30 @@ def evaluate_trade_safety(
     )
 
 
-def _check_broker_rules(intent, rules, findings, unknowns, now) -> None:
+def _check_broker_rules(
+    intent, rules, findings, unknowns, now, config=None, market=None
+) -> None:
     """What Trading 212's ticket will accept, if you have recorded it.
 
     Folded into the same finding list as everything else so one verdict covers
     both kinds of constraint. A trade that is safe by your limits and
     unplaceable by the broker's is not a trade, and two separate answers would
     let you act on the reassuring one.
+
+    Every check reports -- passed, failed, or not checked. That is unlike the
+    rest of this module, and it is because most of these checks *cannot* run
+    on a table nobody has filled in yet, so silence would be ambiguous in a
+    way it is not elsewhere.
     """
-    from cfdinvest.livehelper import t212_rules as broker
+    from cfdinvest.livehelper import t212_checks
+
+    # An *empty* table is the same as no table: you have not opted in, and
+    # nothing should be capped for it. Only a table with instruments in it
+    # means the checks were asked for -- and only then is this instrument
+    # missing from it an unknown. Without this the CLI's default lookup, which
+    # finds no file on a fresh install, capped every verdict at BORDERLINE.
+    if rules is not None and len(rules) == 0:
+        rules = None
 
     if rules is None:
         # Noted, not counted against the verdict. Nobody has a rules table
@@ -315,22 +371,18 @@ def _check_broker_rules(intent, rules, findings, unknowns, now) -> None:
         )
         return
 
-    instrument = rules.get(intent.instrument)
-    if instrument.empty:
+    issues, verified = t212_checks.check_all(
+        intent, rules, config=config, market=market, now=now
+    )
+    if not verified:
         # A table exists and this instrument is not in it. *That* is an
-        # unknown: you opted into these checks and this one could not run.
+        # unknown: you opted into these checks and none of them could run.
+        # An individual unrecorded *field* is not -- otherwise every partial
+        # entry would cap the verdict at BORDERLINE for ever, and a verdict
+        # that never changes is one nobody reads.
         unknowns.append(f"the Trading 212 rules for {intent.instrument}")
 
-    issues = (
-        broker.validate_quantity(intent.quantity, instrument)
-        + broker.validate_close_only(instrument, intent.direction)
-        + broker.validate_trading_hours(instrument, now)
-    )
     for issue in issues:
-        if issue.severity == "info" and issue.check == "quantity_rules":
-            # Already carried as an unknown; two lines saying the same absence
-            # reads as two problems.
-            continue
         findings.append(
             Finding(
                 check=issue.check,

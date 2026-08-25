@@ -184,10 +184,18 @@ def build_execution_helper_summary(
              if _finite(safety_assessment.leverage) else "not computable",
              f"limit {limits.max_leverage_per_trade:,.0f}x")
     )
+    # The "x" is appended only to a number. Unconditionally it produced
+    # "instrument leverage not computablex", which is both wrong and long
+    # enough to push the row past the block width.
+    leverage = safety_assessment.instrument_leverage
     lines.append(
-        _row("Margin required", _money(safety_assessment.margin_required_gbp),
-             f"instrument leverage "
-             f"{_number(safety_assessment.instrument_leverage, 0)}x")
+        _row(
+            "Margin required",
+            _money(safety_assessment.margin_required_gbp),
+            f"instrument leverage {_number(leverage, 0)}x"
+            if leverage is not None
+            else "instrument leverage unknown",
+        )
     )
     lines.append(
         _row("Margin used after",
@@ -247,6 +255,36 @@ def build_execution_helper_summary(
             lines.extend(_wrap(note, indent="    "))
 
     # -- why ----------------------------------------------------------------- #
+    # Its own section, before WHY. Coverage is not a reason the verdict is
+    # what it is, and a rules table nobody has filled in should be visible as
+    # a gap rather than as four more bullets under a heading about problems.
+    broker = getattr(safety_assessment, "broker_findings", ())
+    if broker:
+        coverage = safety_assessment.broker_coverage
+        lines.append("")
+        lines.append("  TRADING 212 RULES")
+        lines.append(
+            f"    {coverage['checked']} of {coverage['total']} recorded"
+            + (
+                f", {coverage['failed']} not satisfied"
+                if coverage["failed"] else ", all satisfied"
+            )
+        )
+        for finding in broker:
+            mark = {
+                "pass": "ok ", "critical": "NO ", "warning": "?  ",
+                "unchecked": "-- ",
+            }.get(finding.severity, "   ")
+            lines.append(f"    {mark} {finding.message}")
+        if coverage["not_checked"]:
+            lines.extend(
+                _wrap(
+                    f"{coverage['not_checked']} rule(s) are not recorded, so "
+                    "they were not tested. That is not the same as passing.",
+                    indent="    ",
+                )
+            )
+
     if safety_assessment.reasons:
         lines.append("")
         lines.append("  WHY")
@@ -256,9 +294,15 @@ def build_execution_helper_summary(
     if safety_assessment.unknowns:
         lines.append("")
         lines.append("  NOT CHECKED")
-        lines.append(
-            f"    {', '.join(safety_assessment.unknowns)} — supply these for a "
-            "complete assessment. Until then this cannot be graded SAFE."
+        # Wrapped like everything else. This ran to 93 characters in a block
+        # that is otherwise 68 wide as soon as more than one thing was
+        # unknown.
+        lines.extend(
+            _wrap(
+                f"{', '.join(safety_assessment.unknowns)} — supply these for "
+                "a complete assessment. Until then this cannot be graded SAFE.",
+                indent="    ",
+            )
         )
 
     if trade_intent.notes:

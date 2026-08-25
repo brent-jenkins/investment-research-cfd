@@ -295,7 +295,7 @@ def test_a_broker_rejection_reaches_the_verdict():
         rules=table(SPX500=spx()),
     )
     assert result.status == "UNSAFE"
-    assert "quantity_precision" in [f.check for f in result.findings]
+    assert "t212_quantity_precision" in [f.check for f in result.findings]
 
 
 def test_a_clean_trade_stays_safe_with_rules_supplied():

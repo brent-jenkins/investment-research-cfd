@@ -81,6 +81,14 @@ def build_parser() -> argparse.ArgumentParser:
     account = parser.add_argument_group("your limits")
     account.add_argument("--config", help="path to config.toml")
     account.add_argument(
+        "--no-default-rules",
+        action="store_true",
+        help=(
+            "do not look for a rules table at the default path; the broker "
+            "checks then report themselves not consulted"
+        ),
+    )
+    account.add_argument(
         "--rules",
         default=None,
         metavar="PATH",
@@ -211,13 +219,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     market = _market(args)
 
     rules = None
-    if args.rules:
-        from cfdinvest.livehelper.t212_rules import load_rules
+    if args.rules or not args.no_default_rules:
+        from cfdinvest.livehelper.t212_rules import DEFAULT_RULES_PATH, load_rules
 
-        rules = load_rules(args.rules)
-        if not len(rules):
+        target = args.rules or DEFAULT_RULES_PATH
+        rules = load_rules(target)
+        if args.rules and not len(rules):
+            # Only when a path was asked for explicitly. The default path not
+            # existing is the normal state and saying so on every run would
+            # train you to ignore it.
             print(
-                f"No instrument rules were read from {args.rules}.",
+                f"No instrument rules were read from {target}.",
                 file=sys.stderr,
             )
 
@@ -229,12 +241,69 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not args.quiet:
         print(summary)
+        _print_rule_coverage(assessment, rules, args)
     if args.record:
         _record(intent, assessment, sizing, args)
     if args.email:
         email_summary(intent.instrument, assessment.status, summary)
 
     return EXIT_CODES.get(assessment.status, PARSE_FAILURE)
+
+
+def _print_rule_coverage(assessment, rules, args) -> None:
+    """Which broker rules were applied, missing, or never recorded.
+
+    Printed after the summary rather than inside it. The summary answers "may
+    I place this"; this answers "how much of that answer rests on rules you
+    have actually written down", which is a question about the table and not
+    about the trade.
+    """
+    from cfdinvest.livehelper.t212_rules import DEFAULT_RULES_PATH
+
+    if rules is None:
+        return
+
+    path = args.rules or DEFAULT_RULES_PATH
+    findings = getattr(assessment, "broker_findings", ())
+
+    if not findings:
+        import textwrap
+
+        print()
+        for line in textwrap.wrap(
+            f"Trading 212 rules: nothing recorded for this instrument in "
+            f"{path}. Those checks did not run -- unverified, not passed.",
+            width=68,
+            initial_indent="  ",
+            subsequent_indent="  ",
+        ):
+            print(line)
+        return
+
+    coverage = assessment.broker_coverage
+    print()
+    print("  Trading 212 rules")
+    print(f"    from        {path}")
+    print(
+        f"    applied     {coverage['checked']} of {coverage['total']}"
+        + (f", {coverage['failed']} not satisfied" if coverage["failed"] else "")
+    )
+    if coverage["not_checked"]:
+        import textwrap
+
+        # Wrapped: eight titles on one line runs to 148 characters in a block
+        # that is otherwise 68 wide.
+        for line in textwrap.wrap(
+            ", ".join(coverage["missing_titles"]),
+            width=68,
+            initial_indent="    not recorded ",
+            subsequent_indent="                 ",
+        ):
+            print(line)
+        print(
+            "                 -- unverified, not passed. Add them from the "
+            "ticket."
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -185,6 +185,101 @@ So you fill it in from the ticket. Start from
 partial entry makes the checks it covers real and leaves the rest honestly
 unchecked.
 
+### Three outcomes, not two
+
+Every check reports one of:
+
+| | Meaning |
+| --- | --- |
+| `pass` | A rule was recorded and the trade satisfies it |
+| `critical` / `warning` | A rule was recorded and the trade does not |
+| `unchecked` | No rule was recorded, so nothing was tested |
+
+The third is why the passes are reported at all. Everywhere else in this
+helper a silent check is a passing check, which is fine when every check can
+always run. These usually cannot, and a report that showed nothing would read
+the same whether eight rules passed or none were recorded.
+
+```
+  TRADING 212 RULES
+    1 of 8 recorded, all satisfied
+    ok  0.68 fits SPX500's 2 decimal place(s).
+    --  Not checked — no minimum size recorded for SPX500.
+    ...
+    7 rule(s) are not recorded, so they were not tested. That is not
+    the same as passing.
+```
+
+**The coverage is the finding.** A pass never moves the verdict, and neither
+passes nor unchecked lines appear among the reasons — coverage is not a reason
+the verdict is what it is, and padding the WHY section with it would bury the
+actual problem.
+
+### What counts as opting in
+
+| | Effect on the verdict |
+| --- | --- |
+| No table, or an empty one | Nothing capped. You have not opted in. |
+| A populated table, instrument missing | `BORDERLINE` — unverified |
+| A populated table, some fields missing | Nothing capped — those checks report unchecked |
+
+The first line matters: the CLI looks at the default path on every run, and on
+a fresh install there is no file. Treating that as an unknown capped *every*
+verdict at `BORDERLINE`, and a verdict that never changes is one nobody reads.
+
+The second is the honest reading of "unverified": you asked for these checks
+and none of them could run. The third is not, because otherwise every partial
+entry would cap the verdict for ever and there would be no reason to record
+the first field.
+
+### The eight checks
+
+| Check | What it catches |
+| --- | --- |
+| Quantity precision | An over-precise size — rejected **silently** |
+| Minimum size | A size the ticket will not take |
+| Maximum size | The same at the other end |
+| Instrument leverage | Your assumed leverage disagreeing with the platform's |
+| Overnight financing | What holding costs, against what the trade risks |
+| Typical spread | The spread as a share of the stop distance |
+| Trading hours | An order placed into a shut market |
+| Close-only | An opening order that will not fill |
+
+Three are worth expanding.
+
+**Leverage is the quiet one.** Instrument leverage divides exposure into
+margin, so assuming 20x where the platform gives 5x understates the margin
+this trade commits by four times — and margin force-closes without warning.
+An *understated* leverage is critical; an overstated one is only a warning,
+because conservative is safe.
+
+**Financing is measured against the risk budget.** Six pounds a night is
+meaningless; six pounds against a forty-pound stop is a fifth of the budget
+every three nights, and a position that has to move to stand still. Worth
+knowing before a weekend, which is three nights and not one.
+
+**Spread is measured against the stop distance**, using the threshold that
+already lives in `LiveHelperConfig` rather than a second copy.
+
+### Where the findings show up
+
+- `assessment.findings` — all eight, with `assessment.broker_findings` and
+  `assessment.broker_coverage` as the shortcuts.
+- The **checklist** reports coverage rather than a bare pass. An item that
+  said "yes" on two of eight rules would be claiming the other six.
+- The **quality score** scores *coverage*, not passing — scoring an empty
+  table as a pass would make it look like a clean bill.
+- The **summary** gets its own section, and the **CLI** prints what was
+  applied, what is not recorded, and that the difference matters.
+
+### One naming detail
+
+The checks are prefixed `t212_`. The safety engine already has a `leverage`
+check — *effective* leverage, exposure over balance — and this one is about
+the *instrument's* leverage. Sharing a name made the checklist and the
+coverage count confuse two different numbers answering two different
+questions.
+
 Three of these matter more than they look:
 
 **Precision.** Trading 212 rejects an over-precise quantity *silently*: the
@@ -412,6 +507,7 @@ assessment, not separate computations.
 pytest tests/test_livehelper.py -q        # 58 tests, no network
 pytest tests/test_execution_safety.py -q  # 56 more: broker rules, fills
 pytest tests/test_refinement.py -q        # 81 more: the refinement layer
+pytest tests/livehelper/ -q               # 70 more: the T212 rules table
 ```
 
 The tests that matter are the ones about **refusing to say `SAFE`**. A sizing
