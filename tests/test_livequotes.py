@@ -1218,3 +1218,23 @@ def test_leverage_alone_missing_does_not_stop_a_trip_being_valued():
 
     assert trips[0].complete
     assert trips[0].net_pnl_gbp == pytest.approx(10.0)
+
+
+def test_an_expiring_contract_can_be_recorded_as_one():
+    """Trading 212's index CFDs expire -- "UK 100 EXPIRING 17 SEPTEMBER
+    2026" -- rather than running perpetually.
+
+    It matters twice: a position cannot be held through the date, and a
+    dated contract usually carries its funding in the forward price rather
+    than charging overnight interest. Recorded so the difference is visible.
+    Nothing infers one from the other.
+    """
+    from cfdinvest.livehelper.t212_rules import InstrumentRules
+
+    dated = InstrumentRules(ticker="^FTSE", leverage=20.0, expiry="2026-09-17")
+    perpetual = InstrumentRules(ticker="EURUSD=X", leverage=30.0)
+
+    assert dated.expiry == "2026-09-17"
+    assert perpetual.expiry is None
+    # An expiry is not a financing rate and must not imply one either way.
+    assert dated.financing_rate is None

@@ -119,6 +119,15 @@ class InstrumentRules:
     currency: str | None = None
     trading_hours: str | None = None
     close_only: bool | None = None
+    #: When the contract expires, if it is a dated one.
+    #:
+    #: Trading 212's index CFDs are expiring contracts -- "UK 100 EXPIRING
+    #: 17 SEPTEMBER 2026" -- rather than perpetual. That matters twice: a
+    #: position cannot simply be held through it, and a dated contract
+    #: usually carries its funding in the forward price instead of charging
+    #: overnight interest. Recorded so the difference is visible; nothing
+    #: here infers one from the other.
+    expiry: str | None = None
     source: str = "unverified"
     notes: str | None = None
 
