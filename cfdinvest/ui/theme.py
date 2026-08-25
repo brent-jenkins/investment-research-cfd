@@ -52,7 +52,12 @@ APP_TITLE: str = "CFD Invest"
 BRAND: dict[str, str] = {
     "name": "CFDINVEST",
     "strapline": "Trend-following CFD research.",
-    "colour": "#29B6F6",
+    # The same blue as the other CFDINVEST app, and as primaryColor in
+    # .streamlit/config.toml. One brand, one value, asserted by a test:
+    # two places holding one colour is how a wordmark ends up a different
+    # blue from the buttons beside it.
+    "colour": "#00C2FF",
+    "strapline_colour": "#8899AA",
 }
 
 #: The two palettes. ``dark`` is that site's set verbatim.

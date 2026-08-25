@@ -330,7 +330,20 @@ def require_login(st) -> str | None:
         )
         st.stop()
 
-    _, middle, _ = st.columns([1, 2, 1])
+    # The wordmark above the form, as the other CFDINVEST app does it. The
+    # logo slot is not used here: it lives above the navigation, and there
+    # is no navigation on this screen.
+    st.markdown(
+        '<div style="padding:2rem 0 1rem 0;text-align:center;">'
+        f'<div style="font-size:1.8rem;font-weight:800;letter-spacing:0.12em;'
+        f'color:{theme.BRAND["colour"]};">{theme.BRAND["name"]}</div>'
+        f'<div style="font-size:0.85rem;letter-spacing:0.05em;margin-top:0.2rem;'
+        f'color:{theme.BRAND["strapline_colour"]};">'
+        f'{theme.BRAND["strapline"]}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    _, middle, _ = st.columns([1, 1.2, 1])
     with middle:
         with st.form("cfd_sign_in"):
             st.subheader("Sign in")
@@ -362,16 +375,21 @@ def require_login(st) -> str | None:
 
 
 def render_sign_out(st) -> None:
-    """The signed-in user and a way out, at the top of the sidebar."""
+    """The signed-in user and a way out, at the foot of the sidebar.
+
+    Below the navigation, as the other CFDINVEST app has it: the page list is
+    what you use constantly and signing out is what you use once, so the
+    thing you reach for least sits furthest down.
+    """
     user = st.session_state.get(auth_module.SESSION_KEY)
     if not user:
         return
     with st.sidebar:
+        st.divider()
         st.caption(f"Signed in as **{user}**")
-        if st.button("Sign out", width="stretch", key="cfd_sign_out"):
+        if st.button("Log out", width="stretch", key="cfd_sign_out"):
             sign_out(st)
             st.rerun()
-        st.divider()
 
 
 def page_setup(st, title: str, *, icon: str = "📈", subtitle: str = "") -> dict:

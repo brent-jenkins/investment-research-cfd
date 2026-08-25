@@ -1916,3 +1916,37 @@ def test_the_entry_script_gates_before_it_draws_the_navigation():
     gate = body.index("components.require_login(st)")
     navigation = body.index("st.navigation(")
     assert gate < navigation, "the gate must come before the navigation"
+
+
+def test_the_brand_blue_has_one_value():
+    """Streamlit paints the first frame from config.toml, the stylesheet
+    paints the rest. Two places holding one colour is how a wordmark ends up
+    a different blue from the buttons beside it."""
+    import re
+
+    from cfdinvest.ui import theme
+
+    config = Path(".streamlit/config.toml").read_text(encoding="utf-8")
+    declared = re.search(r'primaryColor\s*=\s*"([^"]+)"', config)
+
+    assert declared, "config.toml should declare primaryColor"
+    assert declared.group(1).upper() == theme.BRAND["colour"].upper()
+
+
+def test_the_dashboard_starts_dark():
+    """It matches the other CFDINVEST app, and a dashboard left open all day
+    should not be a white rectangle. The stylesheet still follows a viewer
+    who switches."""
+    config = Path(".streamlit/config.toml").read_text(encoding="utf-8")
+
+    assert 'base = "dark"' in config
+    assert set(theme.MODES) == {"light", "dark"}, "both modes stay supported"
+
+
+def test_streamlit_is_pinned_to_the_loopback_in_config():
+    """The argument is load-bearing in deployment; without it Streamlit binds
+    every interface and answers past the reverse proxy. Set in config too, so
+    a local run cannot expose itself either."""
+    config = Path(".streamlit/config.toml").read_text(encoding="utf-8")
+
+    assert 'address = "127.0.0.1"' in config

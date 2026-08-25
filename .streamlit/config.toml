@@ -1,0 +1,27 @@
+# Streamlit's own theme, so the first paint matches the app rather than
+# flashing light and then being restyled.
+#
+# cfdinvest's stylesheet (cfdinvest/ui/theme.py) supports both modes and
+# follows the viewer's choice; this only sets which one they start in. Dark
+# is the default because it matches the other CFDINVEST app, and because a
+# dashboard someone leaves open all day should not be a white rectangle.
+
+[theme]
+base = "dark"
+# The brand blue. The same value as theme.BRAND["colour"], and it has to
+# stay that way -- a test asserts it, because two places holding one colour
+# is how a wordmark ends up a different blue from the buttons beside it.
+primaryColor = "#00C2FF"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#161B22"
+textColor = "#E6EDF3"
+
+[server]
+# Load-bearing in deployment: without it Streamlit binds every interface and
+# answers past the reverse proxy. Set here as well as on the command line so
+# a local run cannot accidentally expose itself either.
+address = "127.0.0.1"
+headless = true
+
+[browser]
+gatherUsageStats = false
