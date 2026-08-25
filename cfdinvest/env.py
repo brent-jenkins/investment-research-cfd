@@ -192,7 +192,9 @@ def account_configured(env: Mapping[str, str] | None = None) -> bool:
 
 
 def resolve_account(
-    account: str | None = None, env: Mapping[str, str] | None = None
+    account: str | None = None,
+    env: Mapping[str, str] | None = None,
+    config=None,
 ) -> str | None:
     """Which account tree to read and write, or ``None`` for the shared root.
 
@@ -210,15 +212,20 @@ def resolve_account(
         # An explicit account is checked against the *trees*, not against the
         # deployment modes. "simulation" is a real tree that nothing runs as:
         # CFD_ACCOUNT_MODE=simulation is still refused, and
-        # account_root(config, "simulation") is still allowed. Early these
-        # shared one list and the simulate layer could not write anywhere.
-        from cfdinvest.persist.storage import ACCOUNTS
+        # account_root(config, "simulation") is still allowed.
+        #
+        # ``config`` is threaded through so the registry in *that* lake is
+        # consulted. Without it this validated against the built-in three
+        # only, and a registered account was refused here before
+        # account_root -- which does know about the registry -- ever saw it.
+        from cfdinvest.accounts.registry import known_accounts
 
-        if account not in ACCOUNTS:
+        allowed = known_accounts(config)
+        if account not in allowed:
             # Worded to match cfdinvest.persist.storage, which is the other
             # place that can raise this: one message for one mistake.
             raise ValueError(
-                f"unknown account {account!r}; expected one of {ACCOUNTS}"
+                f"unknown account {account!r}; expected one of {allowed}"
             )
         return account
     if not account_configured(env):

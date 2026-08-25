@@ -111,11 +111,18 @@ def account_root(config=None, account: str | None = None) -> Path:
     from cfdinvest.env import resolve_account
 
     root = data_root(config)
-    resolved = resolve_account(account)
+    resolved = resolve_account(account, config=config)
     if resolved is None:
         return root
-    if resolved not in ACCOUNTS:
-        raise ValueError(f"unknown account {resolved!r}; expected one of {ACCOUNTS}")
+    # Validated against the built-ins *plus* whatever the registry adds.
+    # Registering an account is what makes its directory legal, and nothing
+    # else does -- so a typo is still refused rather than quietly creating a
+    # tree nobody will ever look in.
+    from cfdinvest.accounts.registry import known_accounts
+
+    allowed = known_accounts(config)
+    if resolved not in allowed:
+        raise ValueError(f"unknown account {resolved!r}; expected one of {allowed}")
     return root / resolved
 
 
