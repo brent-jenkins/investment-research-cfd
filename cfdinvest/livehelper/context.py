@@ -157,10 +157,11 @@ class RegimeProfile:
 
 @dataclass(frozen=True, slots=True)
 class BiasProfile:
-    """**A contract for a layer that does not exist yet.**
+    """What the behavioural layer found, if it has run.
 
-    The bias-detection layer is queued behind this one. Everything here is
-    optional and ``available`` is ``False`` until something fills it in.
+    Filled by :mod:`cfdinvest.bias`. Everything is optional and ``available``
+    is ``False`` until something fills it in -- which is the state on a fresh
+    install and the state whenever the record is too short to say anything.
 
     Severities are fractions in ``[0, 1]``: ``0`` means no evidence, ``1``
     means the pattern is unmistakable. A ``None`` means *not measured*, which
@@ -170,6 +171,7 @@ class BiasProfile:
     overconfidence: float | None = None
     revenge_trading: float | None = None
     fear_driven_underexposure: float | None = None
+    risk_avoidance: float | None = None
     loss_aversion: float | None = None
     premature_exits: float | None = None
     late_exits: float | None = None
@@ -192,8 +194,8 @@ class BiasProfile:
             name
             for name in (
                 "overconfidence", "revenge_trading", "fear_driven_underexposure",
-                "loss_aversion", "premature_exits", "late_exits",
-                "leverage_creep", "margin_blindness",
+                "risk_avoidance", "loss_aversion", "premature_exits",
+                "late_exits", "leverage_creep", "margin_blindness",
             )
             if _finite(getattr(self, name))
         )
