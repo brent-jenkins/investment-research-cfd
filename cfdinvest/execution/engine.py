@@ -130,16 +130,37 @@ def _fx_matrix(index, columns, analysis_frame, fx_config) -> np.ndarray:
         if currency == fx_config.account_currency:
             continue
         pair = pairs.get(currency)
-        if pair is None or close_panel.empty or pair not in close_panel.columns:
+        legs = fx_module.rate_legs(pair)
+        missing = [
+            leg for leg, _ in legs
+            if close_panel.empty or leg not in close_panel.columns
+        ]
+        if not legs or missing:
             logger.warning(
                 "fx_rate_source='lake' but no %s series for %s in the lake "
-                "(fx_pair_tickers: %r); using the configured rate %.6g.",
-                currency, ticker, pair, matrix[0, position],
+                "(fx_pair_tickers: %r, missing: %r); using the configured "
+                "rate %.6g.",
+                currency, ticker, pair, missing, matrix[0, position],
             )
             continue
 
-        series = close_panel[pair].reindex(index).ffill()
-        usable = series.to_numpy(dtype="float64", na_value=np.nan)
+        # A rate is the product of its legs, each raised to +1 or -1. Only
+        # EURGBP is quoted the way this account needs it; USD needs the
+        # reciprocal of GBPUSD, and JPY, CAD and CHF need a cross through
+        # it. Building them here rather than ingesting derived series keeps
+        # the lake holding only what a source actually published.
+        combined = None
+        for leg, exponent in legs:
+            values = (
+                close_panel[leg].reindex(index).ffill()
+                .to_numpy(dtype="float64", na_value=np.nan)
+            )
+            with np.errstate(divide="ignore", invalid="ignore"):
+                term = values if exponent > 0 else np.where(
+                    values > 0, 1.0 / values, np.nan
+                )
+            combined = term if combined is None else combined * term
+        usable = combined
         # Where the lake has nothing yet -- before the pair's first print --
         # keep the configured fallback rather than a NaN that would silently
         # blank out every price for that instrument.

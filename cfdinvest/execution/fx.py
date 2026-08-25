@@ -67,6 +67,7 @@ __all__ = [
     "resolve_fx_rates",
     "converting_assets",
     "fee_charging_assets",
+    "rate_legs",
     "split_open_close",
     "apply_fx_conversion_open",
     "apply_fx_conversion_close",
@@ -384,6 +385,58 @@ def converting_assets(columns: pd.Index, config: FXConfig) -> np.ndarray:
             for ticker in columns
         ],
         dtype=bool,
+    )
+
+
+def rate_legs(spec) -> tuple[tuple[str, int], ...]:
+    """Normalise an ``fx_pair_tickers`` value into ``(ticker, exponent)`` legs.
+
+    Pure. Accepts three shapes, in increasing order of awkwardness:
+
+    ``"EURGBP=X"``
+        One series, used as quoted. GBP per EUR against a GBP account.
+    ``("GBPUSD=X", -1)``
+        One series, inverted. GBPUSD is quoted USD per GBP; a GBP account
+        holding a dollar instrument needs its reciprocal.
+    ``[("USDJPY=X", -1), ("GBPUSD=X", -1)]``
+        A cross. Nothing publishes GBP/JPY in this lake, but JPY per USD
+        and USD per GBP together give it.
+
+    The alternative was ingesting derived series, which would put numbers in
+    the lake that no source ever printed. An unusable spec returns no legs,
+    and the caller reports the rate as unavailable rather than assuming
+    parity.
+    """
+    if spec is None:
+        return ()
+    if isinstance(spec, str):
+        return ((spec, 1),) if spec else ()
+
+    legs: list[tuple[str, int]] = []
+    items = [spec] if _is_leg(spec) else list(spec)
+    for item in items:
+        if isinstance(item, str):
+            if item:
+                legs.append((item, 1))
+            continue
+        try:
+            ticker, exponent = item
+        except (TypeError, ValueError):
+            logger.warning("Unusable fx_pair_tickers entry %r; ignoring.", item)
+            return ()
+        if not ticker:
+            return ()
+        legs.append((str(ticker), 1 if int(exponent) >= 0 else -1))
+    return tuple(legs)
+
+
+def _is_leg(spec) -> bool:
+    """Whether ``spec`` is a single ``(ticker, exponent)`` pair."""
+    return (
+        isinstance(spec, tuple)
+        and len(spec) == 2
+        and isinstance(spec[0], str)
+        and isinstance(spec[1], (int, float))
     )
 
 

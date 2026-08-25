@@ -271,6 +271,27 @@ def _app_config(args):
     return load_config(args.config, overrides=overrides)
 
 
+#: How each foreign currency's GBP rate is built from series the lake holds.
+#:
+#: Only EURGBP is quoted the way a sterling account needs it. GBPUSD is USD
+#: per GBP, so a dollar instrument takes its reciprocal; and nothing here
+#: publishes GBP/JPY, GBP/CAD or GBP/CHF at all, so those cross through the
+#: dollar. An exponent of -1 inverts the leg.
+#:
+#: Without this every foreign rate fell back to 1.0 -- a US share priced at
+#: $150 was marked at £150 -- and the engine said so in a warning per
+#: instrument per run that nothing was reading. Sterling went from about
+#: 1.90 to 1.27 against the dollar over the backtest, so "1.0" was not a
+#: small approximation.
+LAKE_FX_PAIRS: dict[str, object] = {
+    "USD": ("GBPUSD=X", -1),
+    "EUR": "EURGBP=X",
+    "JPY": [("USDJPY=X", -1), ("GBPUSD=X", -1)],
+    "CAD": [("USDCAD=X", -1), ("GBPUSD=X", -1)],
+    "CHF": [("USDCHF=X", -1), ("GBPUSD=X", -1)],
+}
+
+
 def _execution_config(tickers):
     """The cost model, built from what the broker actually charges.
 
@@ -322,6 +343,7 @@ def _execution_config(tickers):
             enabled=True,
             account_currency="GBP",
             instrument_currencies=currencies or None,
+            fx_pair_tickers=dict(LAKE_FX_PAIRS),
             fx_fee_applies=fee_flags or None,
             fx_conversion_fee_pct=0.005,
             fx_rate_source="lake",

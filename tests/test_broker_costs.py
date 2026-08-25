@@ -25,6 +25,10 @@ M59  financing accrued only on bars that carry a trade
      -> test_financing_accrues_on_bars_that_carry_no_trade
 M60  attribution ignores the per-bar accrual and sums the trade log
      -> test_per_instrument_attribution_sums_to_the_runs_own_pnl
+M61  GBPUSD used as quoted instead of inverted
+     -> test_the_dollar_rate_is_the_reciprocal_of_the_published_pair
+M62  a cross's legs collapse to a single direct leg
+     -> test_rate_legs_accepts_a_plain_ticker_an_inversion_and_a_cross
 """
 
 from __future__ import annotations
@@ -291,3 +295,59 @@ def test_per_instrument_attribution_sums_to_the_runs_own_pnl():
     # close the comparison against realised plus the unrealised remainder.
     unrealised = float(result.pnl["unrealized"].iloc[-1])
     assert table["net_pnl"].sum() == pytest.approx(actual - unrealised, rel=0.02)
+
+
+# --------------------------------------------------------------------------- #
+# Building a rate the lake does not publish
+# --------------------------------------------------------------------------- #
+def test_rate_legs_accepts_a_plain_ticker_an_inversion_and_a_cross():
+    """The three shapes, and nothing invented from a bad one."""
+    from cfdinvest.execution.fx import rate_legs
+
+    assert rate_legs("EURGBP=X") == (("EURGBP=X", 1),)
+    assert rate_legs(("GBPUSD=X", -1)) == (("GBPUSD=X", -1),)
+    assert rate_legs([("USDJPY=X", -1), ("GBPUSD=X", -1)]) == (
+        ("USDJPY=X", -1), ("GBPUSD=X", -1),
+    )
+    # Nothing usable must produce no legs, so the caller reports the rate
+    # absent instead of falling through to parity.
+    assert rate_legs(None) == ()
+    assert rate_legs("") == ()
+    assert rate_legs([("", 1)]) == ()
+
+
+def test_the_dollar_rate_is_the_reciprocal_of_the_published_pair():
+    """M61: GBPUSD used as quoted rather than inverted.
+
+    GBPUSD prints about 1.27 -- dollars per pound. A sterling account
+    holding a dollar instrument needs about 0.79. Using it the right way up
+    overstates every foreign position by the square of the rate, and it
+    still looks like a plausible number.
+    """
+    from cfdinvest.execution.fx import rate_legs
+    from cfdinvest.schedule.app import LAKE_FX_PAIRS
+
+    legs = rate_legs(LAKE_FX_PAIRS["USD"])
+    assert legs == (("GBPUSD=X", -1),)
+    ticker, exponent = legs[0]
+    assert exponent == -1, "a GBP account needs GBP per USD, not USD per GBP"
+
+    published = 1.27
+    assert 1.0 / published == pytest.approx(0.787, abs=0.01)
+
+
+def test_every_currency_in_the_map_crosses_through_a_pair_the_lake_holds():
+    """A leg naming a series nobody ingests is a silent fallback to 1.0."""
+    from cfdinvest.execution.fx import rate_legs
+    from cfdinvest.schedule.app import LAKE_FX_PAIRS
+
+    # The FX instruments the configured universe actually carries.
+    available = {
+        "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X",
+        "USDCAD=X", "USDCHF=X", "NZDUSD=X", "EURGBP=X",
+    }
+    for currency, spec in LAKE_FX_PAIRS.items():
+        legs = rate_legs(spec)
+        assert legs, f"{currency} has no legs"
+        for ticker, _ in legs:
+            assert ticker in available, f"{currency} needs {ticker}, not in the lake"
