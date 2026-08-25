@@ -54,7 +54,14 @@ book = components.confirmed_book(data)
 prices = components.live_prices(data, list(book) or None)
 watches = actions.positions_to_watch(book, prices=prices)
 
-threshold = st.session_state.get("cfd_confidence", actions.DEFAULT_CONFIDENCE)
+# Held as whole percent, because that is what the slider shows. A slider
+# spanning 0.0-1.0 with a "%.0f%%" format renders the raw fraction rounded,
+# so every value from 0.5 up read "1%" -- the label was meaningless and the
+# number it implied was a hundredth of the real bar.
+percent = int(st.session_state.get(
+    "cfd_confidence_pct", round(actions.DEFAULT_CONFIDENCE * 100)
+))
+threshold = percent / 100.0
 latest_rows, as_of = components.latest_signal_rows(data)
 suggestions, below = actions.suggested_trades(
     latest_rows,
@@ -152,10 +159,9 @@ st.subheader("Trades to consider")
 
 st.slider(
     "Minimum confidence",
-    min_value=0.0, max_value=1.0, step=0.05,
-    key="cfd_confidence",
-    value=threshold,
-    format="%.0f%%",
+    min_value=0, max_value=100, step=5,
+    key="cfd_confidence_pct",
+    format="%d%%",
     help="Confidence is conviction x component agreement x environment "
     "support — three factors multiplied. It is how sure the engine is, "
     "NOT a probability of profit. Most days nothing clears 60%.",

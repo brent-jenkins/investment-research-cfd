@@ -2217,3 +2217,31 @@ def test_the_overview_says_which_clock_each_half_runs_on():
 
     assert "change once a day" in page
     assert "five minutes" in page
+
+
+def test_the_confidence_slider_shows_a_real_percentage():
+    """It read "1%" for every value from 0.5 upward.
+
+    A slider spanning 0.0-1.0 with a "%.0f%%" format renders the raw
+    fraction rounded to no decimals and appends a literal percent sign, so
+    0.6 displayed as "1%" -- a label that was meaningless and implied a bar
+    a hundredth of the real one. It runs on whole percent now.
+    """
+    page = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
+
+    assert 'format="%d%%"' in page
+    assert "min_value=0, max_value=100" in page
+    # The old spelling must not come back.
+    assert 'format="%.0f%%"' not in page
+    assert "min_value=0.0, max_value=1.0" not in page
+    # And the fraction the filter uses is derived from it, not held twice.
+    assert "threshold = percent / 100.0" in page
+
+
+def test_the_default_bar_survives_the_percent_round_trip():
+    """60% must still mean 0.60 after going through the slider's scale."""
+    from cfdinvest.advisor import actions
+
+    percent = round(actions.DEFAULT_CONFIDENCE * 100)
+    assert percent == 60
+    assert percent / 100.0 == pytest.approx(actions.DEFAULT_CONFIDENCE)
