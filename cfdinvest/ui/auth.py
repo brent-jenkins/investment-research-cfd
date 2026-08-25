@@ -299,7 +299,19 @@ def session_secret(config=None) -> bytes:
     secret = secrets.token_bytes(32)
     document["session_secret"] = secret.hex()
     document.setdefault("schema_version", SCHEMA_VERSION)
-    save_credentials(document, config)
+    if not save_credentials(document, config):
+        # Say it plainly. A secret that cannot be persisted is regenerated on
+        # every call, so a token signed at sign-in never verifies afterwards
+        # -- sign-in appears to work and then does not stick, with nothing in
+        # the log to connect the two. This is what a read-only auth directory
+        # looked like from the outside.
+        logger.error(
+            "The session secret could not be persisted to %s. Sign-in will "
+            "not survive a refresh: every call generates a new secret, so a "
+            "session cookie can never be verified. Make that directory "
+            "writable by the dashboard.",
+            credentials_path(config),
+        )
     return secret
 
 

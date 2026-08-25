@@ -35,6 +35,15 @@ ExecStart=/opt/cfdinvest/.venv/bin/streamlit run cfdinvest/ui/app.py \
 Restart=on-failure
 RestartSec=10s
 
+# Memory. Reading a run's artefacts costs far more than the files suggest --
+# analysis.parquet is 30MB on disk and several times that in pandas -- and
+# this box also runs other sites. Unbounded, the dashboard was
+# OOM-killed mid-render and the kernel picked the victim by heuristic.
+# Capped, the only thing that can die under memory pressure is the dashboard,
+# which restarts and costs a reload rather than someone else's service.
+MemoryHigh=700M
+MemoryMax=1G
+
 # The dashboard is read-only over the lake. It needs to write nothing except
 # a scratch directory, so it is given nothing else.
 ProtectSystem=strict
@@ -57,6 +66,13 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 ReadOnlyPaths=/opt/cfdinvest
 ReadOnlyPaths=/var/lib/cfdinvest
 ReadWritePaths=/var/lib/cfdinvest/cache
+
+# The credential store. This is the one artefact the dashboard writes, and
+# it has to be writable or sign-in silently half-works: the session-cookie
+# secret cannot be persisted, so it is regenerated on every call, and a
+# token signed at login never verifies afterwards. The symptom is a login
+# that appears to succeed and then does not stick.
+ReadWritePaths=/var/lib/cfdinvest/auth
 
 StandardOutput=journal
 StandardError=journal

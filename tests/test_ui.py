@@ -1963,3 +1963,45 @@ def test_streamlit_is_pinned_to_the_loopback_in_config():
     config = Path(".streamlit/config.toml").read_text(encoding="utf-8")
 
     assert 'address = "127.0.0.1"' in config
+
+
+def test_a_session_secret_that_cannot_be_saved_says_so(tmp_path, monkeypatch, caplog):
+    """The fault that made sign-in fail quietly on the server.
+
+    The dashboard's unit had the auth directory read-only, so the secret
+    could not be persisted, was regenerated on every call, and every cookie
+    failed to verify. Sign-in appeared to work and then did not stick, with
+    nothing in the log connecting the two.
+    """
+    import logging
+
+    from cfdinvest.ui import auth
+
+    config = auth_config(tmp_path)
+    monkeypatch.setattr(auth, "save_credentials", lambda *a, **k: False)
+
+    with caplog.at_level(logging.ERROR):
+        secret = auth.session_secret(config)
+
+    assert isinstance(secret, bytes) and len(secret) == 32
+    logged = " ".join(record.message for record in caplog.records)
+    assert "session secret could not be persisted" in logged
+    assert "will" in logged and "not survive" in logged
+
+
+def test_the_dashboard_unit_can_write_the_credential_store():
+    """Auth writes; the rest of the dashboard does not.
+
+    The unit is otherwise read-only over the data root, which is right --
+    but the one directory the dashboard must write has to be named, or
+    sign-in half-works.
+    """
+    unit = (
+        Path("deployment/systemd/cfdinvest-dashboard.service")
+        .read_text(encoding="utf-8")
+    )
+
+    assert "ReadWritePaths=/var/lib/cfdinvest/auth" in unit
+    assert "ReadOnlyPaths=/var/lib/cfdinvest" in unit, "the rest stays read-only"
+    # And it must be bounded, or it competes with the neighbours for memory.
+    assert "MemoryMax=" in unit
