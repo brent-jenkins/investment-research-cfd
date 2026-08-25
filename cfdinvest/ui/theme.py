@@ -450,6 +450,39 @@ def stylesheet(mode: str = "dark") -> str:
     font-variant-numeric: tabular-nums;
     text-align: right;
   }}
+
+  /* A metric card whose value names a state rather than measuring one.
+     Streamlit paints every metric value in the accent, so "Failed" and
+     "Succeeded" arrived looking identical -- the one thing a glance at this
+     row is for. Deliberately the same box as [data-testid="stMetric"] so a
+     row can mix the two without a seam. */
+  .cfd-stat {{
+    background-color: var(--cfd-panel);
+    border: 1px solid var(--cfd-border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    height: 100%;
+    min-height: 6.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }}
+  .cfd-stat .k {{
+    color: var(--cfd-subtle);
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-weight: 600;
+  }}
+  .cfd-stat .v {{
+    font-size: 1.6rem;
+    line-height: 1.25;
+    font-weight: 600;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }}
+  .cfd-stat .n {{ color: var(--cfd-subtle); font-size: 0.78rem; }}
 </style>
 """
 

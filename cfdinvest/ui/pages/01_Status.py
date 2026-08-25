@@ -166,11 +166,13 @@ columns[2].metric(
     "Last succeeded",
     components.clock(state.get("last_success")),
 )
-columns[3].metric(
-    "Outcome",
-    explain.outcome(state.get("last_status")) or components.DASH,
-    help="From the run's recorded status; the process exit code is not stored.",
-)
+with columns[3]:
+    components.render_state_card(
+        st,
+        "Outcome",
+        explain.outcome(state.get("last_status")) or components.DASH,
+        note="the run's recorded status",
+    )
 
 extra = st.columns(3)
 extra[0].metric("Time taken", components.duration(state.get("last_duration")))

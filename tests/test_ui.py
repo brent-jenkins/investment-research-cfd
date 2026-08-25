@@ -1600,3 +1600,64 @@ def test_describe_flags_leaves_a_string_alone():
     assert components.describe_flags("already text") == "already text"
     assert components.describe_flags({}) == components.DASH
     assert components.describe_flags(None) == components.DASH
+
+
+# --------------------------------------------------------------------------- #
+# Colour
+# --------------------------------------------------------------------------- #
+def test_a_state_column_is_coloured_and_a_number_is_not():
+    """Reading "ok" down 25 rows to find the "failed" is work a colour does.
+
+    Numbers are deliberately never tinted: the reader would have to guess
+    what threshold the colour was claiming.
+    """
+    frame = pd.DataFrame(
+        {"status": ["ok", "failed", "brand new"], "rows": [1, 2, 3]}
+    )
+
+    html_out = components.style_states(frame, "dark").to_html()
+    painted = re.findall(r"_row(\d)_col(\d)[^{]*\{([^}]*)\}", html_out)
+    cells = {(int(r), int(c)): css for r, c, css in painted}
+
+    assert theme.colour_for("ok", "dark") in cells[(0, 0)]
+    assert theme.colour_for("critical", "dark") in cells[(1, 0)]
+    # An unrecognised state gets no colour rather than an invented one.
+    assert (2, 0) not in cells
+    # And nothing in the numeric column is painted at all.
+    assert not any(col == 1 for _, col in cells)
+
+
+def test_not_checked_is_not_colour_coded_as_fine():
+    """The project's rule about silence, in colour.
+
+    "Not measured" and "measured and fine" are different statements, and
+    only one of them is green.
+    """
+    for word in ("unchecked", "unverified", "not checked"):
+        assert components.state_colour(word, "dark") == theme.colour_for(
+            "warning", "dark"
+        ), word
+        assert components.state_colour(word, "dark") != theme.colour_for(
+            "ok", "dark"
+        ), word
+
+
+def test_a_failed_outcome_does_not_look_like_a_successful_one():
+    """Streamlit paints every metric value the same accent colour."""
+    succeeded = components.state_colour("Succeeded", "dark")
+    failed = components.state_colour("Failed", "dark")
+
+    assert succeeded == theme.colour_for("ok", "dark")
+    assert failed == theme.colour_for("critical", "dark")
+    assert succeeded != failed
+
+
+def test_colouring_never_takes_a_table_down():
+    """Colour is a nicety; the table is not."""
+    class Awkward(pd.DataFrame):
+        @property
+        def style(self):  # noqa: D401
+            raise RuntimeError("no styling here")
+
+    frame = Awkward({"status": ["ok"]})
+    assert components.style_states(frame, "dark") is frame

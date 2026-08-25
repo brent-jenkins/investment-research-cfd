@@ -61,6 +61,9 @@ __all__ = [
     "age",
     "clock",
     "coverage_table",
+    "render_state_card",
+    "state_colour",
+    "style_states",
     "describe_flags",
     "plural",
     "duration",
@@ -446,15 +449,54 @@ def render_section(st, title: str, note: str = "") -> None:
         render_note(st, note)
 
 
+def render_state_card(st, label: str, value: Any, note: str | None = None) -> None:
+    """A metric card whose value is a state word, drawn in that state's colour.
+
+    ``st.metric`` paints every value in the accent, so "Failed" and
+    "Succeeded" reach the reader looking the same -- which is the one
+    distinction a glance along that row exists to make. The box matches
+    Streamlit's metric card exactly, so a row can mix the two.
+
+    An unrecognised value keeps the body colour rather than being given one.
+    """
+    mode = theme.active_mode(st)
+    colour = state_colour(value, mode) or theme.palette_for(mode)["text"]
+    text = DASH if _missing(value) else str(value)
+    footer = (
+        f'<span class="n">{html.escape(str(note))}</span>' if note else ""
+    )
+    st.markdown(
+        f'<div class="cfd-stat"><span class="k">{html.escape(str(label))}</span>'
+        f'<span class="v" style="color:{colour};">{html.escape(text)}</span>'
+        f"{footer}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_kv(st, rows: Mapping[str, Any]) -> None:
     """Compact key/value rows, for facts that do not deserve a metric card.
 
     Seven metric cards in a row is a wall; seven of these is a list you can
     read down. Used where the label matters more than the number's size.
     """
+    mode = theme.active_mode(st)
+
+    def cell(value: Any) -> str:
+        # A state word is worth colouring here for the same reason it is in a
+        # table: "Critical" and "Healthy" should not need reading to be told
+        # apart. Everything else keeps the body colour.
+        text = html.escape(str(value))
+        colour = state_colour(value, mode)
+        if colour is None:
+            return f'<span class="v">{text}</span>'
+        return (
+            f'<span class="v" style="color:{colour};font-weight:600;">'
+            f"{text}</span>"
+        )
+
     body = "".join(
         f'<div class="cfd-kv"><span class="k">{html.escape(str(key))}</span>'
-        f'<span class="v">{html.escape(str(value))}</span></div>'
+        f"{cell(value)}</div>"
         for key, value in rows.items()
     )
     st.markdown(body, unsafe_allow_html=True)
@@ -687,6 +729,76 @@ def for_display(frame: pd.DataFrame) -> pd.DataFrame:
     return shown
 
 
+#: Columns whose values name a state rather than measure something. Matched
+#: on the display label as well as the raw name, because tables are renamed
+#: before they are drawn.
+STATE_COLUMNS: frozenset[str] = frozenset({
+    "status", "severity", "outcome", "direction", "verdict", "result",
+    "state", "level", "health", "action", "breach", "posture",
+})
+
+#: State word -> semantic colour. Anything absent is left in the body colour,
+#: which is the point: inventing a colour for an unrecognised state would be
+#: a claim about it.
+#:
+#: "Unchecked" and "unverified" sit with the warnings rather than with the
+#: passes. That is this project's rule about silence, in colour: not measured
+#: and measured-and-fine are different statements, and only one is green.
+STATE_COLOURS: dict[str, str] = {
+    "ok": "ok", "pass": "ok", "passed": "ok", "healthy": "ok",
+    "succeeded": "ok", "success": "ok", "safe": "ok", "clear": "ok",
+    "complete": "ok", "long": "long",
+    "warning": "warning", "warnings": "warning", "warn": "warning",
+    "borderline": "warning",
+    "unchecked": "warning", "unverified": "warning", "stale": "warning",
+    "not checked": "warning", "degraded": "warning", "partial": "warning",
+    "short": "short",
+    "critical": "critical", "failed": "critical", "fail": "critical",
+    "error": "critical", "breach": "critical", "breached": "critical",
+    "unsafe": "critical", "blocked": "critical", "rejected": "critical",
+    "flat": "flat", "info": "muted", "none": "muted", "skipped": "muted",
+}
+
+
+def state_colour(value: Any, mode: str = "dark") -> str | None:
+    """The colour a state word should be drawn in, or ``None`` to leave it."""
+    key = STATE_COLOURS.get(str(value).strip().lower())
+    return None if key is None else theme.colour_for(key, mode)
+
+
+def _is_state_column(name: Any) -> bool:
+    return str(name).strip().lower().replace(" ", "_") in STATE_COLUMNS
+
+
+def style_states(frame: pd.DataFrame, mode: str = "dark"):
+    """Colour the state words in a frame so a column can be scanned.
+
+    Reading "ok" down twenty-five rows to find the one that says "failed" is
+    work a colour does for free. Only recognised words are coloured, and only
+    in columns that name a state -- a number is never tinted, because the
+    reader would have to guess what the threshold was.
+
+    Returns a Styler, or the frame unchanged when there is nothing to colour
+    or pandas will not style it. Never raises: a table must still draw.
+    """
+    if frame is None or getattr(frame, "empty", True):
+        return frame
+    columns = [c for c in frame.columns if _is_state_column(c)]
+    if not columns:
+        return frame
+
+    def paint(value: Any) -> str:
+        colour = state_colour(value, mode)
+        return "" if colour is None else f"color: {colour}; font-weight: 600;"
+
+    try:
+        styler = frame.style
+        painter = getattr(styler, "map", None) or styler.applymap
+        return painter(paint, subset=columns)
+    except Exception:  # noqa: BLE001 - colour is a nicety, the table is not
+        return frame
+
+
 def render_frame(
     st,
     frame: pd.DataFrame,
@@ -712,7 +824,7 @@ def render_frame(
         options["column_config"] = column_config_for(st, shown)
     except Exception:  # noqa: BLE001 - formatting must never stop the table
         pass
-    st.dataframe(shown, **options)
+    st.dataframe(style_states(shown, theme.active_mode(st)), **options)
 
 
 # --------------------------------------------------------------------------- #
