@@ -521,3 +521,67 @@ def test_the_daemons_job_names_all_map_to_something_runnable():
     body = inspect.getsource(app_module._command_daemon)
     for job in daemon_module.JOBS:
         assert f'"{job}"' in body, f"the daemon schedules {job} but cannot run it"
+
+
+# --------------------------------------------------------------------------- #
+# Persisting the analysis frame
+# --------------------------------------------------------------------------- #
+def test_a_correlation_panel_is_labelled_without_a_string_per_row():
+    """The bug that OOM-killed a deployment four times over.
+
+    A correlation panel is (timestamp, ticker) x ticker, so it stacks to
+    bars x n x n rows -- quadratic in the universe, which is why it survived
+    25 instruments and died at 43. The series column was built with a
+    row-wise `agg("|".join, axis=1)`, allocating a Python string per row: 4.17
+    million of them, three gigabytes and climbing, to write a file of 512K.
+
+    The labels come from the index's own levels, so there are only n x n of
+    them however many bars there are. Storing codes into that small set is
+    the fix, and this asserts the *property* -- distinct labels bounded by
+    the levels, not the rows -- rather than the dtype.
+    """
+    import numpy as np
+    from cfdinvest.persist.writers import _to_long
+
+    bars, n = 40, 12
+    index = pd.MultiIndex.from_product(
+        [pd.date_range("2024-01-01", periods=bars, freq="B", tz="UTC"),
+         [f"T{i}" for i in range(n)]],
+        names=["timestamp", "ticker"],
+    )
+    panel = pd.DataFrame(
+        np.random.rand(len(index), n), index=index,
+        columns=[f"T{i}" for i in range(n)],
+    )
+
+    long = _to_long({"correlations.matrix": panel}, "value")
+
+    assert len(long) == bars * n * n
+    labels = long["series"]
+    assert labels.nunique() == n * n
+    assert set(labels.iloc[:3]) <= {f"T{a}|T{b}" for a in range(n) for b in range(n)}
+
+    # The labels must not cost one object per row. A categorical holds codes
+    # into the small set; anything row-shaped here is the old bug returning.
+    stored = getattr(labels, "dtype", None)
+    assert str(stored) == "category", (
+        "the series column should be dictionary-encoded, not one string per row"
+    )
+    assert len(labels.cat.categories) == n * n
+
+
+def test_a_price_panel_still_labels_by_ticker():
+    """The two-level case must keep working, unjoined."""
+    import numpy as np
+    from cfdinvest.persist.writers import _to_long
+
+    days = pd.date_range("2024-01-01", periods=10, freq="B", tz="UTC")
+    panel = pd.DataFrame(
+        np.random.rand(len(days), 3), index=days, columns=["SPY", "GLD", "TLT"]
+    )
+
+    long = _to_long({"prices.close": panel}, "value")
+
+    assert set(long["series"].astype(str)) == {"SPY", "GLD", "TLT"}
+    assert "|" not in "".join(long["series"].astype(str).unique())
+    assert long["panel"].unique().tolist() == ["prices.close"]

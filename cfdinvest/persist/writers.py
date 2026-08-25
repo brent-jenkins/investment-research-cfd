@@ -145,6 +145,71 @@ def write_document(payload: Any, run_dir: Path, artefact: str) -> str | None:
 # --------------------------------------------------------------------------- #
 # Frames
 # --------------------------------------------------------------------------- #
+#: Above this many distinct labels, build the column by string concatenation
+#: instead of as a categorical. The categorical route enumerates the product
+#: of the index levels, which is only worth doing while that product is small
+#: relative to the rows it labels -- and it always is for the panels here.
+MAX_ENUMERATED_LABELS = 100_000
+
+
+def _series_labels(index: pd.MultiIndex, levels: int):
+    """The ``series`` column for a stacked panel: ``SPY``, or ``SPY|GLD``.
+
+    Returns a Categorical wherever it can, and that is the whole point.
+
+    A correlation panel is ``(timestamp, ticker) x ticker``, so it stacks to
+    bars x n x n rows -- 43 instruments over eight years is 4.17 million.
+    This column used to be built with ``flat[keys].astype(str).agg("|".join,
+    axis=1)``: a row-wise Python loop allocating a string per row. A
+    deployment was OOM-killed by it four times, at three gigabytes and
+    climbing, to write a file of 512K.
+
+    The labels are drawn from the index's own levels, so a correlation panel
+    has at most n x n = 1,849 distinct values however many bars it spans.
+    Encoding 4.17 million rows as codes into 1,849 categories costs a few
+    megabytes rather than a gigabyte, and Parquet stores it dictionary-
+    encoded, which is what it was going to do with the strings anyway.
+
+    (Note this is a categorical *column*, not a categorical column *index* --
+    the latter does not survive a Parquet round trip. See ``storage``.)
+    """
+    key_levels = list(range(1, levels))
+    if not key_levels:
+        return ""
+
+    sizes = [len(index.levels[i]) for i in key_levels]
+    total = 1
+    for size in sizes:
+        total *= max(size, 1)
+
+    if total and total <= MAX_ENUMERATED_LABELS:
+        # Fold the per-level codes into one code in the product space, then
+        # name only the products. Rows never hold a string.
+        code = np.zeros(len(index), dtype=np.int64)
+        missing = np.zeros(len(index), dtype=bool)
+        for position, level in enumerate(key_levels):
+            codes = np.asarray(index.codes[level], dtype=np.int64)
+            missing |= codes < 0
+            code = code * sizes[position] + np.maximum(codes, 0)
+
+        values = [index.levels[level].astype(str) for level in key_levels]
+        categories = values[0]
+        for nxt in values[1:]:
+            categories = [f"{a}|{b}" for a in categories for b in nxt]
+        categories = list(categories)
+
+        code = np.where(missing, -1, code)
+        return pd.Categorical.from_codes(code, categories=categories)
+
+    # Fallback for a panel with more distinct labels than rows to save on.
+    # Vectorised regardless: the row-wise join is never the right answer.
+    parts = [index.get_level_values(level).astype(str) for level in key_levels]
+    joined = pd.Series(parts[0])
+    if len(parts) > 1:
+        joined = joined.str.cat([pd.Series(part) for part in parts[1:]], sep="|")
+    return joined.to_numpy()
+
+
 def _to_long(panels: dict[str, pd.DataFrame], value_name: str) -> pd.DataFrame:
     """Stack a dictionary of panels into one long frame.
 
@@ -178,11 +243,7 @@ def _to_long(panels: dict[str, pd.DataFrame], value_name: str) -> pd.DataFrame:
 
         keys = names[1:]
         if keys:
-            flat["series"] = (
-                flat[keys].astype(str).agg("|".join, axis=1)
-                if len(keys) > 1
-                else flat[keys[0]].astype(str)
-            )
+            flat["series"] = _series_labels(stacked.index, levels)
             flat = flat.drop(columns=keys)
         else:
             flat["series"] = ""

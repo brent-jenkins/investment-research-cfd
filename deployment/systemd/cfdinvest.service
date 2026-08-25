@@ -34,6 +34,21 @@ ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule daemon
 
 Restart=always
 RestartSec=5
+
+# Memory. The pipeline's peak scales with the universe -- 43 instruments over
+# eight years of daily bars spikes hard enough to exhaust a 4GB box, and the
+# first deployment was OOM-killed mid-run four times.
+#
+# The ceiling exists to protect the *neighbours*. This box also runs the
+# example sites, and an unbounded pipeline spike would have the kernel
+# choosing a victim by heuristic rather than by intent. Capped, the only
+# thing that can die under memory pressure here is this service, which is
+# restartable and whose failure the monitoring snapshot reports.
+#
+# MemoryHigh throttles and pushes pages to swap first; MemoryMax is the hard
+# stop. Both sit well below total RAM on purpose.
+MemoryHigh=1800M
+MemoryMax=2400M
 # A crash loop against a vendor endpoint is worse than a stopped daemon:
 # it looks like it is working. Five failures in five minutes stops it, and
 # the monitoring snapshot then reports stale quotes and a stale lake.
