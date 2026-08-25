@@ -299,6 +299,42 @@ with st.form("confirmation"):
     notes = st.text_input("Notes", value="", placeholder="optional")
     submitted = st.form_submit_button("Record this", type="primary")
 
+# The live quote, as the reference the fill is measured against. Read here
+# rather than typed: it is already being polled every five minutes, and a
+# reference you had to type would be one you copied from the same screen you
+# just read the fill from.
+reference, reference_age = None, None
+if ticker and ticker != "—":
+    try:
+        found = components.live_prices({"config": config}, [ticker]).get(ticker)
+        if found:
+            reference = found[0]
+            note = found[1] or ""
+            import re as _re
+
+            match = _re.search(r"(\d+)\s+minutes", note)
+            reference_age = float(match.group(1)) if match else None
+    except Exception:  # noqa: BLE001 - a missing reference is not a failure
+        reference = None
+
+if reference is not None and quantity and price:
+    crossed = ticket_module.crossing_cost(
+        price, reference, quantity, direction=direction,
+        fx_rate=(fx_rate or None) if currency != "GBP" else None,
+    )
+    if crossed is not None:
+        age = (
+            f"{reference_age:.0f} minutes old" if reference_age is not None
+            else "age unknown"
+        )
+        st.caption(
+            f"Filled **{components.money(abs(crossed))}** "
+            + ("worse than" if crossed > 0 else "better than")
+            + f" the last quote of {components.price(reference)} ({age}). "
+            "That is what crossing the spread cost — it is already inside "
+            "your fill price, so it is not deducted again."
+        )
+
 # The ticket as it will read, worked out from what is typed above.
 if quantity and price:
     worked = ticket_module.build_ticket(
@@ -345,6 +381,8 @@ if submitted:
                 fx_rate=fx_rate or None,
                 leverage=leverage or None,
                 financing_rate=financing_rate or None,
+                reference_price=reference,
+                reference_age_minutes=reference_age,
             )
             path = write_confirmation(confirmation, config)
         except (ValueError, OSError) as error:

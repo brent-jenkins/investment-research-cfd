@@ -49,6 +49,7 @@ __all__ = [
     "RoundTrip",
     "build_ticket",
     "close_out",
+    "crossing_cost",
 ]
 
 #: Trading 212 charges financing on calendar days, not trading days -- a
@@ -211,6 +212,39 @@ def build_ticket(
         fx_fee_applies=fx_fee_applies,
         missing=tuple(missing),
     )
+
+
+def crossing_cost(
+    fill_price: Any,
+    reference_price: Any,
+    quantity: Any,
+    *,
+    direction: str = "long",
+    fx_rate: Any = None,
+) -> float | None:
+    """What crossing the spread cost, measured against the live quote.
+
+    ``None`` when either price is missing -- an unmeasured cost is not a
+    zero one.
+
+    **Diagnostic, never deducted.** The spread is already inside the fill
+    price: a P&L computed from what you actually paid has paid it once
+    already, and subtracting this too would count it twice. What it is good
+    for is noticing that you are consistently filling further from the quote
+    on one instrument than another.
+
+    Signed by disadvantage, not by direction: buying above the reference and
+    selling below it both cost you, and both come back positive.
+    """
+    fill = _finite(fill_price)
+    reference = _finite(reference_price)
+    units = _finite(quantity)
+    if fill is None or reference is None or units is None:
+        return None
+
+    worse = (fill - reference) if str(direction).lower() != "short" else (reference - fill)
+    rate = _positive(fx_rate) or 1.0
+    return worse * abs(units) * rate
 
 
 def close_out(

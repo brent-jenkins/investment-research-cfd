@@ -151,6 +151,15 @@ class Confirmation:
     #: Whether the 0.5% conversion is charged on this instrument's result.
     #: Recorded, never inferred: currency turned out to predict nothing.
     fx_fee_applies: bool | None = None
+    #: The live quote at the moment of recording, and how old it was.
+    #:
+    #: Kept so the crossing cost -- how far the fill landed from the
+    #: reference -- can be recomputed rather than stored as a figure that
+    #: cannot be checked. It is **diagnostic only**: the spread is already
+    #: inside the fill price, so subtracting it from P&L would count it
+    #: twice.
+    reference_price: float | None = None
+    reference_age_minutes: float | None = None
 
     def __post_init__(self) -> None:
         if not _TICKER.match(str(self.ticker or "")):

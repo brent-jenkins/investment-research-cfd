@@ -1369,3 +1369,53 @@ def test_an_unrecorded_fx_fee_is_unknown_not_guessed_from_the_currency():
     assert "fx_fee_applies" in result.missing
     # The gross is still knowable and still reported.
     assert result.gross_pnl_gbp == pytest.approx(8.5)
+
+
+def test_the_crossing_cost_is_signed_by_disadvantage_not_by_direction():
+    """Buying above the quote and selling below it both cost you."""
+    from cfdinvest.livehelper.ticket import crossing_cost
+
+    bought_high = crossing_cost(101.0, 100.0, 2.0, direction="long")
+    sold_low = crossing_cost(99.0, 100.0, 2.0, direction="short")
+    bought_well = crossing_cost(99.0, 100.0, 2.0, direction="long")
+
+    assert bought_high == pytest.approx(2.0)
+    assert sold_low == pytest.approx(2.0)
+    assert bought_well == pytest.approx(-2.0), "a good fill reads negative"
+
+
+def test_no_reference_means_no_crossing_cost_not_a_free_one():
+    from cfdinvest.livehelper.ticket import crossing_cost
+
+    assert crossing_cost(101.0, None, 2.0) is None
+    assert crossing_cost(None, 100.0, 2.0) is None
+
+
+def test_the_crossing_cost_is_never_deducted_from_the_result():
+    """The spread is already inside the fill price. A P&L computed from what
+    you actually paid has paid it once; subtracting this too counts it
+    twice."""
+    import inspect
+
+    from cfdinvest.confirm import performance
+    from cfdinvest.livehelper import ticket
+
+    # Nothing in the valuation path may reach for it.
+    assert "crossing_cost" not in inspect.getsource(performance)
+    assert "crossing_cost" not in inspect.getsource(ticket.close_out)
+
+
+def test_the_reference_is_recorded_so_the_cost_can_be_rechecked():
+    from cfdinvest.persist.confirm import Confirmation
+
+    recorded = Confirmation.of(
+        "NKE", "open", direction="short", quantity=2.0, price=68.20,
+        reference_price=68.44, reference_age_minutes=3.0,
+    )
+
+    assert recorded.reference_price == pytest.approx(68.44)
+    assert recorded.reference_age_minutes == pytest.approx(3.0)
+    # Absent on a record that predates it, rather than defaulted.
+    without = Confirmation.of("NKE", "open", quantity=1.0, price=68.20)
+    assert without.reference_price is None
+    assert without.reference_age_minutes is None
