@@ -106,6 +106,57 @@ def test_every_unit_is_confined(unit):
     assert "NoNewPrivileges=true" in body
 
 
+@pytest.mark.parametrize("unit", UNITS, ids=lambda p: p.name)
+def test_every_unit_invokes_something_that_exists(unit):
+    """The check that was missing.
+
+    Two units shipped invoking `cfdinvest-schedule`, which pyproject never
+    declared -- so on a real deployment both would have failed with "No such
+    file or directory" and nothing here would have noticed. Unit files are not
+    executed by the test suite, so what they invoke has to be checked against
+    what is actually installed.
+    """
+    import re
+    import tomllib
+
+    declared = set(
+        tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        .get("project", {})
+        .get("scripts", {})
+    )
+
+    for line in text(unit).splitlines():
+        if not line.startswith("ExecStart="):
+            continue
+        command = line[len("ExecStart="):].split()[0]
+        name = Path(command).name
+        # Console scripts a *dependency* installs into the same venv. Listed
+        # rather than pattern-matched, so adding one is a deliberate act.
+        from_dependencies = {"streamlit", "python", "python3"}
+
+        assert name in declared or name in from_dependencies, (
+            f"{unit.name} runs {name!r}, which is neither a declared console "
+            f"script nor a known dependency binary. Declared: "
+            f"{', '.join(sorted(declared))}"
+        )
+
+
+def test_the_readme_only_promises_commands_that_exist():
+    """The deployment instructions are followed by hand, so a command that
+    does not exist is a step that silently fails."""
+    import tomllib
+
+    declared = set(
+        tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+        .get("project", {})
+        .get("scripts", {})
+    )
+    body = text(DEPLOYMENT / "README.md")
+
+    for name in re.findall(r"cfdinvest-[a-z]+", body):
+        assert name in declared, f"the README promises {name!r}, which is not declared"
+
+
 def test_the_dashboard_binds_localhost_only():
     """The load-bearing argument.
 

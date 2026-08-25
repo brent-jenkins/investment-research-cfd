@@ -19,6 +19,7 @@ dependencies = [
 cfdinvest-analytics = "cfdinvest.analytics.cli:main"
 cfdinvest-helper = "cfdinvest.livehelper.cli:main"
 cfdinvest-confirm = "cfdinvest.confirm.cli:main"
+cfdinvest-schedule = "cfdinvest.schedule.app:main"
 
 [project.optional-dependencies]
 # The dashboard is optional: nothing in the pipeline imports it.
