@@ -2069,3 +2069,151 @@ def test_hiding_the_sidebar_also_hides_the_control_that_reopens_it():
     assert '[data-testid="stSidebar"]' in css
     assert "CollapsedControl" in css or "collapsedControl" in css
     assert "display: none" in css
+
+
+# --------------------------------------------------------------------------- #
+# What to do now
+# --------------------------------------------------------------------------- #
+def signal_row(ticker, direction="long", confidence=0.8, size=0.05, reason=""):
+    return {"ticker": ticker, "direction": direction,
+            "confidence": confidence, "size": size, "reason": reason}
+
+
+def test_a_signal_below_the_bar_is_counted_not_shown():
+    """You asked not to see trades that are not worth taking.
+
+    A count is still returned, because "nothing clears the bar" and "the
+    engine produced nothing" are different states and only one of them
+    means something is wrong.
+    """
+    from cfdinvest.ui import actions
+
+    kept, below = actions.suggested_trades(
+        [signal_row("A", confidence=0.9), signal_row("B", confidence=0.2),
+         signal_row("C", confidence=0.59)],
+        balance=10_000, threshold=0.6, prices={"A": 100.0},
+    )
+
+    assert [s.ticker for s in kept] == ["A"]
+    assert below == 2
+
+
+def test_suggestions_come_back_strongest_first():
+    from cfdinvest.ui import actions
+
+    kept, _ = actions.suggested_trades(
+        [signal_row("A", confidence=0.7), signal_row("B", confidence=0.95)],
+        balance=10_000, threshold=0.6,
+    )
+    assert [s.ticker for s in kept] == ["B", "A"]
+
+
+def test_a_flat_signal_is_never_a_suggestion():
+    from cfdinvest.ui import actions
+
+    kept, below = actions.suggested_trades(
+        [signal_row("A", direction="flat", confidence=1.0)],
+        balance=10_000, threshold=0.6,
+    )
+    assert kept == [] and below == 0
+
+
+def test_the_stake_is_a_share_of_the_balance_not_a_unit_count():
+    """The conversion that made a whole simulation a no-op when it was wrong.
+
+    A signal's size is a share of equity. Cash is size x balance, and
+    quantity is cash / price -- never size treated as units.
+    """
+    from cfdinvest.ui import actions
+
+    kept, _ = actions.suggested_trades(
+        [signal_row("A", size=0.05)], balance=10_000, threshold=0.6,
+        prices={"A": 250.0},
+    )
+    suggestion = kept[0]
+
+    assert suggestion.cash == pytest.approx(500.0)
+    assert suggestion.quantity == pytest.approx(2.0)
+    assert suggestion.actionable
+
+
+def test_a_suggestion_without_a_price_is_not_actionable():
+    """No price means no quantity, and a quantity is the actionable part."""
+    from cfdinvest.ui import actions
+
+    kept, _ = actions.suggested_trades(
+        [signal_row("A")], balance=10_000, threshold=0.6, prices={},
+    )
+
+    assert kept[0].quantity is None
+    assert not kept[0].actionable
+
+
+def test_a_position_past_its_stop_sorts_above_a_healthy_one():
+    """Worst first: the page is read top-down when something is wrong."""
+    from cfdinvest.ui import actions
+
+    watches = actions.positions_to_watch(
+        {
+            "CALM": {"quantity": 1.0, "price": 100.0},
+            "GONE": {"quantity": 1.0, "price": 100.0},
+        },
+        prices={"CALM": 101.0, "GONE": 89.0},
+        stops={"CALM": 90.0, "GONE": 90.0},
+    )
+
+    assert [w.ticker for w in watches] == ["GONE", "CALM"]
+    assert watches[0].severity == "critical"
+    assert watches[1].severity == "pass"
+
+
+def test_a_position_near_its_stop_is_a_warning():
+    from cfdinvest.ui import actions
+
+    watches = actions.positions_to_watch(
+        {"NEAR": {"quantity": 1.0, "price": 100.0}},
+        prices={"NEAR": 91.0}, stops={"NEAR": 90.0},
+    )
+
+    assert watches[0].severity == "warning"
+    assert "stop" in watches[0].note.lower()
+
+
+def test_a_position_that_cannot_be_priced_is_not_reported_calm():
+    """Not knowing what something is worth is not the same as it being fine,
+    and this is the page you would read to decide you need do nothing."""
+    from cfdinvest.ui import actions
+
+    watches = actions.positions_to_watch(
+        {"DARK": {"quantity": 1.0, "price": 100.0}}, prices={},
+    )
+
+    assert watches[0].severity == "unchecked"
+    assert watches[0].severity != "pass"
+    assert not watches[0].needs_attention
+
+
+def test_a_closed_position_is_not_watched():
+    from cfdinvest.ui import actions
+
+    assert actions.positions_to_watch({"OUT": {"quantity": 0.0, "price": 1.0}}) == []
+
+
+def test_the_confidence_bar_is_sixty_percent_by_default():
+    """Asked for explicitly, and it is not a probability of profit -- the
+    page has to say so, because the number invites that reading."""
+    from cfdinvest.ui import actions
+
+    assert actions.DEFAULT_CONFIDENCE == 0.60
+
+    page = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
+    assert "NOT a probability of profit" in page
+
+
+def test_the_overview_says_which_clock_each_half_runs_on():
+    """A suggestion list that looks live but refreshes daily is worse than
+    one labelled daily: a stale absence would read as an all-clear."""
+    page = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
+
+    assert "change once a day" in page
+    assert "five minutes" in page

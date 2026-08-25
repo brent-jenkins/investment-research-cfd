@@ -1,4 +1,21 @@
-"""Overview — the account, the system, and what is open."""
+"""What to do now.
+
+The first page, and the only one that tries to answer a question rather than
+present a subject. Three things, in the order they matter:
+
+1. **Anything wrong** — a system fault means every number below it is
+   suspect, so it goes first.
+2. **Open positions** — what you are already carrying, priced now. This is
+   the live half: the quote poller runs every five minutes, so a position
+   walking towards its stop shows it here today.
+3. **Trades to consider** — the suggestions clearing your confidence bar,
+   with the amount to place.
+
+The two clocks are labelled on the page on purpose. Suggestions come from
+daily bars and change once a day; positions are priced every five minutes.
+A suggestion list that *looks* live but refreshes daily is worse than one
+labelled daily, because an absence would read as an all-clear.
+"""
 
 from __future__ import annotations
 
@@ -12,194 +29,191 @@ if _ROOT not in sys.path:
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from cfdinvest.ui import components, explain  # noqa: E402
+from cfdinvest.livehelper import t212_instruments  # noqa: E402
+from cfdinvest.schema import TIMESTAMP  # noqa: E402
+from cfdinvest.ui import actions, components, explain  # noqa: E402
 
-data = components.page_setup(st, "Overview", icon="📈")
-
+components.render_crumb(st, "Overview")
+data = components.page_setup(
+    st,
+    "What to do now",
+    icon="📈",
+    subtitle="Suggestions come from daily bars and change once a day. Open "
+    "positions are priced every five minutes.",
+)
 now = data["now"]
+mode = data["mode"]
 health = data["health"]
-summary = data["summary"]
-lake = data["lake"]
-scheduler = data["scheduler"].value or {}
-execution = data["execution"]
-metrics = (summary.value or {}).get("metrics") or {}
 balance = float(st.session_state.get(components.BALANCE_KEY, components.DEFAULT_BALANCE))
-factor = components.scale_factor(data, balance)
 
 # --------------------------------------------------------------------------- #
-# The account, scaled to the operator's real balance
+# What is being carried, and what is being offered
 # --------------------------------------------------------------------------- #
-simulated = components.simulated_equity(data)
-final = metrics.get("final_equity")
-scaled_final = None if final is None or simulated is None else float(final) * factor
+book = components.confirmed_book(data)
+prices = components.live_prices(data, list(book) or None)
+watches = actions.positions_to_watch(book, prices=prices)
 
-def or_none(value):
-    """A delta, or nothing at all.
-
-    Streamlit renders a delta of "—" as an arrow pointing at an em dash,
-    which reads as a change of unknown size rather than as no change.
-    """
-    return None if value in (None, components.DASH) else value
-
-
-gain = (
-    None
-    if final is None or simulated is None
-    else (float(final) - simulated) * factor
+threshold = st.session_state.get("cfd_confidence", actions.DEFAULT_CONFIDENCE)
+latest_rows, as_of = components.latest_signal_rows(data)
+suggestions, below = actions.suggested_trades(
+    latest_rows,
+    balance=balance,
+    threshold=threshold,
+    prices=components.live_prices(data, [r.get("ticker") for r in latest_rows]),
+    mapping=t212_instruments.mapping_for,
 )
 
-cells = st.columns(4)
-cells[0].metric(
-    "Account value",
-    components.money(scaled_final if scaled_final is not None else balance),
-    delta=or_none(components.percent(metrics.get("total_return"))),
-    help="Your balance grown by the simulated return, not a broker balance.",
-)
-cells[1].metric(
-    "Simulated return",
-    components.percent(metrics.get("total_return")),
-    delta=or_none(components.money(gain)),
-    help="What the strategy returned over the backtested period.",
-)
-cells[2].metric(
-    "Maximum drawdown",
-    components.percent(metrics.get("max_drawdown_fraction")),
-    help="The deepest peak-to-trough fall on the simulated equity curve.",
-)
-cells[3].metric(
-    "Total costs",
-    components.money(
-        sum(
-            float(metrics.get(key) or 0.0)
-            for key in ("total_spread", "total_slippage", "total_financing", "total_fx")
+attention = [watch for watch in watches if watch.needs_attention]
+failing = list(health.triggered)
+
+components.render_tiles(st, [
+    ("Needs attention", len(attention),
+     "open positions" if attention else "nothing to deal with",
+     "critical" if attention else "pass"),
+    ("Trades to consider", len(suggestions),
+     f"at {threshold:.0%} confidence or better",
+     "pass" if suggestions else "muted"),
+    ("Open positions", len(watches),
+     "confirmed by you" if watches else "none confirmed",
+     "pass"),
+    ("System", "Problem" if failing else "Healthy",
+     f"{len(failing)} check(s) failing" if failing else "all checks passing",
+     "critical" if health.show_banner else "warning" if failing else "pass"),
+])
+
+# --------------------------------------------------------------------------- #
+# 1. Anything wrong
+# --------------------------------------------------------------------------- #
+if failing:
+    st.divider()
+    st.subheader("Before you act")
+    st.caption(
+        "A system fault makes every number below it suspect. Deal with this "
+        "first, or treat the rest as unverified."
+    )
+    for check in failing:
+        st.markdown(
+            f"**{check.title}** — {check.detail}  \n"
+            + (f"*What to do:* {check.remedy}" if check.remedy else "")
         )
-        * factor
-    ),
-    help="Spread, slippage, overnight financing and currency conversion.",
-    delta_color="off",
-)
 
+# --------------------------------------------------------------------------- #
+# 2. Open positions, priced now
+# --------------------------------------------------------------------------- #
 st.divider()
+st.subheader("Your open positions")
 
-# --------------------------------------------------------------------------- #
-# System, last run, and the open book — three columns, no scrolling
-# --------------------------------------------------------------------------- #
-left, middle, right = st.columns(3)
-
-with left:
-    st.subheader("System")
-    components.render_kv(
-        st,
-        {
-            "Health": (
-                "Critical"
-                if health.show_banner
-                else ("Warnings" if health.triggered else "Healthy")
-            ),
-            "Checks passing": f"{len(health.checks) - len(health.triggered)}"
-            f" of {len(health.checks)}",
-            # The same facts the Status page's Lake block shows, under the
-            # same labels -- one number under two names is a papercut. The
-            # old label here also claimed these were all instruments, but
-            # series_count is market *plus* macro, so a lake holding 25
-            # instruments and 12 macro series was reported as 37 of them.
-            "Newest bar": components.day(
-                (lake.value or {}).get("last_updated")
-            ),
-            "Instruments": (lake.value or {}).get("market_series", 0),
-            "Macro series": (lake.value or {}).get("macro_series", 0),
-            "Data quality flags": (lake.value or {}).get("anomalies_count", 0),
-        },
-    )
-
-with middle:
-    st.subheader("Last pipeline run")
-    if not components.render_absent(st, summary, "The run summary"):
-        record = summary.value
-        components.render_kv(
-            st,
-            {
-                "Outcome": explain.outcome(record.get("status")),
-                "Started": components.short_moment(
-                    record.get("started_at") or record.get("run_id")
-                ),
-                "Finished": components.short_moment(record.get("finished_at")),
-                "Took": components.duration(record.get("duration_seconds")),
-                "Bars processed": f"{record.get('bars', 0):,}",
-            },
-        )
-        st.caption(f"Run identifier `{record.get('run_id', '?')}`")
-        if record.get("error"):
-            st.error(record["error"])
-
-with right:
-    st.subheader("Next scheduled run")
-    components.render_kv(
-        st,
-        {
-            "Due": components.short_moment(scheduler.get("next_run")),
-            "Trigger": " ".join(
-                part
-                for part in (
-                    str(scheduler.get("next_run_kind") or "").capitalize(),
-                    "of" if scheduler.get("next_run_asset") else "",
-                    str(scheduler.get("next_run_asset") or ""),
-                )
-                if part
-            )
-            or components.DASH,
-            "Runs on record": scheduler.get("run_count", 0),
-            "Last outcome": explain.outcome(scheduler.get("last_status"))
-            or components.DASH,
-        },
-    )
+if not watches:
     components.render_note(
         st,
-        "Derived from the run directory — the scheduler keeps no heartbeat, "
-        "so this is when a run last finished, not whether one is running.",
+        "Nothing is confirmed open. Record a trade on **Confirm Trades** "
+        "after you place it and it will be watched here — priced every five "
+        "minutes, with a warning as it approaches its stop.",
+    )
+else:
+    quoted = [w for w in watches if w.price_source.startswith("live quote")]
+    st.caption(
+        f"{len(quoted)} of {len(watches)} priced from a live quote; the rest "
+        "from the most recent daily close."
+    )
+    for watch in watches:
+        with st.container(border=True):
+            left, middle, right = st.columns([1.4, 1, 1.2])
+            with left:
+                name = t212_instruments.mapping_for(watch.ticker)
+                st.markdown(
+                    f"#### {watch.ticker} &nbsp; "
+                    f"{components.direction_badge('long' if watch.quantity > 0 else 'short', mode)}",
+                    unsafe_allow_html=True,
+                )
+                if name.tradable:
+                    st.caption(f"Trading 212: {name.name}")
+                if watch.note:
+                    st.caption(watch.note)
+            with middle:
+                components.render_kv(st, {
+                    "Quantity": components.number(watch.quantity, 4),
+                    "Entry": components.price(watch.entry),
+                    "Now": components.price(watch.price),
+                })
+            with right:
+                components.render_kv(st, {
+                    "Unrealised": components.money(watch.pnl),
+                    "Move": components.percent(watch.pnl_fraction),
+                    "Priced from": watch.price_source or components.DASH,
+                })
+
+# --------------------------------------------------------------------------- #
+# 3. Trades to consider
+# --------------------------------------------------------------------------- #
+st.divider()
+st.subheader("Trades to consider")
+
+st.slider(
+    "Minimum confidence",
+    min_value=0.0, max_value=1.0, step=0.05,
+    key="cfd_confidence",
+    value=threshold,
+    format="%.0f%%",
+    help="Confidence is conviction x component agreement x environment "
+    "support — three factors multiplied. It is how sure the engine is, "
+    "NOT a probability of profit. Most days nothing clears 60%.",
+)
+st.caption(
+    f"Signals as of **{components.moment(as_of)}**, from daily bars. These "
+    "change once a day, after the 03:05 UTC run — not intraday."
+)
+
+if not suggestions:
+    components.render_note(
+        st,
+        f"**Nothing clears {threshold:.0%} today.**"
+        + (f" {below} signal(s) were below your bar and are not shown."
+           if below else "")
+        + " That is the system being unconvinced, not broken — most days a "
+        "trend follower should do nothing.",
+    )
+else:
+    if below:
+        st.caption(f"{below} further signal(s) fell below your bar and are hidden.")
+    for suggestion in suggestions:
+        with st.container(border=True):
+            left, middle, right = st.columns([1.4, 1, 1.2])
+            with left:
+                st.markdown(
+                    f"#### {suggestion.ticker} &nbsp; "
+                    f"{components.direction_badge(suggestion.direction, mode)}",
+                    unsafe_allow_html=True,
+                )
+                if suggestion.tradable:
+                    st.caption(f"**Trading 212:** {suggestion.t212_name}")
+                else:
+                    st.caption(":orange[Not tradable on Trading 212.]")
+                st.caption(explain.reason(suggestion.reason))
+            with middle:
+                components.render_kv(st, {
+                    "Confidence": components.percent(suggestion.confidence, 0),
+                    "Of your balance": components.percent(suggestion.size_fraction),
+                    "Price": components.price(suggestion.price),
+                })
+            with right:
+                components.render_kv(st, {
+                    "Stake": components.money(suggestion.cash),
+                    "Quantity": components.number(suggestion.quantity, 4),
+                    "Priced from": suggestion.price_source or components.DASH,
+                })
+
+    components.render_note(
+        st,
+        "These are **sizes, not permissions**. Run the trade through the "
+        "**Live-Execution Helper** before placing it: that is what checks it "
+        "against your risk limits, margin and the broker rules, and it is the "
+        "only thing here that can say no.",
     )
 
+# --------------------------------------------------------------------------- #
+# Market regime
+# --------------------------------------------------------------------------- #
 st.divider()
-
-# --------------------------------------------------------------------------- #
-# The open book, with sizes scaled to the real account
-# --------------------------------------------------------------------------- #
-st.subheader("Open positions")
-
-positions = (execution.value or {}).get("positions")
-trades = (execution.value or {}).get("trades")
-
-if not components.render_absent(st, execution, "Execution output"):
-    if isinstance(positions, pd.DataFrame) and not positions.empty:
-        latest = positions.iloc[-1]
-        held = latest[latest != 0]
-
-        if held.empty:
-            components.render_note(st, "The book is flat — nothing is open.")
-        else:
-            marks = pd.Series(dtype="float64")
-            if isinstance(trades, pd.DataFrame) and "price" in trades.columns:
-                marks = trades.sort_values("timestamp").groupby("asset")["price"].last()
-
-            book = pd.DataFrame(
-                {
-                    "direction": ["Long" if units > 0 else "Short" for units in held],
-                    "simulated_units": held.to_numpy(),
-                    "scaled_units": held.to_numpy() * factor,
-                    "last_price": [marks.get(name, float("nan")) for name in held.index],
-                },
-                index=held.index,
-            )
-            book["scaled_notional"] = (
-                book["scaled_units"].abs() * book["last_price"]
-            )
-            book.index.name = "asset"
-            components.render_frame(st, book)
-            components.render_note(
-                st,
-                f"Sizes scaled to an account of {components.money(balance)} "
-                f"(×{factor:,.4g}). Set the balance in the sidebar. "
-                "These are recommendations — every order is placed by hand.",
-            )
-    else:
-        components.render_note(st, "The last run held no positions.")
+st.subheader("Market regime")
+components.render_regime_summary(st, data)

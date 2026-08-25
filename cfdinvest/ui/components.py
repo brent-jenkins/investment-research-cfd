@@ -65,6 +65,11 @@ __all__ = [
     "render_state_card",
     "render_tiles",
     "render_crumb",
+    "price",
+    "confirmed_book",
+    "live_prices",
+    "latest_signal_rows",
+    "render_regime_summary",
     "confirmed_open_count",
     "require_login",
     "hide_sidebar",
@@ -631,6 +636,131 @@ def render_section(st, title: str, note: str = "") -> None:
     st.subheader(title)
     if note:
         render_note(st, note)
+
+
+def price(value: Any, places: int = 4) -> str:
+    """A price. More decimals than money, because FX moves in the fourth."""
+    return number(value, places)
+
+
+def confirmed_book(data: Mapping[str, Any] | None = None) -> dict:
+    """Everything you have confirmed open, keyed by instrument. Never raises.
+
+    The confirm layer is the only record of what you actually hold. The
+    simulated book is a different thing and is not substituted here: the two
+    differ exactly when it matters, and this page is about real money.
+    """
+    try:
+        from cfdinvest.persist.confirm import confirmed_positions, load_confirmations
+
+        config = (data or {}).get("config")
+        account = (data or {}).get("account")
+        book = confirmed_positions(load_confirmations(config, account=account))
+        return {
+            name: entry for name, entry in (book or {}).items()
+            if (entry or {}).get("quantity")
+        }
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not read the confirmed book: %s", error)
+        return {}
+
+
+def live_prices(
+    data: Mapping[str, Any] | None = None, tickers=None
+) -> dict[str, tuple[float | None, str]]:
+    """``{ticker: (price, where it came from)}``. Never raises.
+
+    A live quote when one is fresh, the most recent close otherwise, and the
+    source said out loud either way -- a page that shows a number without
+    saying how old it is invites you to trade on a stale one.
+    """
+    from cfdinvest.livehelper.price_source import resolve_price
+
+    config = (data or {}).get("config")
+    account = (data or {}).get("account")
+    wanted = [str(t) for t in (tickers or []) if t]
+    resolved: dict[str, tuple[float | None, str]] = {}
+    for ticker in dict.fromkeys(wanted):
+        try:
+            found = resolve_price(ticker, app_config=config, account=account)
+            resolved[ticker] = (found.price, found.note)
+        except Exception as error:  # noqa: BLE001 - one instrument, not the page
+            logger.warning("Could not price %s: %s", ticker, error)
+            resolved[ticker] = (None, "price unavailable")
+    return resolved
+
+
+def latest_signal_rows(data: Mapping[str, Any] | None = None):
+    """The most recent bar's signals as plain dicts, and its timestamp.
+
+    Returns ``([], None)`` when there are none, which is the ordinary state
+    rather than a failure -- only active signals are stored, so an empty
+    frame means nothing is wanted, not that something is missing.
+    """
+    from cfdinvest.schema import TIMESTAMP, TICKER
+
+    source = (data or {}).get("signals")
+    frame = getattr(source, "value", None)
+    if frame is None or getattr(frame, "empty", True):
+        return [], None
+
+    working = frame.copy()
+    if isinstance(working.index, pd.MultiIndex):
+        working = working.reset_index()
+
+    as_of = None
+    if TIMESTAMP in working.columns:
+        working[TIMESTAMP] = pd.to_datetime(
+            working[TIMESTAMP], utc=True, errors="coerce"
+        )
+        as_of = working[TIMESTAMP].max()
+        working = working[working[TIMESTAMP] == as_of]
+
+    if TICKER in working.columns:
+        working = working.rename(columns={TICKER: "ticker"})
+    return working.to_dict("records"), as_of
+
+
+def render_regime_summary(st, data: Mapping[str, Any] | None = None) -> None:
+    """The current regime as a row of tiles, or a note saying there is none."""
+    persisted = (data or {}).get("persisted")
+    regimes = (getattr(persisted, "value", None) or {}).get("regimes")
+    if regimes is None or getattr(regimes, "empty", True):
+        render_note(
+            st,
+            "No regime classification in the latest run. The signal reasons "
+            "still name the regime that produced each one.",
+        )
+        return
+
+    frame = regimes.copy()
+    if isinstance(frame.index, pd.MultiIndex):
+        frame = frame.reset_index()
+    if "timestamp" in frame.columns:
+        frame["timestamp"] = pd.to_datetime(
+            frame["timestamp"], utc=True, errors="coerce"
+        )
+        frame = frame[frame["timestamp"] == frame["timestamp"].max()]
+    if frame.empty:
+        render_note(st, "No regime classification on the latest bar.")
+        return
+
+    from cfdinvest.ui import explain
+
+    row = frame.iloc[-1].to_dict()
+    labels = [
+        ("Volatility", "volatility_regime"), ("Trend", "trend_regime"),
+        ("Correlation", "correlation_regime"), ("Macro", "macro_regime"),
+        ("Overall", "combined_regime"),
+    ]
+    tiles = [
+        (label, explain.phrase(str(row.get(key, "")), {}).capitalize() or DASH,
+         "", "muted")
+        for label, key in labels if key in row
+    ]
+    if tiles:
+        render_tiles(st, tiles)
+    st.caption(f"As at {short_moment(row.get('timestamp'))}")
 
 
 def confirmed_open_count(data: Mapping[str, Any] | None = None) -> int:
