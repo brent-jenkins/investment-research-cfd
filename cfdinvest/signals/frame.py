@@ -80,6 +80,13 @@ class SignalConfig:
     #: score. ``True`` is the recorded behaviour; ``False`` keeps confidence
     #: a statement about the signal and leaves the environment to sizing.
     environment_in_confidence: bool = True
+    #: ``"gate"`` (default, and what every recorded run used) permits a
+    #: direction or forbids it. ``"tilt"`` scales size by how favourable the
+    #: regime is instead, keeping the engine's own ranking rather than
+    #: discarding it at a boundary.
+    regime_mode: str = "gate"
+    long_tilts: dict[str, float] | None = None
+    short_tilts: dict[str, float] | None = None
     long_regimes_by_class: dict[str, frozenset[str]] | None = None
     #: Ticker -> class map for the above. ``None`` uses the module default.
     asset_classes: dict[str, str] | None = None
@@ -448,6 +455,9 @@ def _build_filters(analysis_frame, regime_frame, settings, index, columns):
         short_macro_regimes=settings.short_macro_regimes,
         high_volatility_multiplier=settings.high_volatility_multiplier,
         allow_when_unknown=settings.trade_when_regime_unknown,
+        mode=settings.regime_mode,
+        long_tilts=settings.long_tilts,
+        short_tilts=settings.short_tilts,
     )
 
     diversification = None

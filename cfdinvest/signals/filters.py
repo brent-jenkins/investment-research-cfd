@@ -38,6 +38,8 @@ __all__ = [
     "REASON_FLAGS",
     "DEFAULT_LONG_REGIMES",
     "DEFAULT_SHORT_REGIMES",
+    "LONG_REGIME_TILTS",
+    "SHORT_REGIME_TILTS",
     "FilterOutcome",
     "broadcast",
     "classify_assets",
@@ -74,6 +76,32 @@ DEFAULT_LONG_REGIMES: frozenset[str] = frozenset({"risk_on", "expansion"})
 
 #: Combined regimes in which new shorts are permitted.
 DEFAULT_SHORT_REGIMES: frozenset[str] = frozenset({"crisis"})
+
+#: Size tilts per regime, for :func:`regime_filter` in ``"tilt"`` mode.
+#:
+#: A gate answers "may I?"; a tilt answers "how much?". The difference
+#: matters because the gate throws away the engine's own ranking: a strong
+#: trend in a middling regime and a weak one in the same regime are both
+#: refused outright, and a marginal trend in a favourable regime gets full
+#: size. Tilting keeps the ordering and scales it.
+#:
+#: The numbers are monotone in how favourable the regime is for the
+#: direction, and deliberately round -- they are a hypothesis about shape,
+#: not a fitted parameter set. ``crisis`` still forbids new longs and
+#: ``expansion`` still forbids new shorts, so the extremes stay absolute.
+LONG_REGIME_TILTS: dict[str, float] = {
+    "risk_on": 1.0, "expansion": 1.0,
+    "neutral": 0.6, "overheating": 0.6,
+    "slowdown": 0.4, "stagflation": 0.3,
+    "risk_off": 0.25, "crisis": 0.0, "unknown": 0.0,
+}
+
+SHORT_REGIME_TILTS: dict[str, float] = {
+    "crisis": 1.0, "risk_off": 0.6,
+    "stagflation": 0.5, "slowdown": 0.4,
+    "neutral": 0.25, "overheating": 0.25,
+    "risk_on": 0.0, "expansion": 0.0, "unknown": 0.0,
+}
 
 
 
@@ -182,6 +210,9 @@ def regime_filter(
     short_macro_regimes: frozenset[str] = frozenset({"contraction"}),
     high_volatility_multiplier: float = 0.5,
     allow_when_unknown: bool = False,
+    mode: str = "gate",
+    long_tilts: dict[str, float] | None = None,
+    short_tilts: dict[str, float] | None = None,
 ) -> FilterOutcome:
     """Gate direction on the market regime and shrink size when volatile.
 
@@ -226,11 +257,33 @@ def regime_filter(
     multiplier = pd.DataFrame(1.0, index=index, columns=columns)
     multiplier = multiplier.mask(high_volatility, high_volatility_multiplier)
 
+    long_multiplier = multiplier
+    short_multiplier = multiplier
+
+    if mode == "tilt":
+        # Permission becomes a matter of degree: everything above zero is
+        # allowed, at a size proportional to how much the regime supports
+        # it. A zero tilt still forbids outright, which is what keeps new
+        # longs out of a crisis.
+        long_scale = combined.replace(
+            long_tilts or LONG_REGIME_TILTS
+        ).apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        short_scale = combined.replace(
+            short_tilts or SHORT_REGIME_TILTS
+        ).apply(pd.to_numeric, errors="coerce").fillna(0.0)
+
+        allow_long = long_scale > 0.0
+        allow_short = short_scale > 0.0
+        long_multiplier = multiplier * long_scale
+        short_multiplier = multiplier * short_scale
+    elif mode != "gate":
+        raise ValueError(f"unknown regime filter mode {mode!r}")
+
     return FilterOutcome(
         allow_long=allow_long,
         allow_short=allow_short,
-        long_multiplier=multiplier,
-        short_multiplier=multiplier,
+        long_multiplier=long_multiplier,
+        short_multiplier=short_multiplier,
         flags={
             "regime_blocks_long": ~allow_long,
             "regime_blocks_short": ~allow_short,

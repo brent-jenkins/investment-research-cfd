@@ -33,6 +33,12 @@ M63  the confidence ceiling counts flat rows
      -> test_confidence_ceiling_reports_the_best_on_offer
 M64  the environment multiplier folds into confidence regardless of the flag
      -> test_the_environment_multiplier_can_be_kept_out_of_confidence
+M65  tilt mode reuses the gate's boolean permission
+     -> test_tilt_mode_scales_where_the_gate_refuses
+M66  a regime tilt above 1.0, levering the book
+     -> test_the_tilt_never_levers_the_book_up
+M67  an unknown mode falls through to permitting everything
+     -> test_an_unknown_regime_mode_is_refused
 """
 
 from __future__ import annotations
@@ -410,3 +416,78 @@ def test_the_environment_multiplier_can_be_kept_out_of_confidence():
     # unreachable for any gate above that.
     assert folded["AAPL"].max() == pytest.approx(0.5)
     assert kept_out["AAPL"].max() == pytest.approx(1.0)
+
+
+# --------------------------------------------------------------------------- #
+# Tilting instead of gating
+# --------------------------------------------------------------------------- #
+def _regime_series(labels):
+    index = pd.date_range("2024-01-01", periods=len(labels), tz="UTC")
+    return pd.Series(labels, index=index), index, pd.Index(["AAPL"])
+
+
+def test_tilt_mode_scales_where_the_gate_refuses():
+    """M65: tilt mode falls back to the gate's boolean permission.
+
+    A gate discards the engine's ranking at a boundary: a strong trend in a
+    middling regime and a weak one are refused alike. Tilting keeps the
+    ordering and scales it, and only a zero tilt forbids outright.
+    """
+    from cfdinvest.signals.filters import regime_filter
+
+    regimes, index, columns = _regime_series(
+        ["risk_on", "neutral", "risk_off", "crisis"]
+    )
+    calm = pd.Series(["low"] * 4, index=index)
+    macro = pd.Series(["expansion"] * 4, index=index)
+
+    gated = regime_filter(regimes, calm, macro, index, columns, mode="gate")
+    tilted = regime_filter(regimes, calm, macro, index, columns, mode="tilt")
+
+    # The gate permits only risk_on; everything else is refused outright.
+    assert list(gated.allow_long["AAPL"]) == [True, False, False, False]
+    assert list(gated.long_multiplier["AAPL"]) == [1.0, 1.0, 1.0, 1.0]
+
+    # The tilt permits three of the four, at descending size, and still
+    # forbids a new long in a crisis.
+    assert list(tilted.allow_long["AAPL"]) == [True, True, True, False]
+    sizes = list(tilted.long_multiplier["AAPL"])
+    assert sizes[0] > sizes[1] > sizes[2] > 0.0
+    assert sizes[3] == pytest.approx(0.0)
+
+
+def test_the_tilt_never_levers_the_book_up():
+    """No filter may return a multiplier above 1.0, tilt mode included.
+
+    The module's opening promise. A tilt that could exceed 1.0 would turn a
+    filter into a position-sizer with leverage, which is the one thing the
+    asymmetry here exists to prevent.
+    """
+    from cfdinvest.signals.filters import (
+        LONG_REGIME_TILTS, SHORT_REGIME_TILTS, regime_filter,
+    )
+
+    labels = list(LONG_REGIME_TILTS)
+    regimes, index, columns = _regime_series(labels)
+    volatile = pd.Series(["high"] * len(labels), index=index)
+    macro = pd.Series(["contraction"] * len(labels), index=index)
+
+    outcome = regime_filter(regimes, volatile, macro, index, columns, mode="tilt")
+
+    assert outcome.long_multiplier.to_numpy().max() <= 1.0
+    assert outcome.short_multiplier.to_numpy().max() <= 1.0
+    assert outcome.long_multiplier.to_numpy().min() >= 0.0
+    assert all(v <= 1.0 for v in LONG_REGIME_TILTS.values())
+    assert all(v <= 1.0 for v in SHORT_REGIME_TILTS.values())
+
+
+def test_an_unknown_regime_mode_is_refused():
+    """A typo must not silently fall through to permitting everything."""
+    from cfdinvest.signals.filters import regime_filter
+
+    regimes, index, columns = _regime_series(["risk_on"])
+    calm = pd.Series(["low"], index=index)
+    macro = pd.Series(["expansion"], index=index)
+
+    with pytest.raises(ValueError, match="unknown regime filter mode"):
+        regime_filter(regimes, calm, macro, index, columns, mode="tlit")
