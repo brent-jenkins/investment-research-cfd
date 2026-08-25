@@ -257,7 +257,13 @@ def _write_cookie(st, value: str, max_age: int) -> None:
 
     import streamlit.components.v1 as components
 
-    secure = "; Secure" if st.context.headers.get("X-Forwarded-Proto") == "https" else ""
+    try:
+        forwarded = st.context.headers.get("X-Forwarded-Proto", "")
+    except Exception:  # noqa: BLE001 - no headers is not a reason to fail
+        forwarded = ""
+    # Only over HTTPS: a Secure cookie is simply dropped over plain HTTP,
+    # which would silently break sign-in for anyone running this locally.
+    secure = "; Secure" if forwarded == "https" else ""
     cookie = (
         f"{auth_module.COOKIE_NAME}={value}; Path=/; Max-Age={max_age}; "
         f"SameSite=Lax{secure}"
