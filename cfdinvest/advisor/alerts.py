@@ -73,6 +73,16 @@ def _day(value: Any) -> str:
     return stamp.strftime("%Y-%m-%d")
 
 
+def _shown(ticker: str) -> str:
+    """The Trading 212 name with the lake symbol after it, or just the symbol."""
+    try:
+        from cfdinvest.livehelper.t212_instruments import display_name
+
+        return display_name(ticker)
+    except Exception:  # noqa: BLE001 - a name is not worth a failed alert
+        return str(ticker)
+
+
 def decide_alerts(
     suggestions: Sequence[Any] = (),
     watches: Sequence[Any] = (),
@@ -111,9 +121,9 @@ def decide_alerts(
             kind="position",
             severity=severity,
             headline=(
-                f"{ticker} is past its stop"
+                f"{_shown(ticker)} is past its stop"
                 if severity == "critical"
-                else f"{ticker} is close to its stop"
+                else f"{_shown(ticker)} is close to its stop"
             ),
             detail=getattr(watch, "note", "") or "",
         ))
@@ -134,16 +144,24 @@ def decide_alerts(
             f"{quantity:,.4f} units" if quantity is not None
             else (f"{cash:,.2f} of your balance" if cash is not None else "size unknown")
         )
+        # The Trading 212 name in the headline, because the email is read
+        # with the app open and the lake's symbol is not searchable there.
+        try:
+            from cfdinvest.livehelper.t212_instruments import display_name
+
+            shown = display_name(ticker)
+        except Exception:  # noqa: BLE001 - a name is not worth a failed alert
+            shown = ticker
+
         fresh.append(Alert(
             key=key,
             kind="open",
             severity="info",
             headline=(
-                f"{direction.capitalize()} {ticker} "
+                f"{direction.capitalize()} {shown} "
                 f"({getattr(suggestion, 'confidence', 0.0):.0%} confidence)"
             ),
             detail=(
-                f"Trading 212: {getattr(suggestion, 't212_name', '') or ticker}. "
                 f"About {amount}. Check it in the Live-Execution Helper before "
                 "placing it."
             ),

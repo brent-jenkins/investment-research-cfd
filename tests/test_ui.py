@@ -2295,9 +2295,13 @@ def test_suggestions_are_a_table_and_the_regime_is_above_them():
     assert page.index("render_regime_summary") < page.index(
         'st.subheader("Trades to consider")'
     )
-    for column in ("Instrument", "Trading 212", "Confidence", "Stake",
+    for column in ("Instrument", "Confidence", "Stake",
                    "Quantity", "Priced from"):
         assert f'"{column}"' in page, column
+    # The Trading 212 name leads and the lake symbol follows in brackets.
+    # The table is read with the app open, and the lake symbol is not
+    # searchable there.
+    assert "display_name" in page
 
 
 def test_the_poller_prices_what_is_offered_as_well_as_what_is_held():

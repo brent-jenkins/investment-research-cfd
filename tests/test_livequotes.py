@@ -1238,3 +1238,53 @@ def test_an_expiring_contract_can_be_recorded_as_one():
     assert perpetual.expiry is None
     # An expiry is not a financing rate and must not imply one either way.
     assert dated.financing_rate is None
+
+
+def test_a_verified_name_overrides_the_shipped_guess():
+    """The shipped names are hand-written and at least one was wrong.
+
+    "US 500" against the app's "USA 500" is exactly the error that sends you
+    to the wrong instrument or to none at all, so what you read in the app
+    has to win.
+    """
+    from cfdinvest.livehelper.t212_instruments import (
+        display_name, from_rules, mapping_for,
+    )
+    from cfdinvest.livehelper.t212_rules import InstrumentRules, RuleTable
+
+    table = RuleTable(rules={
+        "^GSPC": InstrumentRules(ticker="^GSPC", t212_name="USA 500")
+    })
+    overrides = from_rules(table)
+
+    assert display_name("^GSPC", overrides) == "USA 500 (^GSPC)"
+    assert mapping_for("^GSPC", overrides).confirmed
+
+
+def test_a_rule_without_a_name_does_not_launder_a_guess():
+    """An entry recording only a leverage says nothing about what the
+    instrument is called; treating it as confirmation would mark a
+    hand-written guess as checked."""
+    from cfdinvest.livehelper.t212_instruments import from_rules, mapping_for
+    from cfdinvest.livehelper.t212_rules import InstrumentRules, RuleTable
+
+    table = RuleTable(rules={
+        "^GSPC": InstrumentRules(ticker="^GSPC", leverage=20.0)
+    })
+    overrides = from_rules(table)
+
+    assert "^GSPC" not in overrides
+    assert not mapping_for("^GSPC", overrides).confirmed
+
+
+def test_an_instrument_recorded_as_unavailable_stops_being_suggested():
+    from cfdinvest.livehelper.t212_instruments import from_rules, mapping_for
+    from cfdinvest.livehelper.t212_rules import InstrumentRules, RuleTable
+
+    table = RuleTable(rules={
+        "LULU": InstrumentRules(ticker="LULU", available=False)
+    })
+    mapping = mapping_for("LULU", from_rules(table))
+
+    assert not mapping.tradable
+    assert mapping.relationship == "none"

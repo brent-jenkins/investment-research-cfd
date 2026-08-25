@@ -41,6 +41,7 @@ of this project follows: absence is named, never inferred.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -55,6 +56,9 @@ __all__ = [
     "InstrumentMapping",
     "mapping_for",
     "describe_mapping",
+    "from_rules",
+    "verified_names",
+    "display_name",
     "unmapped",
 ]
 
@@ -230,6 +234,62 @@ class InstrumentMapping:
         return self.relationship == "same"
 
 
+_VERIFIED_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def verified_names(path=None) -> dict[str, Any]:
+    """Names you have confirmed in the app, from the rules file.
+
+    Cached against the file's modification time, so a table read once per
+    row costs one stat rather than one parse. Never raises: an unreadable
+    rules file means the shipped suggestions stand, which is the state
+    everything ran in before you began filling it in.
+    """
+    from cfdinvest.livehelper.t212_rules import DEFAULT_RULES_PATH, load_rules
+
+    target = Path(str(path or DEFAULT_RULES_PATH)).expanduser()
+    try:
+        stamp = target.stat().st_mtime if target.is_file() else 0.0
+    except OSError:
+        stamp = 0.0
+
+    key = str(target)
+    cached = _VERIFIED_CACHE.get(key)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+
+    try:
+        overrides = from_rules(load_rules(target))
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not read verified names from %s: %s", target, error)
+        overrides = {}
+    _VERIFIED_CACHE[key] = (stamp, overrides)
+    return overrides
+
+
+def from_rules(table) -> dict[str, Any]:
+    """Verified names out of a rules table, in the override shape.
+
+    What you read in the app beats what was written here by hand. Only
+    entries that actually carry a name are returned -- a rules entry
+    recording only a leverage says nothing about what the instrument is
+    called, and treating it as confirmation would launder a guess.
+    """
+    overrides: dict[str, Any] = {}
+    for ticker, rule in getattr(table, "rules", {}).items():
+        name = getattr(rule, "t212_name", None)
+        available = getattr(rule, "available", None)
+        if not name and available is None:
+            continue
+        overrides[str(ticker)] = {
+            "name": str(name or ""),
+            "relationship": "none" if available is False else "same",
+            "note": "" if available is not False else
+                    "Recorded as not offered by Trading 212.",
+        }
+    return overrides
+
+
 def mapping_for(
     ticker: str, overrides: Mapping[str, Any] | None = None
 ) -> InstrumentMapping:
@@ -264,6 +324,29 @@ def mapping_for(
         return InstrumentMapping(ticker=name)
     t212_name, relationship, note = suggestion
     return InstrumentMapping(name, t212_name, relationship, note, confirmed=False)
+
+
+def display_name(ticker: str, overrides=None) -> str:
+    """``UK 100 (^FTSE)`` -- what to search for, and what the lake calls it.
+
+    The Trading 212 name leads because that is what you type into the app;
+    the lake's symbol follows in brackets because it is what every other
+    page, log line and artefact here calls the same instrument. Showing only
+    one of them means translating in your head at the moment you are placing
+    a trade, which is where mistakes get expensive.
+
+    An instrument with no Trading 212 name is shown as its ticker alone
+    rather than as an empty bracket -- there is nothing to translate to.
+    """
+    name = str(ticker or "").strip()
+    if not name:
+        return ""
+    # What you confirmed in the app wins over what was written here by hand,
+    # and it does so without every caller having to remember to ask.
+    found = mapping_for(name, verified_names() if overrides is None else overrides)
+    if not found.tradable or not found.name:
+        return name
+    return f"{found.name} ({name})"
 
 
 def describe_mapping(mapping: InstrumentMapping) -> str:

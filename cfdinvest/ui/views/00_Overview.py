@@ -139,12 +139,10 @@ else:
             with left:
                 name = t212_instruments.mapping_for(watch.ticker)
                 st.markdown(
-                    f"#### {watch.ticker} &nbsp; "
+                    f"#### {t212_instruments.display_name(watch.ticker)} &nbsp; "
                     f"{components.direction_badge('long' if watch.quantity > 0 else 'short', mode)}",
                     unsafe_allow_html=True,
                 )
-                if name.tradable:
-                    st.caption(f"Trading 212: {name.name}")
                 if watch.note:
                     st.caption(watch.note)
             with middle:
@@ -203,8 +201,10 @@ else:
     table = pd.DataFrame([
         {
             "": "📉" if suggestion.direction == "short" else "📈",
-            "Instrument": suggestion.ticker,
-            "Trading 212": suggestion.t212_name or components.DASH,
+            # The Trading 212 name leads because it is what you type into
+            # the app; the lake symbol follows because it is what every
+            # other page here calls the same thing.
+            "Instrument": t212_instruments.display_name(suggestion.ticker),
             "Direction": suggestion.direction,
             # Whole percent, not a fraction: a ProgressColumn formats the
             # raw value, so 0.80 with "%.0f%%" renders "1%" -- the same

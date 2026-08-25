@@ -128,6 +128,17 @@ class InstrumentRules:
     #: overnight interest. Recorded so the difference is visible; nothing
     #: here infers one from the other.
     expiry: str | None = None
+    #: The instrument's name in the Trading 212 app, as you read it there.
+    #:
+    #: This **overrides** the suggestion shipped in t212_instruments, and it
+    #: is the only name that has actually been checked. The shipped ones are
+    #: hand-written and at least one was wrong -- "US 500" against the app's
+    #: "USA 500" -- which is precisely the error that sends you to the wrong
+    #: instrument or to none at all.
+    t212_name: str | None = None
+    #: ``False`` when Trading 212 does not offer it at all, so the signal
+    #: layer can stop suggesting something you cannot place.
+    available: bool | None = None
     source: str = "unverified"
     notes: str | None = None
 
