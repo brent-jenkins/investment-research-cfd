@@ -245,18 +245,20 @@ def close_out(
     rate = ticket.fx_rate
     gross_gbp = None if rate is None else gross * rate
 
-    # Whether the fee applies is recorded per instrument, not inferred from
-    # the currency. USA 500 is bought in GBP and charges it; UK 100 is
-    # bought in GBP and does not. Inferring it got that pair backwards.
+    # Recorded per instrument, and no longer guessed from the currency.
     #
-    # Unrecorded falls back to the currency, which is right for a plainly
-    # foreign instrument and is the reason the flag is worth recording for
-    # anything bought in sterling.
-    applies = (
-        ticket.fx_fee_applies if ticket.fx_fee_applies is not None
-        else ticket.currency != "GBP"
-    )
-    if not applies:
+    # The guess was that a non-GBP instrument converts and therefore pays.
+    # Real tickets say otherwise, in both directions: USA 500 is funded in
+    # sterling and charges it, while Germany 40 and France 40 are priced in
+    # euros and do not. Currency turned out to predict nothing, so an
+    # unrecorded flag is now unknown rather than assumed -- the fee is
+    # reported absent and the net result withheld, which is the same rule
+    # every other missing broker figure follows here.
+    if ticket.fx_fee_applies is None:
+        fx_fee = None
+        if "fx_fee_applies" not in missing:
+            missing.append("fx_fee_applies")
+    elif not ticket.fx_fee_applies:
         fx_fee = 0.0
     elif gross_gbp is None:
         fx_fee = None

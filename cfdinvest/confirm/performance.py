@@ -108,6 +108,7 @@ def _value(entry, close_price, closed_at) -> RealisedTrade:
         fx_rate=entry.get("fx_rate"),
         leverage=entry.get("leverage"),
         financing_rate=entry.get("financing_rate"),
+        fx_fee_applies=entry.get("fx_fee_applies"),
     )
     result = close_out(ticket, close_price, days_held=days)
 
@@ -165,6 +166,7 @@ def realised_trades(confirmations: Iterable[Any]) -> list[RealisedTrade]:
             "fx_rate": getattr(record, "fx_rate", None),
             "leverage": getattr(record, "leverage", None),
             "financing_rate": getattr(record, "financing_rate", None),
+            "fx_fee_applies": getattr(record, "fx_fee_applies", None),
         }
 
         if action == "close":

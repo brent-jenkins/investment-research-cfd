@@ -145,6 +145,15 @@ class InstrumentRules:
     #: mistake that produces a plausible-looking small number rather than an
     #: obviously broken one, which is the dangerous kind.
     financing_daily_pct: float | None = None
+    #: The overnight fee per day, per side, as the app shows it.
+    #:
+    #: A CFD does not charge the same to be long as to be short: one side
+    #: pays the funding and the other may pay less or receive it. A single
+    #: rate misstates one direction, and a trend system trades both.
+    #: ``financing_daily_pct`` remains as the figure to use when the app
+    #: quotes only one.
+    financing_daily_pct_long: float | None = None
+    financing_daily_pct_short: float | None = None
     #: Whether the 0.5% conversion fee is charged on the result at close.
     #:
     #: Recorded because it cannot be inferred: USA 500 is bought in GBP and
@@ -157,17 +166,33 @@ class InstrumentRules:
     source: str = "unverified"
     notes: str | None = None
 
+    def annual_financing(self, direction: str | None = None) -> float | None:
+        """The financing rate as an annual fraction, for one side.
+
+        A CFD charges long and short differently, so the side is asked for.
+        Falling back to the single figure when only one is recorded, and to
+        ``financing_rate`` when the rate was given annually to begin with.
+
+        ``None`` means not recorded. Zero would say the carry is free, which
+        is a measurement nobody made -- and carry is the largest cost line
+        in the backtest.
+        """
+        side = str(direction or "").strip().lower()
+        per_day = None
+        if side == "long":
+            per_day = self.financing_daily_pct_long
+        elif side == "short":
+            per_day = self.financing_daily_pct_short
+        if per_day is None:
+            per_day = self.financing_daily_pct
+        if per_day is not None:
+            return float(per_day) / 100.0 * 365.0
+        return self.financing_rate
+
     @property
     def annual_financing_rate(self) -> float | None:
-        """The financing rate as an annual fraction, however it was given.
-
-        One owner for the number. ``financing_daily_pct`` is what the app
-        shows and wins when both are present, because it is the one that was
-        read off a screen rather than worked out.
-        """
-        if self.financing_daily_pct is not None:
-            return float(self.financing_daily_pct) / 100.0 * 365.0
-        return self.financing_rate
+        """The rate with no side named. Kept for callers that have none."""
+        return self.annual_financing(None)
 
     def __post_init__(self) -> None:
         if self.quantity_precision is not None:

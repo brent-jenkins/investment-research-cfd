@@ -65,3 +65,8 @@ coverage.xml
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Your verified Trading 212 figures. Account-specific (leverage depends on
+# retail vs professional), so it stays out of the repository -- but it is
+# real, hand-checked data, so keep a copy somewhere.
+config/t212_rules.local.toml

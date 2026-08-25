@@ -947,7 +947,7 @@ def test_a_gbp_instrument_needs_no_rate_and_pays_no_fx_fee():
 
     ticket = build_ticket(
         "^FTSE", "long", 1.0, 9100.0, currency="GBP",
-        leverage=20.0, financing_rate=0.0,
+        leverage=20.0, financing_rate=0.0, fx_fee_applies=False,
     )
     assert "fx_rate" not in ticket.missing
     assert ticket.notional_gbp == pytest.approx(9100.0)
@@ -964,7 +964,7 @@ def test_the_fx_fee_is_charged_on_the_result_and_on_a_loss_too():
 
     ticket = build_ticket(
         "NKE", "long", 10.0, 100.0, currency="USD",
-        fx_rate=1.0, leverage=5.0, financing_rate=0.0,
+        fx_rate=1.0, leverage=5.0, financing_rate=0.0, fx_fee_applies=True,
     )
 
     won = close_out(ticket, close_price=110.0)
@@ -986,7 +986,8 @@ def test_the_fee_percentage_comes_from_the_fx_layer_not_a_second_copy():
     from cfdinvest.livehelper.ticket import build_ticket, close_out
 
     ticket = build_ticket("X", "long", 1.0, 100.0, currency="USD",
-                          fx_rate=1.0, leverage=1.0, financing_rate=0.0)
+                          fx_rate=1.0, leverage=1.0, financing_rate=0.0,
+                          fx_fee_applies=True)
     result = close_out(ticket, close_price=200.0)
 
     assert result.fx_fee_gbp == pytest.approx(100.0 * FXConfig().fx_conversion_fee_pct)
@@ -996,7 +997,7 @@ def test_a_short_makes_money_when_the_price_falls():
     from cfdinvest.livehelper.ticket import build_ticket, close_out
 
     ticket = build_ticket("NKE", "short", 10.0, 100.0, currency="GBP",
-                          leverage=5.0, financing_rate=0.0)
+                          leverage=5.0, financing_rate=0.0, fx_fee_applies=False)
 
     assert close_out(ticket, 90.0).gross_pnl_gbp == pytest.approx(100.0)
     assert close_out(ticket, 110.0).gross_pnl_gbp == pytest.approx(-100.0)
@@ -1007,7 +1008,7 @@ def test_financing_accrues_on_calendar_days():
     from cfdinvest.livehelper.ticket import DAYS_PER_YEAR, build_ticket, close_out
 
     ticket = build_ticket("X", "long", 1.0, 36500.0, currency="GBP",
-                          leverage=1.0, financing_rate=0.10)
+                          leverage=1.0, financing_rate=0.10, fx_fee_applies=False)
 
     assert DAYS_PER_YEAR == 365.0
     assert ticket.financing_per_day_gbp == pytest.approx(10.0)
@@ -1130,10 +1131,10 @@ def test_a_correction_does_not_become_a_second_round_trip():
 
     trips = realised_trades([
         a_confirmation("NKE", "open", direction="short", quantity=2.0,
-                       price=68.0, currency="GBP", financing_rate=0.0,
+                       price=68.0, currency="GBP", financing_rate=0.0, fx_fee_applies=False,
                        timestamp=pd.Timestamp("2026-08-01 10:00", tz="UTC")),
         a_confirmation("NKE", "open", direction="short", quantity=3.0,
-                       price=69.0, currency="GBP", financing_rate=0.0,
+                       price=69.0, currency="GBP", financing_rate=0.0, fx_fee_applies=False,
                        timestamp=pd.Timestamp("2026-08-01 11:00", tz="UTC")),
         a_confirmation("NKE", "close", price=60.0,
                        timestamp=pd.Timestamp("2026-08-02 11:00", tz="UTC")),
@@ -1166,6 +1167,7 @@ def test_costs_are_taken_out_of_the_recorded_result():
     trips = realised_trades([
         a_confirmation("X", "open", direction="long", quantity=1.0, price=36500.0,
                        currency="GBP", leverage=1.0, financing_rate=0.10,
+                       fx_fee_applies=False,
                        timestamp=pd.Timestamp("2026-08-01", tz="UTC")),
         a_confirmation("X", "close", price=36500.0,
                        timestamp=pd.Timestamp("2026-08-11", tz="UTC")),
@@ -1210,7 +1212,7 @@ def test_leverage_alone_missing_does_not_stop_a_trip_being_valued():
 
     trips = realised_trades([
         a_confirmation("X", "open", direction="long", quantity=1.0, price=100.0,
-                       currency="GBP", financing_rate=0.0,
+                       currency="GBP", financing_rate=0.0, fx_fee_applies=False,
                        timestamp=pd.Timestamp("2026-08-01", tz="UTC")),
         a_confirmation("X", "close", price=110.0,
                        timestamp=pd.Timestamp("2026-08-02", tz="UTC")),
@@ -1347,15 +1349,23 @@ def test_whether_the_fx_fee_applies_is_recorded_not_inferred():
     assert close_out(free, 110.0).fx_fee_gbp == 0.0
 
 
-def test_an_unrecorded_flag_falls_back_to_the_currency():
-    """Right for a plainly foreign instrument, and the reason the flag is
-    worth recording for anything funded in sterling."""
+def test_an_unrecorded_fx_fee_is_unknown_not_guessed_from_the_currency():
+    """The guess was that a non-GBP instrument converts and therefore pays.
+
+    Real tickets say otherwise in both directions: USA 500 is funded in
+    sterling and charges it, while Germany 40 and France 40 are priced in
+    euros and do not. Currency predicted nothing, so an unrecorded flag is
+    unknown -- the fee is reported absent and the net result withheld,
+    rather than a plausible cost being invented.
+    """
     from cfdinvest.livehelper.ticket import build_ticket, close_out
 
-    foreign = build_ticket("NKE", "long", 1.0, 100.0, currency="USD",
-                           fx_rate=1.0, leverage=5.0, financing_rate=0.0)
-    home = build_ticket("^FTSE", "long", 1.0, 100.0, currency="GBP",
-                        leverage=20.0, financing_rate=0.0)
+    unknown = build_ticket("^GDAXI", "long", 1.0, 100.0, currency="EUR",
+                           fx_rate=0.85, leverage=20.0, financing_rate=0.0)
+    result = close_out(unknown, 110.0)
 
-    assert close_out(foreign, 110.0).fx_fee_gbp == pytest.approx(0.05)
-    assert close_out(home, 110.0).fx_fee_gbp == 0.0
+    assert result.fx_fee_gbp is None
+    assert result.net_pnl_gbp is None
+    assert "fx_fee_applies" in result.missing
+    # The gross is still knowable and still reported.
+    assert result.gross_pnl_gbp == pytest.approx(8.5)

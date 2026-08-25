@@ -148,6 +148,9 @@ class Confirmation:
     fx_rate: float | None = None
     leverage: float | None = None
     financing_rate: float | None = None
+    #: Whether the 0.5% conversion is charged on this instrument's result.
+    #: Recorded, never inferred: currency turned out to predict nothing.
+    fx_fee_applies: bool | None = None
 
     def __post_init__(self) -> None:
         if not _TICKER.match(str(self.ticker or "")):
@@ -430,6 +433,7 @@ def confirmed_positions(
             "fx_rate": confirmation.fx_rate,
             "leverage": confirmation.leverage,
             "financing_rate": confirmation.financing_rate,
+            "fx_fee_applies": confirmation.fx_fee_applies,
         }
     return book
 
