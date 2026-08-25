@@ -1,7 +1,24 @@
 # cfdinvest — multi-asset CFD backtesting engine
 
-**Status: data ingestion layer complete.** Preprocessing, signals, execution
-and analytics are the next layers and are not built yet.
+**Status:** all layers are now built, tested, mutation-checked and
+integrated.
+
+Major layers now present:
+
+- T212 broker-aware safety engine
+- Refinement layer
+- Journal, insights, bias detection
+- Simulation mode
+- Meta-Strategy layer
+- Account registry and router
+- Monitoring and risk dashboard
+- 21-page Streamlit UI
+- Full persistence and scheduler
+
+The Meta-Strategy layer is fully implemented; all refinement inputs exist.
+
+The lake freshness warning appears until ingestion is run; monitoring
+reports stale data as a warning.
 
 ---
 
@@ -67,6 +84,14 @@ key at all.
 | [docs/ingestion-hardening-note.md](docs/ingestion-hardening-note.md) | Engineering note: vintage modes, publication dates, anomaly flags. |
 | [docs/publication-lag-note.md](docs/publication-lag-note.md) | Engineering note: the publication_lag default and daily-series fallback. |
 | [logging_utils.py](cfdinvest/logging_utils.py) | Handler setup for entry points only; libraries just `getLogger`. |
+
+### Safety rules
+
+Risk posture may request increases but cannot exceed the safety engine's
+approved maximum; overrules are reported explicitly.
+
+Broker checks report pass / not checked / unverified; silence is never
+treated as safe.
 
 ### Design decisions worth knowing
 
