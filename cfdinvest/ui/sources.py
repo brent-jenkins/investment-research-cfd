@@ -871,6 +871,28 @@ def load_run_analytics(
     )
 
 
+def load_analysis_artefact(config: AppConfig, run_id: str | None = None):
+    """The preprocessed panels in long form, for a caller that wants them.
+
+    Deliberately NOT part of :func:`load_persisted_run`. This artefact is
+    67MB on disk for a 43-instrument run and several gigabytes once pandas
+    has it, because the correlation panel alone is bars x n x n rows. It was
+    loaded eagerly on every page render, and no page has ever read it: that
+    is what took the deployed dashboard to 3.1GB resident and had the OOM
+    killer end it mid-render.
+
+    A separate function rather than a callable in the bundle, because the
+    bundle goes through ``st.cache_data``, which pickles what it stores --
+    and a lambda in there breaks caching for everything else in it.
+    """
+    from cfdinvest.persist import readers as persist_readers
+
+    chosen = run_id or persist_readers.load_latest_run(config)
+    if chosen is None:
+        return None
+    return persist_readers.load_analysis_frame(chosen, config)
+
+
 def load_persisted_run(config: AppConfig, run_id: str | None = None) -> Source:
     """The artefacts the runner now writes beyond trades and equity.
 
@@ -894,7 +916,6 @@ def load_persisted_run(config: AppConfig, run_id: str | None = None) -> Source:
             "run_id": chosen,
             "pnl": persist_readers.load_pnl_frame(chosen, config),
             "regimes": persist_readers.load_regime_frame(chosen, config),
-            "analysis": persist_readers.load_analysis_frame(chosen, config),
             "attribution": persist_readers.load_attribution(chosen, config),
             "costs": persist_readers.load_cost_breakdown(chosen, config),
             "execution_metadata": persist_readers.load_execution_metadata(

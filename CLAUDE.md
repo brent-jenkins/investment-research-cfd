@@ -183,6 +183,11 @@ it exists to prevent.
 - **A categorical column index does not survive a Parquet round trip.**
   `storage.write_parquet` flattens it; every `positions.parquet` was
   unreadable before that fix.
+- **A callable inside the `read_everything` bundle breaks caching.** That
+  bundle goes through `st.cache_data`, which pickles what it stores, so a
+  lambda in it fails to cache and takes everything else in the bundle with
+  it — and the symptom is a *different* page rendering blank, not an error
+  where the lambda is. Lazy artefacts go in their own module-level function.
 - **Streamlit keeps `sys.modules` across reruns.** A long-running server runs
   new page scripts against old modules. Restart it after changing
   `components.py` or `sources.py`.

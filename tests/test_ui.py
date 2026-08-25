@@ -2005,3 +2005,29 @@ def test_the_dashboard_unit_can_write_the_credential_store():
     assert "ReadOnlyPaths=/var/lib/cfdinvest" in unit, "the rest stays read-only"
     # And it must be bounded, or it competes with the neighbours for memory.
     assert "MemoryMax=" in unit
+
+
+def test_the_dashboard_does_not_load_the_analysis_frame_to_draw_a_page():
+    """What took the deployed dashboard to 3.1GB and got it OOM-killed.
+
+    The analysis artefact is the preprocessed panels in long form: 67MB on
+    disk for a 43-instrument run and gigabytes in pandas, because the
+    correlation panel is bars x n x n rows. It was read on every page load,
+    and no page has ever used it.
+
+    It stays reachable -- as a loader, so a caller pays for it knowingly.
+    """
+    import inspect
+
+    from cfdinvest.ui import sources
+
+    body = inspect.getsource(sources.load_persisted_run)
+
+    assert "load_analysis_frame" not in body, (
+        "loading it eagerly costs gigabytes on every page render"
+    )
+    # Still reachable, as a plain function. Not a callable inside the bundle:
+    # that bundle goes through st.cache_data, which pickles what it stores,
+    # and a lambda in there breaks caching for everything else in it.
+    assert callable(sources.load_analysis_artefact)
+    assert "lambda" not in body
