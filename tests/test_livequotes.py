@@ -905,3 +905,110 @@ def test_the_advisor_sizes_its_alerts_from_the_configured_balance():
 
     assert "load_live_helper_config" in body
     assert "account_balance_gbp" in body
+
+
+# --------------------------------------------------------------------------- #
+# The Trading 212 ticket, worked out beforehand
+# --------------------------------------------------------------------------- #
+def test_margin_is_the_gbp_notional_divided_by_leverage():
+    from cfdinvest.livehelper.ticket import build_ticket
+
+    ticket = build_ticket(
+        "NKE", "short", quantity=10.0, price=100.0,
+        currency="USD", fx_rate=0.80, leverage=5.0, financing_rate=0.0,
+    )
+
+    assert ticket.notional == pytest.approx(1000.0)      # 10 x 100 USD
+    assert ticket.notional_gbp == pytest.approx(800.0)   # x 0.80
+    assert ticket.margin_gbp == pytest.approx(160.0)     # / 5
+    assert ticket.complete
+
+
+def test_a_missing_broker_figure_is_named_never_assumed():
+    """A margin computed from an assumed leverage looks exactly as
+    authoritative as a real one, and is wrong by a multiple."""
+    from cfdinvest.livehelper.ticket import build_ticket
+
+    ticket = build_ticket("NKE", "short", 10.0, 100.0, currency="USD")
+
+    assert ticket.margin_gbp is None
+    assert ticket.notional_gbp is None
+    assert ticket.financing_per_day_gbp is None
+    assert set(ticket.missing) == {"fx_rate", "leverage", "financing_rate"}
+    assert not ticket.complete
+    # The instrument-currency notional needs nothing from the broker.
+    assert ticket.notional == pytest.approx(1000.0)
+
+
+def test_a_gbp_instrument_needs_no_rate_and_pays_no_fx_fee():
+    """It converts nothing. Charging the fee anyway would invent a cost the
+    ticket will not show."""
+    from cfdinvest.livehelper.ticket import build_ticket, close_out
+
+    ticket = build_ticket(
+        "^FTSE", "long", 1.0, 9100.0, currency="GBP",
+        leverage=20.0, financing_rate=0.0,
+    )
+    assert "fx_rate" not in ticket.missing
+    assert ticket.notional_gbp == pytest.approx(9100.0)
+
+    result = close_out(ticket, close_price=9200.0, days_held=0)
+    assert result.fx_fee_gbp == 0.0
+    assert result.net_pnl_gbp == pytest.approx(100.0)
+
+
+def test_the_fx_fee_is_charged_on_the_result_and_on_a_loss_too():
+    """Trading 212 applies 0.5% to the profit or loss at close. It is a
+    conversion cost, not a tax on winning, so a loss pays it as well."""
+    from cfdinvest.livehelper.ticket import build_ticket, close_out
+
+    ticket = build_ticket(
+        "NKE", "long", 10.0, 100.0, currency="USD",
+        fx_rate=1.0, leverage=5.0, financing_rate=0.0,
+    )
+
+    won = close_out(ticket, close_price=110.0)
+    lost = close_out(ticket, close_price=90.0)
+
+    assert won.gross_pnl_gbp == pytest.approx(100.0)
+    assert won.fx_fee_gbp == pytest.approx(0.5)      # 0.5% of the result
+    assert won.net_pnl_gbp == pytest.approx(99.5)
+
+    assert lost.gross_pnl_gbp == pytest.approx(-100.0)
+    assert lost.fx_fee_gbp == pytest.approx(0.5)     # charged, not credited
+    assert lost.net_pnl_gbp == pytest.approx(-100.5)
+
+
+def test_the_fee_percentage_comes_from_the_fx_layer_not_a_second_copy():
+    """One owner per number. Two copies drift, and the day they drift the
+    ticket says one thing and the backtest another."""
+    from cfdinvest.execution.fx import FXConfig
+    from cfdinvest.livehelper.ticket import build_ticket, close_out
+
+    ticket = build_ticket("X", "long", 1.0, 100.0, currency="USD",
+                          fx_rate=1.0, leverage=1.0, financing_rate=0.0)
+    result = close_out(ticket, close_price=200.0)
+
+    assert result.fx_fee_gbp == pytest.approx(100.0 * FXConfig().fx_conversion_fee_pct)
+
+
+def test_a_short_makes_money_when_the_price_falls():
+    from cfdinvest.livehelper.ticket import build_ticket, close_out
+
+    ticket = build_ticket("NKE", "short", 10.0, 100.0, currency="GBP",
+                          leverage=5.0, financing_rate=0.0)
+
+    assert close_out(ticket, 90.0).gross_pnl_gbp == pytest.approx(100.0)
+    assert close_out(ticket, 110.0).gross_pnl_gbp == pytest.approx(-100.0)
+
+
+def test_financing_accrues_on_calendar_days():
+    """A position held over a weekend pays for the weekend."""
+    from cfdinvest.livehelper.ticket import DAYS_PER_YEAR, build_ticket, close_out
+
+    ticket = build_ticket("X", "long", 1.0, 36500.0, currency="GBP",
+                          leverage=1.0, financing_rate=0.10)
+
+    assert DAYS_PER_YEAR == 365.0
+    assert ticket.financing_per_day_gbp == pytest.approx(10.0)
+    assert close_out(ticket, 36500.0, days_held=7).financing_gbp == pytest.approx(70.0)
