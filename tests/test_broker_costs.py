@@ -47,6 +47,10 @@ M70  exit_on_flat ignored, so a flat signal always closes
      -> test_a_flat_signal_need_not_close_a_position
 M71  the switch becomes "never close", losing the decay exit
      -> test_holding_through_flat_still_exits_a_decayed_signal
+M72  closing a position gated by the relative drift threshold
+     -> test_a_position_can_always_be_closed_however_high_the_threshold
+M73  the endpoint fix becomes "resize always"
+     -> test_the_middle_is_still_governed_by_the_threshold
 """
 
 from __future__ import annotations
@@ -607,3 +611,50 @@ def test_holding_through_flat_still_exits_a_decayed_signal():
         HysteresisThresholds(exit_on_flat=False),
     )
     assert result[0] == FLAT
+
+
+# --------------------------------------------------------------------------- #
+# Going flat is a change of state, not a drift
+# --------------------------------------------------------------------------- #
+def test_a_position_can_always_be_closed_however_high_the_threshold():
+    """M72: closing gated by the relative drift threshold.
+
+    Closing a position out is a relative drift of exactly 1.0, so with
+    `drift > threshold` and any threshold at or above 1.0 the comparison is
+    False and the position can never be reduced to nothing. Opening from
+    nothing divides by the floor and always fires. Together that is a
+    one-way ratchet -- positions grow and are never retired -- and a run at
+    threshold 1.0 booked 45,398 trades and £320,712 of financing on its way
+    to losing everything.
+    """
+    import numpy as np
+
+    from cfdinvest.execution.state import needs_resize
+
+    current = np.array([100.0, 0.0])
+    target = np.array([0.0, 100.0])       # one closing, one opening
+
+    for threshold in (0.25, 1.0, 5.0, 100.0):
+        resize = needs_resize(current, target, threshold=threshold)
+        assert resize[0], f"closing must fire at threshold {threshold}"
+        assert resize[1], f"opening must fire at threshold {threshold}"
+
+
+def test_the_middle_is_still_governed_by_the_threshold():
+    """The endpoints are absolute; ordinary drift is not.
+
+    Without this the fix would become "resize on every bar", which is the
+    churn the threshold exists to prevent.
+    """
+    import numpy as np
+
+    from cfdinvest.execution.state import needs_resize
+
+    current = np.array([100.0, 100.0])
+    target = np.array([150.0, 105.0])     # 50% drift and 5% drift
+
+    loose = needs_resize(current, target, threshold=0.25)
+    assert list(loose) == [True, False]
+
+    tight = needs_resize(current, target, threshold=1.0)
+    assert list(tight) == [False, False], "neither drift reaches 100%"

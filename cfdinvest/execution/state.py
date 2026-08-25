@@ -256,9 +256,27 @@ def needs_resize(
     if threshold < 0:
         raise ValueError(f"threshold must be >= 0, got {threshold}")
 
-    reference = np.maximum(np.abs(current_units), absolute_floor)
+    current = np.abs(np.asarray(current_units, dtype="float64"))
+    target = np.abs(np.asarray(target_units, dtype="float64"))
+
+    reference = np.maximum(current, absolute_floor)
     drift = np.abs(target_units - current_units) / reference
-    return drift > threshold
+
+    # Going flat is a change of state, not a drift, and a relative measure
+    # cannot express it: closing a position out is a drift of exactly 1.0,
+    # so at any threshold of 1.0 or more `drift > threshold` is False and
+    # the position can never be reduced to nothing. Opening from nothing
+    # divides by the floor and always fires. The pair is a one-way ratchet:
+    # positions grow and are never retired, notional compounds, and a run
+    # at threshold 1.0 booked 45,398 trades and £320,712 of financing on
+    # its way to losing everything.
+    #
+    # So the endpoints are decided absolutely and only the middle is a
+    # matter of degree.
+    closing = (current > absolute_floor) & (target <= absolute_floor)
+    opening = (current <= absolute_floor) & (target > absolute_floor)
+
+    return (drift > threshold) | closing | opening
 
 
 def transition_table() -> pd.DataFrame:
