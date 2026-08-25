@@ -32,6 +32,132 @@ anywhere in it.
 
 ---
 
+## Refinement: what the per-trade checks cannot see
+
+The safety engine measures the trade you typed. It cannot know that you are
+three weeks into a drawdown, that correlations have broken down, or that your
+last six exits were early.
+
+```python
+from cfdinvest.livehelper import load_context, refine
+
+context = load_context(config)                 # reads persisted artefacts
+result = refine(intent, assessment, sizing, context)
+
+result.sizing.multiplier      # 0.25x, itemised
+result.exit.adjusted_stop     # wider in a fast market
+result.margin.severity        # ok | watch | act
+result.quality.percent        # 74/100 (sound)
+result.checklist.go           # every item, in order
+result.exit_plan.urgency      # now | soon | when convenient | not needed
+```
+
+### The line it does not cross
+
+**A refinement may cut freely. It may never raise size above what the safety
+engine already approved.**
+
+Every reason to trade smaller is one this layer can act on alone — a smaller
+position is inside every limit the larger one was. Reasons to trade *larger*
+are proposals, and the ceiling stays owned by `compute_safe_sizing`. Without
+that rule a meta-strategy that wanted more size would be a way around the
+limits, and the limits would be advisory.
+
+When a proposal is overruled the refinement says so, because a reason to size
+up that was refused is a different situation from one never made.
+
+### Compounding is the real risk
+
+Six independent 0.8x adjustments are 0.26x, which is not a position. The
+product is clamped, and every contributor is reported with its own factor:
+
+```
+drawdown 0.50 · fading_edge 0.50 · volatility_regime 0.70 ·
+correlation_regime 0.75 · bias:overconfidence 0.68
+  -> raw 0.09x, clamped to 0.25x
+```
+
+A 0.25x nobody can take apart is a number nobody can argue with.
+
+### A volatile market needs a *wider* stop
+
+The intuition runs the other way — things are dangerous, get out quickly — and
+following it guarantees being stopped out by noise on the way to being right.
+
+The correct response to volatility is a wider stop **and a smaller position**,
+which is why `refine_exit` widens in exactly the regimes `refine_sizing` cuts
+in. Doing one without the other is worse than doing neither: a wider stop at
+the same size is simply more risk.
+
+Widening re-checks the per-trade risk limit, and when it breaches, reports the
+size at which the wider stop fits — because "wider stop, smaller position" is
+the answer, and half of it is not useful.
+
+A stop never crosses the entry. One that did would be an instruction to close
+at once, phrased as advice.
+
+### Two inputs that do not exist yet
+
+`BiasProfile` and `MetaStrategyPlan` are contracts for layers that are queued
+and unbuilt. They are defined so the refinements can be written against a real
+shape, and so the layers that fill them have something to satisfy.
+
+Both are **absent by default and never assumed benign**. A refinement with no
+bias profile does not conclude you are unbiased — it names the missing input
+and makes no adjustment for it. Assuming absence means "nothing wrong" is how
+a system starts flattering the person using it.
+
+One asymmetry worth stating: fear-driven under-exposure is detected and **never
+acted on**. Talking a frightened trader into a bigger position is the worst
+thing this repository could do.
+
+### Evidence, not noise
+
+Below thirty trades no expectancy adjustment is made at all, and the reason is
+printed. An expectancy from four trades moves more than the thing it measures,
+and sizing off it would be acting on noise while looking like acting on
+evidence.
+
+### Quality is not permission
+
+The score describes how good a trade is *within what the limits already
+permit*. A high score on an `UNSAFE` trade is still `UNSAFE`. An unmeasured
+component scores at the midpoint rather than full marks — full marks would let
+missing data flatter a trade — and the score reports how much of itself rested
+on something actually measured.
+
+### The checklist's unchecked is not a pass
+
+"I did not look" and "it was fine" feel the same afterwards, which is the
+entire reason a checklist exists. Items are ordered by what stops you soonest:
+a list that asks about reward-to-risk before the stop can be completed on a
+trade that has no stop.
+
+### Getting out
+
+`compute_safe_exit` answers the smallest exit that puts the account out of
+reach of a decision it does not get to make. Trading 212 closes on its own
+ratio without warning and picks the position itself — usually the largest,
+rarely the one you would choose.
+
+It exits *past* the limit rather than to it, since landing exactly on it means
+the next tick puts you back over and the spread was paid for nothing. It will
+not propose a partial exit below the instrument's minimum size, or one that
+would leave a remainder you could not later reduce — an exit you cannot place
+is not an exit. And it does not choose *which* position to close: that is a
+judgement about the trades, and this knows only the arithmetic of margin.
+
+### No threshold has two owners
+
+Limits live where they already lived. `RefinementConfig` holds only what is
+genuinely new — how far into a drawdown you start trading smaller, and by how
+much — and a test parses every refinement module to fail the build if one
+redeclares a limit that belongs to `LiveHelperConfig`, `RiskLimits` or
+`MonitoringThresholds`. What counts as an elevated regime is asked of
+`cfdinvest.risk`, not decided again here.
+
+---
+
 ## Trading 212's own limits
 
 Your limits are about how much you are willing to lose. Trading 212's are
@@ -285,6 +411,7 @@ assessment, not separate computations.
 ```bash
 pytest tests/test_livehelper.py -q        # 58 tests, no network
 pytest tests/test_execution_safety.py -q  # 56 more: broker rules, fills
+pytest tests/test_refinement.py -q        # 81 more: the refinement layer
 ```
 
 The tests that matter are the ones about **refusing to say `SAFE`**. A sizing

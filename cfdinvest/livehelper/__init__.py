@@ -22,6 +22,8 @@ let them disagree.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from cfdinvest.livehelper.config import LiveHelperConfig, load_live_helper_config
 from cfdinvest.livehelper.intent import TradeIntent, parse_trade_intent
 from cfdinvest.livehelper.safety import (
@@ -34,6 +36,28 @@ from cfdinvest.livehelper.sizing_helper import (
     SizingRecommendation,
     compute_safe_sizing,
 )
+from cfdinvest.livehelper.context import (
+    BiasProfile,
+    MarginState,
+    MetaStrategyPlan,
+    PerformanceTrends,
+    RegimeProfile,
+    TradingContext,
+    load_context,
+)
+from cfdinvest.livehelper.margin_warning import (
+    MarginWarning,
+    compute_margin_warning,
+)
+from cfdinvest.livehelper.refine_checklist import Checklist, refine_checklist
+from cfdinvest.livehelper.refine_exit import ExitRefinement, refine_exit
+from cfdinvest.livehelper.refine_quality import QualityScore, refine_quality
+from cfdinvest.livehelper.refine_sizing import (
+    RefinementConfig,
+    SizingRefinement,
+    refine_sizing,
+)
+from cfdinvest.livehelper.safe_exit import ExitPlan, compute_safe_exit
 from cfdinvest.livehelper.confirm_checks import (
     ConfirmationReview,
     review_confirmation,
@@ -66,6 +90,28 @@ __all__ = [
     "ConfirmationReview",
     "review_confirmation",
     "validate_confirmation_deviation",
+    "TradingContext",
+    "PerformanceTrends",
+    "RegimeProfile",
+    "BiasProfile",
+    "MetaStrategyPlan",
+    "MarginState",
+    "load_context",
+    "RefinementConfig",
+    "SizingRefinement",
+    "refine_sizing",
+    "ExitRefinement",
+    "refine_exit",
+    "MarginWarning",
+    "compute_margin_warning",
+    "QualityScore",
+    "refine_quality",
+    "Checklist",
+    "refine_checklist",
+    "ExitPlan",
+    "compute_safe_exit",
+    "Refinement",
+    "refine",
     "assess",
     "check",
 ]
@@ -91,4 +137,78 @@ def check(raw_input, config=None, **market) -> str:
     intent, assessment, sizing = assess(raw_input, config, **market)
     return build_execution_helper_summary(
         intent, assessment, sizing, config=config or load_live_helper_config()
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Refinement:
+    """Everything the refinement layer produced for one trade.
+
+    The six refinements are kept separate rather than merged into the
+    assessment, because they answer different questions and one of them --
+    the size -- is a *proposal* the safety engine still bounds. Folding them
+    into the verdict would hide which is which.
+    """
+
+    sizing: "SizingRefinement | None" = None
+    exit: "ExitRefinement | None" = None
+    margin: "MarginWarning | None" = None
+    quality: "QualityScore | None" = None
+    checklist: "Checklist | None" = None
+    exit_plan: "ExitPlan | None" = None
+    context: "TradingContext | None" = None
+
+    @property
+    def missing(self) -> tuple[str, ...]:
+        return self.context.missing if self.context else ()
+
+    @property
+    def go(self) -> bool:
+        """The checklist's answer. Not a second verdict.
+
+        The safety engine owns whether the trade is permitted; this says
+        whether every item was checked and passed. A trade can be SAFE with
+        an unchecked behavioural item, and that is worth seeing.
+        """
+        return bool(self.checklist and self.checklist.go)
+
+
+def refine(
+    trade_intent,
+    assessment=None,
+    sizing_recommendation=None,
+    context=None,
+    config=None,
+    *,
+    execution_history=None,
+    rules=None,
+    position_quantity=None,
+) -> Refinement:
+    """Run every refinement over one trade, in the order they depend on.
+
+    The margin warning is computed first because the checklist reads it, and
+    the exit plan last because it is about a position rather than an intent.
+    """
+    settings = config or load_live_helper_config()
+    where = context or TradingContext()
+
+    margin = compute_margin_warning(assessment, where, settings)
+    return Refinement(
+        sizing=refine_sizing(
+            trade_intent, assessment, sizing_recommendation, where, settings
+        ),
+        exit=refine_exit(trade_intent, assessment, where, settings),
+        margin=margin,
+        quality=refine_quality(
+            trade_intent, assessment, where, settings,
+            execution_history=execution_history,
+        ),
+        checklist=refine_checklist(
+            trade_intent, assessment, where, settings, margin_warning=margin
+        ),
+        exit_plan=compute_safe_exit(
+            trade_intent, assessment, where, settings,
+            position_quantity=position_quantity, rules=rules,
+        ),
+        context=where,
     )
