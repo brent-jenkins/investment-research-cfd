@@ -170,6 +170,13 @@ def read_everything(
     except Exception:  # noqa: BLE001 - never let caching break the dashboard
         data = _read.__wrapped__(stamp)  # type: ignore[attr-defined]
 
+    # A Streamlit server keeps imported modules in sys.modules across reruns
+    # even though it re-reads the page scripts, so a bundle cached before a
+    # new key existed -- or a page newer than the module it imports -- would
+    # otherwise KeyError on every page until someone restarted the process.
+    # Missing keys become absent Sources, which every page already renders.
+    data = {**_empty_bundle(), **data}
+
     data["health"] = health_module.run_checks(
         config_source=data["config_source"],
         lake=data["lake"],
@@ -188,6 +195,31 @@ def read_everything(
 # --------------------------------------------------------------------------- #
 # Page frame
 # --------------------------------------------------------------------------- #
+#: Every key a page may read, and what an absent one looks like. Sources
+#: rather than None, because "not available, and here is why" is a state the
+#: pages already know how to draw.
+BUNDLE_KEYS: tuple[str, ...] = (
+    "lake", "summary", "scheduler", "execution", "signals", "errors",
+    "disk", "market", "analytics", "persisted",
+)
+
+
+def _empty_bundle() -> dict[str, Any]:
+    """Defaults for every bundle key, for when one is missing."""
+    from cfdinvest.config import AppConfig
+
+    missing = Source.missing(
+        "this dashboard is running against a newer page than the module it "
+        "loaded; restart the Streamlit process to pick it up",
+        value={},
+    )
+    bundle: dict[str, Any] = {key: missing for key in BUNDLE_KEYS}
+    bundle["config_source"] = Source(value=AppConfig())
+    bundle["config"] = AppConfig()
+    bundle["universe"] = []
+    return bundle
+
+
 def page_setup(st, title: str, *, icon: str = "📈", subtitle: str = "") -> dict:
     """Configure the page, apply the theme, read the data, draw the banner.
 

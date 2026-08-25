@@ -857,6 +857,7 @@ def test_the_pages_directory_matches_the_specified_layout():
         "00_Overview.py", "01_Status.py", "02_Signals.py", "03_Execution.py",
         "04_Positions.py", "05_Profit_and_Loss.py", "06_Logs.py",
         "07_Configuration.py", "08_Analytics.py", "09_Live_Helper.py",
+        "10_Risk.py",
     }
     assert {p.name for p in (UI / "pages").glob("*.py")} == expected
 
@@ -910,6 +911,134 @@ def test_the_status_page_expands_every_failing_check(populated, monkeypatch):
     drawn = " ".join(element.value for element in app.markdown)
     assert "what was found" in drawn
     assert "what to do" in drawn
+
+
+# --------------------------------------------------------------------------- #
+# The risk page shows what the snapshot says
+# --------------------------------------------------------------------------- #
+def risk_snapshot(**changes):
+    """A snapshot with a valued book, for pinning what the page renders."""
+    import pandas as pd
+
+    from cfdinvest.risk import RiskLimits, build_risk_snapshot
+
+    index = pd.bdate_range("2026-01-01", periods=2, tz="UTC", name="timestamp")
+    arguments = dict(
+        positions_frame=pd.DataFrame({"SPY": [0.0, 10.0], "GLD": [0.0, -5.0]}, index=index),
+        analysis_frame=pd.DataFrame(
+            {
+                "timestamp": pd.to_datetime(["2026-01-02"] * 2, utc=True),
+                "panel": ["prices.close"] * 2,
+                "series": ["SPY", "GLD"],
+                "value": [100.0, 80.0],
+            }
+        ),
+        limits=RiskLimits(
+            account_balance_gbp=2_000.0,
+            # Two positions are 71% concentrated by construction. This fixture
+            # is the inside-every-limit case, so the bound has to allow it.
+            max_instrument_concentration_pct=0.90,
+        ),
+        scheduler_status={"run_status": "OK", "message": "Last run completed."},
+        run_id="20260102-090000",
+    )
+    arguments.update(changes)
+    return build_risk_snapshot(**arguments)
+
+
+def render_risk(monkeypatch, snapshot):
+    """Render the risk page against one known snapshot.
+
+    The page reads the artefacts itself, so the fixture goes in at the read:
+    what is under test is what the page *does* with a snapshot, not whether
+    the snapshot is right -- tests/test_risk.py covers that.
+    """
+    import cfdinvest.risk as risk_package
+
+    monkeypatch.setattr(
+        risk_package, "snapshot_from_disk", lambda *a, **k: snapshot
+    )
+    return render("pages/10_Risk.py")
+
+
+def test_the_risk_page_shows_the_exposure_it_was_given(populated, monkeypatch):
+    app = render_risk(monkeypatch, risk_snapshot())
+    assert_clean(app, "pages/10_Risk.py")
+
+    shown = {metric.label: metric.value for metric in app.metric}
+    # 10 x 100 long and 5 x 80 short: 1,400 gross, 600 net, two positions.
+    assert shown["Gross exposure"] == "£1,400.00"
+    assert shown["Net exposure"] == "£600.00"
+    assert shown["Open positions"] == "2"
+
+
+def test_the_risk_page_lists_every_breach(populated, monkeypatch):
+    from cfdinvest.risk import RiskLimits
+
+    app = render_risk(
+        monkeypatch,
+        risk_snapshot(
+            limits=RiskLimits(
+                account_balance_gbp=2_000.0, max_total_exposure_gbp=500.0
+            )
+        ),
+    )
+    drawn = " ".join(element.value for element in app.error)
+
+    assert "limit" in drawn and "breached" in drawn
+    assert "Gross exposure" in drawn
+
+
+def test_a_flat_book_is_not_reported_as_a_breach(populated, monkeypatch):
+    import pandas as pd
+
+    index = pd.bdate_range("2026-01-01", periods=2, tz="UTC", name="timestamp")
+    app = render_risk(
+        monkeypatch,
+        risk_snapshot(
+            positions_frame=pd.DataFrame({"SPY": [0.0, 0.0]}, index=index),
+            analysis_frame=None,
+        ),
+    )
+    assert not app.error
+    assert "flat" in " ".join(element.value for element in app.info).lower()
+
+
+def test_the_risk_page_shows_a_dead_run_as_failed(populated, monkeypatch):
+    """The state the scheduler ordering exists to expose."""
+    app = render_risk(
+        monkeypatch,
+        risk_snapshot(
+            scheduler_status={
+                "run_status": "FAILED",
+                "message": "Last run started but did not complete.",
+                "failures": 1,
+            }
+        ),
+    )
+    drawn = " ".join(element.value for element in app.markdown)
+
+    assert "FAILED" in drawn
+    assert "did not complete" in drawn
+
+
+def test_the_risk_page_offers_no_control_that_changes_anything(
+    populated, monkeypatch
+):
+    """It is a dashboard. Nothing on it may close, size or place a trade.
+
+    The shared sidebar's "Refresh data" re-reads the lake, so the assertion
+    is not "no buttons" but "no button that acts on the book".
+    """
+    app = render_risk(monkeypatch, risk_snapshot())
+    labels = [button.label for button in app.button]
+
+    assert labels == ["Refresh data"]
+    forbidden = ("close", "sell", "buy", "place", "reduce", "hedge", "size")
+    assert not [
+        label for label in labels
+        if any(word in label.lower() for word in forbidden)
+    ]
 
 
 # --------------------------------------------------------------------------- #

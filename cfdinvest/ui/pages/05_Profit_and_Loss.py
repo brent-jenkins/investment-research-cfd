@@ -13,7 +13,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
-from cfdinvest.ui import components  # noqa: E402
+from cfdinvest.ui import components, sources  # noqa: E402
 
 data = components.page_setup(
     st,
@@ -54,7 +54,7 @@ def scaled(key):
     return None if value is None else float(value) * factor
 
 
-analytics = data["analytics"]
+analytics = data.get("analytics") or sources.Source.missing("not loaded")
 computed = (analytics.value or {}).get("metrics") or {}
 
 cells = st.columns(5)

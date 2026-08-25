@@ -79,6 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     account = parser.add_argument_group("your limits")
+    account.add_argument("--config", help="path to config.toml")
     account.add_argument("--balance", type=float, help="account balance")
     account.add_argument(
         "--used-margin", type=float, help="margin already committed"
@@ -93,6 +94,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="also send the summary, if SMTP is configured in the environment",
     )
     output.add_argument("--quiet", action="store_true", help="suppress stdout")
+    output.add_argument(
+        "--record",
+        action="store_true",
+        help="append this verdict to the assessment log, so the risk "
+        "dashboard can summarise what you have been considering",
+    )
     return parser
 
 
@@ -159,6 +166,22 @@ def _plain_message(config, instrument: str, status: str, body: str):
     return message
 
 
+def _record(intent, assessment, sizing, args) -> None:
+    """File a copy of the verdict. Never fails the check."""
+    try:
+        from cfdinvest.config import load_config
+        from cfdinvest.persist import assessments
+
+        app_config = load_config(args.config) if args.config else load_config()
+        path = assessments.record_assessment(
+            intent, assessment, sizing, app_config
+        )
+        if path and not args.quiet:
+            print(f"\n  Recorded to {path}")
+    except Exception as error:  # noqa: BLE001 - the answer was already given
+        logger.warning("Could not record the assessment: %s", error)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse, assess and print. Returns the verdict as an exit code."""
     args = build_parser().parse_args(argv)
@@ -184,6 +207,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not args.quiet:
         print(summary)
+    if args.record:
+        _record(intent, assessment, sizing, args)
     if args.email:
         email_summary(intent.instrument, assessment.status, summary)
 

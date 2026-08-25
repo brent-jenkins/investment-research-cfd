@@ -118,6 +118,45 @@ def build_parser() -> argparse.ArgumentParser:
         help="use APScheduler's cron triggers instead of the sleep loop",
     )
 
+    risk = commands.add_parser(
+        "risk-snapshot",
+        help="read the persisted artefacts and report the book's risk",
+        description=(
+            "Compute a risk snapshot from what the pipeline already wrote. "
+            "Reads artefacts and writes only the snapshot; it never runs the "
+            "pipeline, refreshes the lake or touches a position."
+        ),
+    )
+    risk.add_argument(
+        "--watch",
+        action="store_true",
+        help="keep taking snapshots on an interval instead of exiting",
+    )
+    risk.add_argument(
+        "--interval-minutes",
+        type=float,
+        default=15.0,
+        help="gap between snapshots when watching (default: 15)",
+    )
+    risk.add_argument(
+        "--max-observations",
+        type=int,
+        default=None,
+        help="stop after this many snapshots; unbounded by default",
+    )
+    risk.add_argument(
+        "--no-store", action="store_true", help="report without recording"
+    )
+    risk.add_argument(
+        "--balance",
+        type=float,
+        default=None,
+        help="account balance in GBP; the denominator of leverage and margin",
+    )
+    risk.add_argument(
+        "--account", default=None, help="which account's artefacts to read"
+    )
+
     commands.add_parser("send-test-email", help="prove the mail path works")
     commands.add_parser("market-status", help="show session state for the universe")
 
@@ -307,6 +346,57 @@ def _command_market_status(args, app_config) -> int:
     return EXIT_OK
 
 
+def _print_risk(observation) -> None:
+    """One observation, as the operator reads it."""
+    snapshot = observation.snapshot
+    marks = {"ok": "OK", "warning": "CHECK", "critical": "BREACH"}
+    print(
+        f"{observation.at:%Y-%m-%d %H:%M} UTC  "
+        f"[{marks.get(snapshot.severity, snapshot.severity)}]  {snapshot.message}"
+    )
+    for flag in snapshot.flags:
+        print(f"  ! {flag}")
+    for item in snapshot.unavailable:
+        print(f"  ? could not check: {item}")
+    if observation.stored_path:
+        print(f"  recorded: {observation.stored_path}")
+
+
+def _command_risk_snapshot(args, app_config) -> int:
+    """Report the book's risk. Runs no pipeline and moves no position."""
+    from cfdinvest.risk import RiskLimits, RiskMonitor, RiskMonitorConfig
+
+    limits = (
+        RiskLimits(account_balance_gbp=args.balance)
+        if args.balance is not None
+        else None
+    )
+    settings = RiskMonitorConfig(
+        interval_minutes=args.interval_minutes,
+        store=not args.no_store,
+        max_observations=args.max_observations if args.watch else 1,
+    )
+    monitor = RiskMonitor(
+        app_config,
+        settings,
+        account=args.account,
+        limits=limits,
+        on_observation=_print_risk,
+    )
+
+    if not args.watch:
+        observation = monitor.observe()
+        if observation is None:
+            print("Could not read the artefacts.", file=sys.stderr)
+            return EXIT_FAILED
+        return EXIT_OK if observation.severity != "critical" else EXIT_FAILED
+
+    observations = monitor.run_forever()
+    if not observations:
+        return EXIT_FAILED
+    return EXIT_OK if observations[-1].severity != "critical" else EXIT_FAILED
+
+
 def _command_crontab(args, app_config) -> int:
     """Print crontab lines covering the universe's sessions."""
     universe = _universe(args) or list(app_config.market.tickers)
@@ -335,6 +425,8 @@ def main(argv: list[str] | None = None) -> int:
             return _command_run_once(args, app_config, smtp, transport)
         if args.command == "run-continuous":
             return _command_run_continuous(args, app_config, smtp, transport)
+        if args.command == "risk-snapshot":
+            return _command_risk_snapshot(args, app_config)
         if args.command == "send-test-email":
             return _command_send_test_email(args, smtp, transport)
         if args.command == "market-status":
