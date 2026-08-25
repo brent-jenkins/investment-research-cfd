@@ -72,7 +72,9 @@ def _lake_metadata(config) -> dict[str, Any] | None:
     try:
         from cfdinvest.repository import DataRepository
 
-        coverage = DataRepository(config).coverage()
+        repository = DataRepository(config)
+        coverage = repository.coverage()
+        span = repository.coverage_span(include_macro=True)
     except Exception as error:  # noqa: BLE001
         logger.warning("Could not read lake coverage: %s", error)
         return None
@@ -80,15 +82,14 @@ def _lake_metadata(config) -> dict[str, Any] | None:
     if coverage is None or getattr(coverage, "empty", True):
         return None
 
-    column = next(
-        (name for name in ("end", "last", "newest", "end_date")
-         if name in coverage.columns),
-        None,
-    )
-    if column is None:
+    # Ask the repository rather than naming manifest columns here. The list
+    # this used to carry -- "end", "last", "newest", "end_date" -- matched
+    # nothing the ingestors actually write, so this returned None on every
+    # real lake and the freshness check silently never ran.
+    newest = span[1]
+    if newest is None:
         return None
 
-    newest = pd.to_datetime(coverage[column], utc=True, errors="coerce").max()
     return {
         "newest": newest,
         "tickers": sorted(str(t) for t in coverage.index),

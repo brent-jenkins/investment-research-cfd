@@ -213,7 +213,9 @@ def load_lake_metadata(
     except Exception as error:  # noqa: BLE001
         return Source.broken(f"lake metadata unreadable: {error}", path=str(root))
 
-    last_updated = _latest_end(coverage, macro)
+    # The repository owns this: three call sites used to spell the
+    # manifest's column names out themselves and all three guessed wrong.
+    _, last_updated = repository.coverage_span(include_macro=True)
     modes = sorted(set(macro["vintage_mode"])) if "vintage_mode" in macro else []
 
     calendar_age = None
@@ -249,20 +251,6 @@ def load_lake_metadata(
         return Source.missing("the lake holds no series yet", path=str(root),
                               value=metadata)
     return Source(value=metadata, path=str(root))
-
-
-def _latest_end(*frames: pd.DataFrame) -> pd.Timestamp | None:
-    """The most recent end date across every manifest frame."""
-    candidates = []
-    for frame in frames:
-        if frame is None or frame.empty:
-            continue
-        for column in ("end", "last_timestamp", "observation_end", "updated_at"):
-            if column in frame.columns:
-                values = pd.to_datetime(frame[column], utc=True, errors="coerce")
-                if values.notna().any():
-                    candidates.append(values.max())
-    return max(candidates) if candidates else None
 
 
 # --------------------------------------------------------------------------- #

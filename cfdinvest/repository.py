@@ -38,6 +38,39 @@ from cfdinvest.schema import (
 
 logger = logging.getLogger(__name__)
 
+#: Manifest keys holding the first and last *observation* in a series.
+#:
+#: The ingestors write ``first_timestamp`` / ``last_timestamp``
+#: (:class:`~cfdinvest.schema.IngestionReport`); the older spellings are kept
+#: so a lake written by an earlier version still reads.
+#:
+#: ``updated_at`` is deliberately absent. It is the moment the file was
+#: *written*, and a lake rewritten this morning from a feed that returned
+#: nothing new would look fresh while its data rots. Freshness is a property
+#: of the newest bar, never of the mtime -- reading the write time here is a
+#: check that can never fail, which is worse than no check at all.
+OBSERVATION_START_KEYS: tuple[str, ...] = (
+    "first_timestamp", "start", "observation_start",
+)
+OBSERVATION_END_KEYS: tuple[str, ...] = (
+    "last_timestamp", "end", "observation_end",
+)
+
+
+def _span_of(frame, keys: tuple[str, ...]):
+    """The extreme observation date in ``frame`` across ``keys``, or ``None``."""
+    if frame is None or getattr(frame, "empty", True):
+        return None
+    stamps = []
+    for key in keys:
+        if key in frame.columns:
+            values = pd.to_datetime(frame[key], utc=True, errors="coerce")
+            if values.notna().any():
+                stamps.append(values)
+    if not stamps:
+        return None
+    return pd.concat(stamps)
+
 
 class DataNotFoundError(FileNotFoundError):
     """Raised when a requested symbol has no data in the lake."""
@@ -249,6 +282,46 @@ class DataRepository:
         if not manifest:
             return pd.DataFrame()
         return pd.DataFrame(manifest).T.sort_index()
+
+    def coverage_span(
+        self, interval: str | None = None, *, include_macro: bool = False,
+    ) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+        """The oldest and newest observation in the lake, or ``(None, None)``.
+
+        The one place the lake's date span is computed. Three call sites used
+        to spell the manifest's column names out for themselves and all three
+        guessed wrong -- the monitoring layer looked for ``end``/``newest``,
+        the analytics CLI for ``start``/``end`` -- so on a real lake the
+        freshness check never ran and the sweep window silently lost its
+        bounds. Neither failed loudly, because both treat "no dates" as an
+        acceptable answer.
+
+        Absence is still named: a lake with no readable dates returns
+        ``None``, never a substituted "now".
+
+        Parameters
+        ----------
+        include_macro:
+            Fold the macro manifest in as well. Freshness wants this; a
+            backtest window does not, because macro series are published on
+            their own much slower calendars and would widen every window to
+            the oldest CPI print.
+        """
+        frames = [self.coverage(interval)]
+        if include_macro:
+            frames.append(self.macro_coverage())
+
+        starts = [s for s in (_span_of(f, OBSERVATION_START_KEYS) for f in frames)
+                  if s is not None]
+        ends = [e for e in (_span_of(f, OBSERVATION_END_KEYS) for f in frames)
+                if e is not None]
+
+        first = pd.concat(starts).min() if starts else None
+        last = pd.concat(ends).max() if ends else None
+        return (
+            None if first is None or pd.isna(first) else pd.Timestamp(first),
+            None if last is None or pd.isna(last) else pd.Timestamp(last),
+        )
 
     def macro_coverage(self) -> pd.DataFrame:
         """Return the macro manifest as a frame, including vintage mode.

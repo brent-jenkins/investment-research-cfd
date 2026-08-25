@@ -257,13 +257,28 @@ def lake(tmp_path) -> Path:
     (root / "metadata").mkdir(parents=True)
     (root / "logs").mkdir(parents=True)
 
+    # These are the keys the ingestors actually write -- see
+    # ``IngestionReport`` in schema.py. An earlier version of this fixture
+    # invented "rows"/"start"/"end", which no real lake contains, and that
+    # fiction hid three separate bugs: the monitoring layer and the analytics
+    # CLI both looked for column names nothing produced.
+    #
+    # ``updated_at`` is deliberately *now*, well after the last bar. A lake
+    # rewritten this morning from a feed that returned nothing new is stale,
+    # and reading the write time would make it look fresh.
     (root / "metadata" / "market_1d_manifest.json").write_text(
         json.dumps(
             {
-                "SPX": {"status": "ok", "rows": 300, "start": "2025-01-02",
-                        "end": "2026-08-22", "anomalies": {"zero_volume": 2}},
-                "UKX": {"status": "ok", "rows": 300, "start": "2025-01-02",
-                        "end": "2026-08-22", "anomalies": {}},
+                "SPX": {"status": "ok", "rows_total": 300,
+                        "first_timestamp": "2025-01-02",
+                        "last_timestamp": "2026-08-22",
+                        "updated_at": "2026-08-24T12:00:00+00:00",
+                        "anomalies": {"zero_volume": 2}},
+                "UKX": {"status": "ok", "rows_total": 300,
+                        "first_timestamp": "2025-01-02",
+                        "last_timestamp": "2026-08-22",
+                        "updated_at": "2026-08-24T12:00:00+00:00",
+                        "anomalies": {}},
             }
         ),
         encoding="utf-8",
@@ -272,8 +287,11 @@ def lake(tmp_path) -> Path:
         json.dumps(
             {
                 "CPIAUCSL": {
-                    "status": "ok", "rows": 60, "start": "2020-01-01",
-                    "end": "2026-07-01", "vintage_mode": "publication_lag",
+                    "status": "ok", "rows_total": 60,
+                    "first_timestamp": "2020-01-01",
+                    "last_timestamp": "2026-07-01",
+                    "updated_at": "2026-08-24T12:00:00+00:00",
+                    "vintage_mode": "publication_lag",
                 }
             }
         ),
@@ -398,6 +416,46 @@ def test_lake_freshness_is_the_newest_observation_not_a_file_time(lake):
     read = sources.load_lake_metadata(config_for(lake), now=NOW)
     assert read.value["last_updated"] == pd.Timestamp("2026-08-22", tz="UTC")
     assert read.value["age_days"] == pytest.approx(2.5, abs=0.01)
+
+
+def test_a_rewritten_lake_full_of_old_data_still_reads_stale(lake):
+    """The write time must never stand in for the newest bar.
+
+    This is the bug the fixture used to hide. ``updated_at`` in the manifest
+    is more recent than any bar, and folding it into the freshness figure
+    made a lake that had been rewritten this morning from a dead feed look
+    perfectly fresh -- a check that could not fail.
+    """
+    manifest_path = lake / "metadata" / "market_1d_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for entry in manifest.values():
+        entry["updated_at"] = NOW.isoformat()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    read = sources.load_lake_metadata(config_for(lake), now=NOW)
+
+    assert read.value["last_updated"] == pd.Timestamp("2026-08-22", tz="UTC")
+    assert read.value["age_days"] == pytest.approx(2.5, abs=0.01)
+
+
+def test_the_monitoring_layer_reads_the_same_lake_the_dashboard_does(lake):
+    """Monitoring must not spell the manifest's column names out for itself.
+
+    It used to look for "end"/"last"/"newest"/"end_date", none of which any
+    ingestor writes, so on a real lake it returned no metadata and the
+    freshness check silently never ran. The dashboard and the monitoring
+    layer are separate code paths on purpose -- monitoring has to work where
+    the UI was never installed -- but they must agree on the number.
+    """
+    from cfdinvest.monitoring.collect import _lake_metadata
+
+    metadata = _lake_metadata(config_for(lake))
+
+    assert metadata is not None, "monitoring could not read a readable lake"
+    assert metadata["newest"] == pd.Timestamp("2026-08-22", tz="UTC")
+
+    dashboard = sources.load_lake_metadata(config_for(lake), now=NOW)
+    assert metadata["newest"] == dashboard.value["last_updated"]
 
 
 def test_a_missing_lake_is_reported_not_raised(tmp_path):

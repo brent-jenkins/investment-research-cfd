@@ -69,11 +69,15 @@ def build_lake(root: Path, *, bars: int = BARS, seed: int = 7) -> AppConfig:
         storage.write_parquet(
             frame, storage.market_path(config.paths, ticker, INTERVAL)
         )
+        # The keys the ingestors really write (see ``IngestionReport``). The
+        # invented "rows"/"start"/"end" spelling used to live here, and it
+        # meant _window_bounds could read this fixture but never a real lake.
         manifest[ticker] = {
             "status": "ok",
-            "rows": int(bars),
-            "start": str(calendar[0].date()),
-            "end": str(calendar[-1].date()),
+            "rows_total": int(bars),
+            "first_timestamp": str(calendar[0].date()),
+            "last_timestamp": str(calendar[-1].date()),
+            "updated_at": "2026-08-25T12:00:00+00:00",
             "anomalies": {},
         }
 
@@ -1087,3 +1091,26 @@ def test_analytics_writes_nowhere_but_its_own_directory(lake):
     root = Path(lake.paths.data_root)
     assert (root / "analytics").is_dir()
     assert not (root / "runs").exists()
+
+
+def test_window_bounds_come_from_the_lake_not_from_nothing(lake, repository):
+    """The sweep window must read the lake's real span.
+
+    ``_period`` used to look for manifest columns named "start" and "end".
+    No ingestor writes either, so on a real lake both lookups missed and it
+    returned ``(None, None)`` -- and because "no bounds" is an acceptable
+    answer here, nothing ever complained. The windows were simply built over
+    a range nobody chose.
+    """
+    args = cli._with_defaults(cli.build_parser().parse_args(["run-once"]))
+    args.start = None
+    args.end = None
+
+    first, last = cli._period(args, repository, lake.market)
+
+    assert first is not None and last is not None, (
+        "the lake has a date span and _period returned nothing"
+    )
+    assert first < last
+    # And it must agree with the repository, which owns this.
+    assert (first, last) == repository.coverage_span(lake.market.interval)

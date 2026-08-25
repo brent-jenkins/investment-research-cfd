@@ -326,20 +326,20 @@ def _period(args, repository, config):
     if args.start and args.end:
         return pd.Timestamp(args.start), pd.Timestamp(args.end)
     try:
-        coverage = repository.coverage(config.interval)
+        # The repository owns the manifest's column names. Reading "start"
+        # and "end" here matched nothing a real lake contains, so this
+        # returned (None, None) every time and the windows quietly lost the
+        # bounds they were supposed to take from the data.
+        first, last = repository.coverage_span(config.interval)
     except Exception as error:  # noqa: BLE001
         logger.warning("Could not read coverage: %s", error)
         return None, None
-    if coverage is None or coverage.empty:
+    if first is None or last is None:
         return None, None
 
-    starts = pd.to_datetime(coverage.get("start"), utc=True, errors="coerce")
-    ends = pd.to_datetime(coverage.get("end"), utc=True, errors="coerce")
-    if starts is None or ends is None or starts.isna().all() or ends.isna().all():
-        return None, None
     return (
-        pd.Timestamp(args.start) if args.start else starts.min(),
-        pd.Timestamp(args.end) if args.end else ends.max(),
+        pd.Timestamp(args.start) if args.start else first,
+        pd.Timestamp(args.end) if args.end else last,
     )
 
 
