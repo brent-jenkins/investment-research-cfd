@@ -862,3 +862,46 @@ def test_the_scheduler_never_imports_the_dashboard():
         imported = _imports(path)
         assert not [m for m in imported if m.startswith("cfdinvest.ui")], path
         assert not [m for m in imported if m == "streamlit"], path
+
+
+def test_every_configured_instrument_has_real_trading_hours():
+    """The hard-coded list I said did not exist.
+
+    DEFAULT_ASSET_CLASSES still described the old universe after it changed,
+    so 34 of 41 instruments fell through to "other" and were gated on the
+    wrong session -- an index in Frankfurt treated like a US share.
+    """
+    from cfdinvest.config import load_config
+    from cfdinvest.schedule.market_calendar import asset_class_of
+
+    universe = list(load_config().market.tickers)
+    unclassified = [t for t in universe if asset_class_of(t) == "other"]
+
+    assert not unclassified, f"no trading hours for {unclassified}"
+
+
+def test_no_asset_class_points_at_a_session_that_does_not_exist():
+    """A class with no rule used to raise KeyError, which stops the whole
+    scheduler rather than the one instrument it could not classify."""
+    from cfdinvest.schedule.market_calendar import (
+        DEFAULT_ASSET_CLASSES, SESSIONS, session_for,
+    )
+
+    for ticker, kind in DEFAULT_ASSET_CLASSES.items():
+        assert kind in SESSIONS, f"{ticker} maps to {kind}, which has no session"
+
+    # And an unknown one falls back rather than raising.
+    assert session_for("NOT-A-REAL-TICKER") is SESSIONS["other"]
+
+
+def test_the_advisor_sizes_its_alerts_from_the_configured_balance():
+    """It said "About size unknown", which is the one thing it exists to
+    tell you: the daemon passed no balance, so cash and quantity were None."""
+    import inspect
+
+    from cfdinvest.schedule import app
+
+    body = inspect.getsource(app._command_advisor_alert)
+
+    assert "load_live_helper_config" in body
+    assert "account_balance_gbp" in body

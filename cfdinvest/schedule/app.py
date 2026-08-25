@@ -398,8 +398,20 @@ def _command_advisor_alert(args, app_config, smtp, transport) -> int:
     from cfdinvest.advisor import actions, alerts
 
     account = getattr(args, "account", None)
-    balance = getattr(args, "balance", None)
     threshold = getattr(args, "min_confidence", None)
+
+    balance = getattr(args, "balance", None)
+    if balance is None:
+        # From the live helper's configured balance -- the same number the
+        # sizing engine uses. Without it the alert said "size unknown",
+        # which is the one thing it exists to tell you.
+        try:
+            from cfdinvest.livehelper.config import load_live_helper_config
+
+            balance = load_live_helper_config().account_balance_gbp
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Advisor: no balance configured: %s", error)
+            balance = 0.0
 
     book, prices, latest, as_of = _advisor_inputs(app_config, account)
     watches = actions.positions_to_watch(book, prices=prices)

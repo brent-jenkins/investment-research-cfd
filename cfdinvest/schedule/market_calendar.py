@@ -157,18 +157,39 @@ SESSIONS: dict[str, SessionRule] = {
 #: Ticker -> asset class. Mirrors the signal layer's classification so a
 #: scheduled run and a backtest agree on what an instrument is.
 DEFAULT_ASSET_CLASSES: dict[str, str] = {
+    # US indices and US-listed shares -- the same New York session.
     **{
         t: "equity"
-        for t in ("SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "^GSPC")
+        for t in (
+            "^GSPC", "^NDX", "^DJI", "^RUT",
+            "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
+            "AVGO", "NFLX", "ADBE", "ORCL", "COST",
+            "JPM", "XOM", "JNJ", "INTC", "NKE", "LULU",
+            # Retired from the universe, kept so an older run still reads.
+            "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "EEM",
+            "PYPL", "DIS", "BA",
+        )
     },
-    **{t: "equity_eu" for t in ("EFA", "EWG", "EWU")},
-    **{t: "equity_jp" for t in ("EWJ",)},
-    **{t: "equity" for t in ("EEM",)},
+    **{t: "equity_eu" for t in (
+        "^FTSE", "^GDAXI", "^FCHI", "^STOXX50E", "EFA", "EWG", "EWU",
+    )},
+    **{t: "equity_jp" for t in ("^N225", "EWJ")},
+    # ^HSI is retired from the universe and there is no Hong Kong session
+    # rule, so it is deliberately absent rather than pointed at a class
+    # SESSIONS does not define.
     **{t: "bond" for t in ("TLT", "IEF", "HYG", "LQD", "AGG", "BND")},
-    **{t: "commodity" for t in ("GLD", "SLV", "USO", "DBC", "USCI")},
+    # Front-month futures. They trade nearly around the clock, which is what
+    # the commodity session already describes.
+    **{t: "commodity" for t in (
+        "GC=F", "SI=F", "HG=F", "PL=F", "CL=F", "BZ=F", "NG=F",
+        "GLD", "SLV", "USO", "DBC", "USCI",
+    )},
     **{
         t: "fx"
-        for t in ("EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCHF=X")
+        for t in (
+            "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X",
+            "USDCAD=X", "USDCHF=X", "NZDUSD=X", "EURGBP=X",
+        )
     },
     **{t: "volatility" for t in ("^VIX", "VIXY")},
     **{t: "crypto" for t in ("BTC-USD", "ETH-USD")},
@@ -263,8 +284,14 @@ def asset_class_of(asset: str, mapping: dict[str, str] | None = None) -> str:
 
 
 def session_for(asset: str, mapping: dict[str, str] | None = None) -> SessionRule:
-    """Return the session rule governing an asset."""
-    return SESSIONS[asset_class_of(asset, mapping)]
+    """Return the session rule governing an asset.
+
+    Falls back to ``other`` for a class with no rule. A missing session is a
+    gap in a table, and a scheduler that raises on one stops running every
+    instrument rather than the one it could not classify.
+    """
+    kind = asset_class_of(asset, mapping)
+    return SESSIONS.get(kind, SESSIONS["other"])
 
 
 def _to_utc(timestamp) -> pd.Timestamp:
