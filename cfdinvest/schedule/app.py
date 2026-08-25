@@ -202,6 +202,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop after this many ticks; for tests and dry runs",
     )
 
+    prune = commands.add_parser(
+        "prune-runs",
+        help="remove old run artefacts so the disk does not fill",
+        description=(
+            "A complete run is ~31MB and 98% of that is the analysis frame, "
+            "which is only read for the most recent run. Recent runs keep "
+            "everything; older ones keep the light artefacts; oldest go."
+        ),
+    )
+    prune.add_argument("--keep-full", type=int, default=None)
+    prune.add_argument("--keep-runs", type=int, default=None)
+    prune.add_argument(
+        "--dry-run", dest="prune_dry_run", action="store_true",
+        help="report what would go without removing anything",
+    )
+    prune.add_argument("--account", default=None)
+
     commands.add_parser("send-test-email", help="prove the mail path works")
     commands.add_parser("market-status", help="show session state for the universe")
 
@@ -358,6 +375,34 @@ def _command_run_continuous(args, app_config, smtp, transport) -> int:
     return EXIT_OK
 
 
+def _command_prune_runs(args, app_config) -> int:
+    """Remove old run artefacts. Never fails the caller."""
+    from cfdinvest.persist import retention
+
+    result = retention.prune_runs(
+        app_config,
+        account=getattr(args, "account", None),
+        keep_full=(
+            retention.DEFAULT_KEEP_FULL if getattr(args, "keep_full", None) is None
+            else args.keep_full
+        ),
+        keep_runs=(
+            retention.DEFAULT_KEEP_RUNS if getattr(args, "keep_runs", None) is None
+            else args.keep_runs
+        ),
+        dry_run=bool(getattr(args, "prune_dry_run", False)),
+    )
+    if result.get("error"):
+        print(f"Pruning skipped: {result['error']}", file=sys.stderr)
+        return EXIT_OK
+    print(
+        f"Slimmed {len(result['slimmed'])}, removed {len(result['deleted'])}, "
+        f"freed {result['freed_bytes'] / 1e6:.1f} MB"
+        + (" (dry run)" if result["dry_run"] else "")
+    )
+    return EXIT_OK
+
+
 def _command_poll_live_quotes(args, app_config) -> int:
     """Fetch the current price for everything confirmed open, and store it.
 
@@ -427,6 +472,8 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
             )
         elif name == "risk-snapshot":
             _command_risk_snapshot(_job_args(args, "risk-snapshot"), app_config)
+        elif name == "prune-runs":
+            _command_prune_runs(_job_args(args, "prune-runs"), app_config)
 
     print(
         "cfdinvest scheduler daemon. Quotes every "
@@ -662,6 +709,8 @@ def main(argv: list[str] | None = None) -> int:
             return _command_market_status(args, app_config)
         if args.command == "crontab":
             return _command_crontab(args, app_config)
+        if args.command == "prune-runs":
+            return _command_prune_runs(args, app_config)
         if args.command == "poll-live-quotes":
             return _command_poll_live_quotes(args, app_config)
         if args.command == "daemon":

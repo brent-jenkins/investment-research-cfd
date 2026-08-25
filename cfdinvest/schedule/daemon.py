@@ -52,6 +52,7 @@ JOBS: tuple[str, ...] = (
     "run-daily",
     "monitoring-snapshot",
     "risk-snapshot",
+    "prune-runs",
 )
 
 
@@ -112,5 +113,8 @@ def jobs_due(now, last_run: Mapping[str, object] | None = None) -> list[str]:
     if "run-daily" in due:
         due.append("monitoring-snapshot")
         due.append("risk-snapshot")
+        # After the snapshots, so a run is only ever pruned once everything
+        # that describes it has been written.
+        due.append("prune-runs")
 
     return [job for job in JOBS if job in due]

@@ -609,3 +609,116 @@ def test_an_unreadable_dotenv_is_ignored_not_fatal(tmp_path, monkeypatch):
     # because chmod is not reliably enforced for the owner or on Windows.
     assert load_dotenv(tmp_path) == {}
     assert load_dotenv(tmp_path / "absent.env") == {}
+
+
+# --------------------------------------------------------------------------- #
+# Keeping the disk from filling
+# --------------------------------------------------------------------------- #
+def test_the_newest_run_is_never_touched_however_the_policy_is_set():
+    """A retention policy that can delete what the dashboard is about to
+    open is a bug with a schedule attached."""
+    from cfdinvest.persist import retention
+
+    runs = ["20260101T000000Z", "20260102T000000Z", "20260103T000000Z"]
+
+    for keep_full, keep_runs in ((0, 0), (1, 1), (-5, -5)):
+        plan = retention.plan_pruning(runs, keep_full=keep_full, keep_runs=keep_runs)
+        assert plan.keep_whole[0] == "20260103T000000Z", (keep_full, keep_runs)
+        assert "20260103T000000Z" not in plan.slim
+        assert "20260103T000000Z" not in plan.delete
+
+
+def test_recent_runs_keep_everything_and_older_ones_are_slimmed():
+    from cfdinvest.persist import retention
+
+    runs = [f"2026010{n}T000000Z" for n in range(1, 8)]
+    plan = retention.plan_pruning(runs, keep_full=2, keep_runs=5)
+
+    assert plan.keep_whole == ("20260107T000000Z", "20260106T000000Z")
+    assert plan.slim == ("20260105T000000Z", "20260104T000000Z", "20260103T000000Z")
+    assert plan.delete == ("20260102T000000Z", "20260101T000000Z")
+    # Nothing is in two buckets at once.
+    assert not set(plan.slim) & set(plan.delete)
+    assert not set(plan.keep_whole) & set(plan.slim)
+
+
+def test_only_rebuildable_artefacts_are_removed():
+    """Both can be produced again -- the analysis frame from the lake,
+    attribution from the trades. The record of what the system did is not
+    something pruning may take."""
+    from cfdinvest.persist import retention
+
+    assert set(retention.HEAVY_ARTEFACTS) == {
+        "analysis.parquet", "attribution.parquet"
+    }
+    for irreplaceable in ("trades.parquet", "equity.parquet", "pnl.parquet",
+                          "summary.json", "signals.parquet", "positions.parquet"):
+        assert irreplaceable not in retention.HEAVY_ARTEFACTS
+
+
+def test_pruning_slims_the_heavy_artefacts_and_leaves_the_record(tmp_path):
+    from cfdinvest.config import AppConfig, PathConfig
+    from cfdinvest.persist import retention
+
+    config = AppConfig(paths=PathConfig(data_root=tmp_path))
+    root = tmp_path / "runs"
+    for run in ("20260101T000000Z", "20260102T000000Z", "20260103T000000Z"):
+        directory = root / run
+        directory.mkdir(parents=True)
+        for name in ("analysis.parquet", "attribution.parquet",
+                     "trades.parquet", "summary.json"):
+            (directory / name).write_bytes(b"x" * 1000)
+
+    result = retention.prune_runs(config, keep_full=1, keep_runs=365)
+
+    newest = root / "20260103T000000Z"
+    older = root / "20260101T000000Z"
+    assert (newest / "analysis.parquet").exists(), "the newest keeps everything"
+    assert not (older / "analysis.parquet").exists()
+    assert not (older / "attribution.parquet").exists()
+    # The record of the run survives.
+    assert (older / "trades.parquet").exists()
+    assert (older / "summary.json").exists()
+    assert result["freed_bytes"] == 4000
+
+
+def test_a_dry_run_removes_nothing_but_reports_what_it_would(tmp_path):
+    from cfdinvest.config import AppConfig, PathConfig
+    from cfdinvest.persist import retention
+
+    config = AppConfig(paths=PathConfig(data_root=tmp_path))
+    directory = tmp_path / "runs" / "20260101T000000Z"
+    directory.mkdir(parents=True)
+    (directory / "analysis.parquet").write_bytes(b"x" * 500)
+    (tmp_path / "runs" / "20260102T000000Z").mkdir()
+
+    result = retention.prune_runs(config, keep_full=1, keep_runs=365, dry_run=True)
+
+    assert result["dry_run"] and result["freed_bytes"] == 500
+    assert (directory / "analysis.parquet").exists(), "a dry run must remove nothing"
+
+
+def test_pruning_never_raises_on_an_unreadable_root(tmp_path):
+    """It runs after a pipeline run. A failed delete must not lose the run
+    that just completed."""
+    from cfdinvest.config import AppConfig, PathConfig
+    from cfdinvest.persist import retention
+
+    config = AppConfig(paths=PathConfig(data_root=tmp_path / "does-not-exist"))
+    result = retention.prune_runs(config)
+
+    assert result["deleted"] == [] and result["slimmed"] == []
+
+
+def test_the_daemon_prunes_after_the_snapshots_not_before():
+    """A run is only pruned once everything describing it has been written."""
+    import pandas as pd
+
+    from cfdinvest.schedule import daemon
+
+    due = daemon.jobs_due(pd.Timestamp("2026-08-25 04:00", tz="UTC"), {})
+
+    assert "prune-runs" in due
+    assert due.index("prune-runs") > due.index("run-daily")
+    assert due.index("prune-runs") > due.index("monitoring-snapshot")
+    assert due.index("prune-runs") > due.index("risk-snapshot")
