@@ -803,7 +803,13 @@ def render(page: str):
     """
     from streamlit.testing.v1 import AppTest
 
+    from cfdinvest.ui import auth
+
     app = AppTest.from_file(str(UI / page), default_timeout=60)
+    # Sign in before running. Every page is gated by page_setup, so without
+    # this each of these would assert against a login form -- which is
+    # itself worth a test, and is one, below.
+    app.session_state[auth.SESSION_KEY] = "tester"
     app.run()
     return app
 
@@ -937,6 +943,7 @@ def test_the_pages_directory_matches_the_specified_layout():
         "18_Routing.py",
         "19_T212_Rules.py",
         "20_Meta_Strategy.py",
+        "21_Account.py",
     }
     assert {p.name for p in (UI / "pages").glob("*.py")} == expected
 
@@ -1178,13 +1185,16 @@ def test_the_risk_page_offers_no_control_that_changes_anything(
 ):
     """It is a dashboard. Nothing on it may close, size or place a trade.
 
-    The shared sidebar's "Refresh data" re-reads the lake, so the assertion
-    is not "no buttons" but "no button that acts on the book".
+    The shared sidebar's "Refresh data" re-reads the lake and "Sign out"
+    ends the session, so the assertion is not "no buttons" but "no button
+    that acts on the book". Listing the chrome explicitly rather than
+    loosening the check: a new button appearing here should fail this test
+    until someone has looked at it.
     """
     app = render_risk(monkeypatch, risk_snapshot())
     labels = [button.label for button in app.button]
 
-    assert labels == ["Refresh data"]
+    assert sorted(labels) == ["Refresh data", "Sign out"]
     forbidden = ("close", "sell", "buy", "place", "reduce", "hedge", "size")
     assert not [
         label for label in labels
@@ -1661,3 +1671,180 @@ def test_colouring_never_takes_a_table_down():
 
     frame = Awkward({"status": ["ok"]})
     assert components.style_states(frame, "dark") is frame
+
+
+# --------------------------------------------------------------------------- #
+# Sign-in
+# --------------------------------------------------------------------------- #
+def auth_config(tmp_path):
+    from cfdinvest.config import AppConfig, PathConfig
+
+    return AppConfig(paths=PathConfig(data_root=tmp_path))
+
+
+def test_a_password_is_never_stored_in_the_clear(tmp_path):
+    """The file must not contain the password under any key."""
+    from cfdinvest.ui import auth
+
+    config = auth_config(tmp_path)
+    auth.save_credentials(
+        {"users": {"admin": auth.hash_password("correct horse battery")}}, config
+    )
+
+    body = auth.credentials_path(config).read_text(encoding="utf-8")
+    assert "correct horse battery" not in body
+    assert "scrypt" in body
+    assert auth.check_login("admin", "correct horse battery", config)
+    assert not auth.check_login("admin", "wrong", config)
+
+
+def test_two_identical_passwords_hash_differently(tmp_path):
+    """Salted per credential, so one cracked hash is not two."""
+    from cfdinvest.ui import auth
+
+    first = auth.hash_password("the same password")
+    second = auth.hash_password("the same password")
+
+    assert first["salt"] != second["salt"]
+    assert first["hash"] != second["hash"]
+    assert auth.verify_password("the same password", first)
+    assert auth.verify_password("the same password", second)
+
+
+def test_an_unknown_user_is_refused_without_saying_so(tmp_path):
+    from cfdinvest.ui import auth
+
+    config = auth_config(tmp_path)
+    auth.save_credentials({"users": {"admin": auth.hash_password("x" * 14)}}, config)
+
+    assert not auth.check_login("nobody", "x" * 14, config)
+    assert not auth.check_login("", "", config)
+
+
+def test_changing_a_password_requires_the_current_one(tmp_path):
+    """A session left open must not be enough to lock the owner out."""
+    from cfdinvest.ui import auth
+
+    config = auth_config(tmp_path)
+    auth.save_credentials({"users": {"admin": auth.hash_password("old password 1")}},
+                          config)
+
+    changed, message = auth.change_password(
+        "admin", "not the password", "brand new password", "brand new password",
+        config,
+    )
+    assert not changed and "current password" in message
+    assert auth.check_login("admin", "old password 1", config)
+
+    changed, _ = auth.change_password(
+        "admin", "old password 1", "brand new password", "brand new password",
+        config,
+    )
+    assert changed
+    assert auth.check_login("admin", "brand new password", config)
+    assert not auth.check_login("admin", "old password 1", config)
+
+
+@pytest.mark.parametrize(
+    "new, confirm, fragment",
+    [("short", "short", "12 characters"),
+     ("a long enough one", "a different one", "do not match"),
+     ("old password 1", "old password 1", "already using")],
+    ids=["too short", "mismatched", "unchanged"],
+)
+def test_a_bad_new_password_is_refused_with_a_reason(tmp_path, new, confirm, fragment):
+    from cfdinvest.ui import auth
+
+    config = auth_config(tmp_path)
+    auth.save_credentials({"users": {"admin": auth.hash_password("old password 1")}},
+                          config)
+
+    changed, message = auth.change_password(
+        "admin", "old password 1", new, confirm, config
+    )
+
+    assert not changed
+    assert fragment in message
+    # And the old one still works: a refused change must change nothing.
+    assert auth.check_login("admin", "old password 1", config)
+
+
+def test_the_environment_seeds_an_account_but_never_resets_one(tmp_path, monkeypatch):
+    """Otherwise every restart would undo a password the owner had changed."""
+    from cfdinvest.ui import auth
+
+    config = auth_config(tmp_path)
+    monkeypatch.setenv("CFD_DASHBOARD_PASSWORD", "seeded password one")
+
+    assert auth.bootstrap_from_environment(config)
+    assert auth.check_login("admin", "seeded password one", config)
+
+    auth.change_password("admin", "seeded password one", "chosen by me now",
+                         "chosen by me now", config)
+
+    # Second bootstrap must be a no-op even though the variable still says so.
+    assert not auth.bootstrap_from_environment(config)
+    assert auth.check_login("admin", "chosen by me now", config)
+    assert not auth.check_login("admin", "seeded password one", config)
+
+
+def test_no_account_is_created_without_a_password_in_the_environment(
+    tmp_path, monkeypatch
+):
+    """There is no sign-up screen on purpose.
+
+    An unclaimed dashboard on a public address belongs to whoever finds it
+    first, so an unconfigured deployment refuses everyone rather than
+    offering to enrol the first visitor.
+    """
+    from cfdinvest.ui import auth
+
+    config = auth_config(tmp_path)
+    monkeypatch.delenv("CFD_DASHBOARD_PASSWORD", raising=False)
+
+    assert not auth.bootstrap_from_environment(config)
+    assert not auth.is_configured(config)
+    assert not auth.check_login("admin", "anything", config)
+
+
+def _anonymous_overview(monkeypatch, populated):
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(str(UI / "pages" / "00_Overview.py"), default_timeout=60)
+    app.run()
+    return app
+
+
+def test_an_anonymous_visitor_gets_no_page_content(monkeypatch, populated):
+    """The gate must withhold the page, not merely decorate it."""
+    monkeypatch.setenv("CFD_DASHBOARD_PASSWORD", "a seeded password")
+
+    app = _anonymous_overview(monkeypatch, populated)
+
+    rendered = " ".join(
+        [block.value for block in app.markdown]
+        + [header.value for header in app.subheader]
+        + [title.value for title in app.title]
+    )
+    for heading in ("Open positions", "Last pipeline run", "Next scheduled run"):
+        assert heading not in rendered, heading
+    # The sign-in form is what is offered instead.
+    assert any("Sign in" in header.value for header in app.subheader)
+
+
+def test_an_unconfigured_dashboard_refuses_everyone(monkeypatch, populated):
+    """No sign-up screen: an unclaimed dashboard belongs to whoever finds it."""
+    monkeypatch.delenv("CFD_DASHBOARD_PASSWORD", raising=False)
+    # The fixture lake is shared, so an account seeded by an earlier test
+    # would still be there. This test is about the unconfigured state.
+    from cfdinvest.ui import auth
+
+    store = auth.credentials_path()
+    if store.exists():
+        store.unlink()
+
+    app = _anonymous_overview(monkeypatch, populated)
+
+    errors = " ".join(block.value for block in app.error)
+    assert "No dashboard account exists" in errors
+    assert not any("Sign in" in header.value for header in app.subheader)

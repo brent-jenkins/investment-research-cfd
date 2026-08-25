@@ -530,3 +530,27 @@ happens here, which is an argument Streamlit no longer accepts.
 A hand-written stub was tried first. It passed everything, including a
 `st.dataframe(height=None)` call that the real runtime rejects on every page
 that used it. A permissive stub tests the stub.
+
+
+## Sign-in, and the one file this layer writes
+
+Every other page here opens files the pipeline wrote and renders them. The
+Account page writes one: `<data_root>/auth/credentials.json`, mode `0600`,
+holding a salted scrypt hash. Nothing else in the dashboard writes anything.
+
+That is a deliberate exception to this layer's read-only rule, and the rule
+it bends is worth restating: read-only here is about the *pipeline's
+artefacts*. A credential you cannot change without a deploy is a credential
+nobody changes.
+
+**A login form is a weaker boundary than the reverse proxy's basic auth.**
+Basic auth is checked before the request reaches the application; this gate
+is checked by the application, so Streamlit's own endpoints stay reachable
+and only the rendered page is withheld. What it buys is a session, a sign
+out, and a password changeable from the app. Reasonable for a dashboard
+holding no personal data that can place no trade; not for anything else.
+
+The account is seeded from `CFD_DASHBOARD_PASSWORD`. There is no first-run
+"choose a password" screen on purpose — an unclaimed dashboard on a public
+address belongs to whoever finds it first, so an unconfigured deployment
+refuses everyone rather than enrolling the first visitor.

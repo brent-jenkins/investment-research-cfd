@@ -62,6 +62,8 @@ __all__ = [
     "clock",
     "coverage_table",
     "render_state_card",
+    "require_login",
+    "render_sign_out",
     "state_colour",
     "style_states",
     "describe_flags",
@@ -237,6 +239,72 @@ def _empty_bundle() -> dict[str, Any]:
     return bundle
 
 
+def require_login(st) -> str | None:
+    """Draw the sign-in screen unless already signed in. Returns the user.
+
+    Called from :func:`page_setup`, so every page is gated by the one path
+    each of them already goes through -- a page that forgot to call this
+    would also have no theme, no banner and no data, which is the kind of
+    mistake that announces itself.
+
+    Stops the script when not signed in. Nothing after this point renders,
+    so no page content reaches an anonymous visitor.
+    """
+    from cfdinvest.ui import auth
+
+    if st.session_state.get(auth.SESSION_KEY):
+        return st.session_state[auth.SESSION_KEY]
+
+    auth.bootstrap_from_environment()
+
+    if not auth.is_configured():
+        st.error(
+            "**No dashboard account exists.** Set `CFD_DASHBOARD_PASSWORD` "
+            "in `/etc/cfdinvest/env` and restart the dashboard. There is no "
+            "sign-up screen on purpose: an unclaimed dashboard on a public "
+            "address belongs to whoever finds it first."
+        )
+        st.stop()
+
+    _, middle, _ = st.columns([1, 2, 1])
+    with middle:
+        with st.form("cfd_sign_in"):
+            st.subheader("Sign in")
+            username = st.text_input("Username", autocomplete="username")
+            password = st.text_input(
+                "Password", type="password", autocomplete="current-password"
+            )
+            if st.form_submit_button("Sign in", width="stretch"):
+                if auth.check_login(username, password):
+                    st.session_state[auth.SESSION_KEY] = username.strip()
+                    st.session_state.pop("cfd_login_failed", None)
+                    st.rerun()
+                else:
+                    # One message for a bad name and a bad password. Telling
+                    # them apart tells an attacker which names exist.
+                    st.session_state["cfd_login_failed"] = True
+
+        if st.session_state.get("cfd_login_failed"):
+            st.error("Those credentials were not recognised.")
+
+    st.stop()
+    return None
+
+
+def render_sign_out(st) -> None:
+    """The signed-in user and a way out, in the sidebar."""
+    from cfdinvest.ui import auth
+
+    user = st.session_state.get(auth.SESSION_KEY)
+    if not user:
+        return
+    with st.sidebar:
+        st.caption(f"Signed in as **{user}**")
+        if st.button("Sign out", width="stretch"):
+            st.session_state.pop(auth.SESSION_KEY, None)
+            st.rerun()
+
+
 def page_setup(st, title: str, *, icon: str = "📈", subtitle: str = "") -> dict:
     """Configure the page, apply the theme, read the data, draw the banner.
 
@@ -254,6 +322,11 @@ def page_setup(st, title: str, *, icon: str = "📈", subtitle: str = "") -> dic
     mode = theme.apply(st)
     render_brand(st, mode)
     st.session_state["cfd_mode"] = mode
+
+    # Before anything is read or drawn. An anonymous visitor should not be
+    # able to tell from the page whether the pipeline has even run.
+    require_login(st)
+    render_sign_out(st)
 
     data = read_everything(st)
     data["mode"] = mode
