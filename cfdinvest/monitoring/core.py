@@ -48,6 +48,7 @@ __all__ = [
     "MonitoringThresholds",
     "MonitoringIssue",
     "check_lake_freshness",
+    "check_live_quote_freshness",
     "check_scheduler_health",
     "check_disk_space",
     "check_run_failures",
@@ -58,8 +59,10 @@ __all__ = [
     "check_system_resources",
 ]
 
-#: What an issue is about. Matches the spec's categories.
+#: What an issue is about. Matches the spec's categories, plus ``livequotes``
+#: for the intraday price poller, which post-dates them.
 TYPES: tuple[str, ...] = (
+    "livequotes",
     "lake", "scheduler", "disk", "run", "confirm", "email", "pipeline", "system",
 )
 
@@ -222,6 +225,66 @@ def _unreadable(kind: str, what: str, why: str = "") -> MonitoringIssue:
 # --------------------------------------------------------------------------- #
 # Lake
 # --------------------------------------------------------------------------- #
+def check_live_quote_freshness(
+    quote_document: Mapping[str, Any] | None,
+    *,
+    now: pd.Timestamp | None = None,
+) -> list[MonitoringIssue]:
+    """Are the live quotes recent enough for the helper to prefer them?
+
+    A **warning**, never critical. Stale quotes are not a broken system: the
+    live helper and the risk snapshot both fall back to the daily bar on
+    their own, which is what they did before quotes existed. What is worth
+    saying is that the fallback is happening, because from the outside a
+    quiet poller and a quiet market look identical.
+
+    Absence of the file is not reported here. A deployment that has never
+    polled has not failed at anything, and warning about a feature nobody
+    switched on trains you to ignore the banner.
+    """
+    from cfdinvest.livequotes.storage import DEFAULT_MAX_AGE_MINUTES, age_minutes
+
+    moment = _now(now)
+    quotes = (quote_document or {}).get("quotes") or {}
+    if not quotes:
+        return []
+
+    age = age_minutes(quote_document, moment)
+    if age is None:
+        return [
+            _unreadable(
+                "livequotes",
+                "Live quote freshness",
+                "the quote file does not say when it was taken",
+            )
+        ]
+    if age <= DEFAULT_MAX_AGE_MINUTES:
+        return []
+
+    return [
+        MonitoringIssue(
+            type="livequotes",
+            severity="warning",
+            message=(
+                f"Live quotes are {age:.0f} minutes old "
+                f"(threshold {DEFAULT_MAX_AGE_MINUTES:.0f}); the daily bar "
+                "is being used instead."
+            ),
+            timestamp=moment,
+            details={
+                "age_minutes": age,
+                "threshold_minutes": DEFAULT_MAX_AGE_MINUTES,
+                "instruments": sorted(str(k) for k in quotes),
+            },
+            remedy=(
+                "Check the scheduler daemon is running "
+                "(`systemctl status cfdinvest`). Prices in the helper are "
+                "yesterday's close until it is."
+            ),
+        )
+    ]
+
+
 def check_lake_freshness(
     lake_metadata: Mapping[str, Any] | None,
     thresholds: MonitoringThresholds | None = None,

@@ -97,6 +97,22 @@ def _lake_metadata(config) -> dict[str, Any] | None:
     }
 
 
+def _live_quotes(config) -> dict | None:
+    """The quote file, or ``None`` when it cannot be read.
+
+    Reads through ``livequotes.storage``, which opens files and nothing else.
+    The monitoring layer must stay free of anything that can open a socket --
+    that is what its own import test asserts.
+    """
+    try:
+        from cfdinvest.livequotes.storage import load_quotes
+
+        return load_quotes(config)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not read live quotes: %s", error)
+        return None
+
+
 def collect_issues(
     config=None,
     *,
@@ -155,6 +171,9 @@ def collect_issues(
     issues: list[MonitoringIssue] = []
     issues += _guarded("lake", "lake freshness", lambda: core.check_lake_freshness(
         _lake_metadata(config), limits, now=moment))
+    issues += _guarded("livequotes", "live quote freshness",
+                       lambda: core.check_live_quote_freshness(
+                           _live_quotes(config), now=moment))
     issues += _guarded("scheduler", "scheduler health", lambda: core.check_scheduler_health(
         state, limits, now=moment))
     issues += _guarded("disk", "disk space", lambda: core.check_disk_space(

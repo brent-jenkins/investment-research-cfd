@@ -14,6 +14,7 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from cfdinvest.schema import TICKER, TIMESTAMP  # noqa: E402
+from cfdinvest.livehelper import t212_instruments
 from cfdinvest.ui import components, explain  # noqa: E402
 
 data = components.page_setup(
@@ -108,6 +109,21 @@ else:
                 )
                 st.caption(explain.reason(row.get("reason")))
                 st.caption(components.short_moment(row.get(TIMESTAMP)))
+                # What to search for in Trading 212. Eleven of the configured
+                # instruments have no CFD at all, and a recommendation you
+                # cannot act on should say so here rather than after you have
+                # gone looking for it.
+                held = t212_instruments.mapping_for(str(ticker))
+                if held.tradable:
+                    st.caption(
+                        f"**Trading 212:** {held.name}"
+                        + ("" if held.exact else f" ({held.relationship})")
+                        + ("" if held.confirmed else " · unconfirmed")
+                    )
+                elif held.relationship == "none":
+                    st.caption(":orange[Not tradable on Trading 212.]")
+                else:
+                    st.caption(":orange[No Trading 212 instrument recorded.]")
             with strength:
                 components.render_kv(
                     st,

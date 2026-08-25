@@ -1,0 +1,40 @@
+# A watchdog for cfdinvest.service.
+#
+#   sudo systemctl enable --now cfdinvest.timer
+#
+# What this is NOT for
+# --------------------
+# It does not schedule the work. cfdinvest.service is a long-running loop
+# that owns its own cadences -- quotes every five minutes, ingestion at
+# 03:00, the pipeline at 03:05 -- and Restart=always already brings it back
+# from an ordinary crash. A timer firing at a service that is continuously
+# active would do nothing at all: starting a running unit is a no-op.
+#
+# What it IS for
+# --------------
+# The one case Restart=always does not cover. cfdinvest.service sets
+# StartLimitBurst=5 in 300s, deliberately: a daemon crash-looping against a
+# vendor endpoint is worse than a stopped one, because it looks like it is
+# working. But when that limit trips, systemd gives up *permanently* and the
+# scheduler stays down until someone notices.
+#
+# This fires every minute and starts the unit if it is not running. During
+# normal operation it is a no-op; after a start-limit stop it recovers the
+# scheduler on the next minute. The cause is still in the journal and the
+# monitoring snapshot still reports what went stale in the meantime.
+
+[Unit]
+Description=Keep the cfdinvest scheduler running
+Documentation=https://github.com/brent-jenkins/cfdinvest
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+# Without this the timer's clock only advances while the unit is active,
+# which is the opposite of what a watchdog needs.
+OnUnitInactiveSec=1min
+AccuracySec=10s
+Unit=cfdinvest.service
+
+[Install]
+WantedBy=timers.target

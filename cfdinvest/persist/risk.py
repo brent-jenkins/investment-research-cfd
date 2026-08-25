@@ -53,6 +53,25 @@ def _jsonable(value: Any) -> Any:
     return jsonable(value)
 
 
+def _live_price_used(config=None, account: str | None = None) -> bool:
+    """Whether a usable live quote existed when this snapshot was taken.
+
+    Reads the quote file only -- this module must not be able to fetch one.
+    A missing, empty or stale file is ``False``, which is the honest answer:
+    the snapshot was priced from the lake.
+    """
+    try:
+        from cfdinvest.livequotes import storage as quote_store
+
+        document = quote_store.load_quotes(config, account)
+        if not (document.get("quotes") or {}):
+            return False
+        age = quote_store.age_minutes(document)
+        return age is not None and age <= quote_store.DEFAULT_MAX_AGE_MINUTES
+    except Exception:  # noqa: BLE001 - never fail a snapshot over a nicety
+        return False
+
+
 def write_risk_snapshot(
     snapshot, config=None, *, account: str | None = None,
     scheduler_status: dict | None = None, now: pd.Timestamp | None = None,
@@ -79,6 +98,11 @@ def write_risk_snapshot(
             "flags": _jsonable(payload.get("flags", ())),
             "severity": getattr(snapshot, "severity", None),
         },
+        # Whether this reading priced the book from a live quote or from
+        # yesterday's close. A snapshot that does not say cannot be compared
+        # with one taken on the other basis, and the difference is exactly
+        # the kind that looks like a market move.
+        "live_price_used": _live_price_used(config, account),
     }
 
     path = risk_root(config, account) / f"{moment.strftime(FILENAME_FORMAT)}-risk.json"

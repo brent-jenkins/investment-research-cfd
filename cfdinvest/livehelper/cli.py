@@ -27,6 +27,8 @@ from cfdinvest.livehelper.config import LiveHelperConfig, load_live_helper_confi
 from cfdinvest.livehelper.intent import parse_trade_intent
 from cfdinvest.livehelper.safety import MarketState, evaluate_trade_safety
 from cfdinvest.livehelper.sizing_helper import compute_safe_sizing
+from cfdinvest.livehelper.price_source import resolve_price
+from cfdinvest.livehelper.t212_instruments import describe_mapping, mapping_for
 from cfdinvest.livehelper.summary import build_execution_helper_summary
 
 logger = logging.getLogger(__name__)
@@ -201,6 +203,19 @@ def _record(intent, assessment, sizing, args) -> None:
         logger.warning("Could not record the assessment: %s", error)
 
 
+def _wrap_note(note: str) -> str:
+    """The price-source note, wrapped to the summary's own width.
+
+    The block is 68 columns and unwrapped lines have escaped it before, so
+    this goes through textwrap rather than trusting the note to be short.
+    """
+    import textwrap
+
+    from cfdinvest.livehelper.summary import WIDTH
+
+    return "\n".join(textwrap.wrap(note, WIDTH)) if note else ""
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Parse, assess and print. Returns the verdict as an exit code."""
     args = build_parser().parse_args(argv)
@@ -217,6 +232,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     limits = _config(args)
     market = _market(args)
+
+    # Where the price came from, and the note that says so. A live quote is
+    # preferred only while it is demonstrably fresh; otherwise this falls
+    # back to the daily bar, which is what the helper used before quotes
+    # existed. What you typed always wins over both.
+    price_source = resolve_price(
+        intent.instrument,
+        given=args.last_price,
+        app_config=None,
+        account=getattr(args, "account", None),
+    )
+    if args.last_price is None and price_source.price is not None:
+        market = replace(market, last_price=price_source.price)
 
     rules = None
     if args.rules or not args.no_default_rules:
@@ -241,6 +269,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not args.quiet:
         print(summary)
+        print(_wrap_note(price_source.note))
+        # What to search for in the Trading 212 app, and how far the match
+        # can be trusted. Navigational only -- nothing here reached sizing
+        # or the safety engine.
+        print(_wrap_note(describe_mapping(mapping_for(intent.instrument))))
         _print_rule_coverage(assessment, rules, args)
     if args.record:
         _record(intent, assessment, sizing, args)

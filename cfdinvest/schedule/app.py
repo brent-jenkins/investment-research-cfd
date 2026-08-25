@@ -34,6 +34,7 @@ from cfdinvest.config import load_config
 from cfdinvest.logging_utils import configure_logging
 from cfdinvest.repository import DataRepository
 from cfdinvest.schedule import notify as notify_module
+from cfdinvest.schedule import runner as runner_module
 from cfdinvest.schedule import scheduler as scheduler_module
 from cfdinvest.schedule.market_calendar import describe
 from cfdinvest.schedule.notify import (
@@ -180,6 +181,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="email on a red status; off by default so a manual check is quiet",
     )
     monitor.add_argument("--account", default=None)
+
+    quotes = commands.add_parser(
+        "poll-live-quotes",
+        help="fetch the current price for every confirmed position",
+    )
+    quotes.add_argument("--account", default=None)
+
+    daemon_parser = commands.add_parser(
+        "daemon",
+        help="run every scheduled job in one loop until stopped",
+    )
+    daemon_parser.add_argument("--account", default=None)
+    daemon_parser.add_argument(
+        "--tick-seconds", type=int, default=30,
+        help="how often to ask what is due; the jobs have their own cadences",
+    )
+    daemon_parser.add_argument(
+        "--max-ticks", type=int, default=None,
+        help="stop after this many ticks; for tests and dry runs",
+    )
 
     commands.add_parser("send-test-email", help="prove the mail path works")
     commands.add_parser("market-status", help="show session state for the universe")
@@ -335,6 +356,110 @@ def _command_run_continuous(args, app_config, smtp, transport) -> int:
     except KeyboardInterrupt:
         print("\nStopped.")
     return EXIT_OK
+
+
+def _command_poll_live_quotes(args, app_config) -> int:
+    """Fetch the current price for everything confirmed open, and store it.
+
+    Exit code is ``EXIT_OK`` even when no price could be read. A poll that
+    finds nothing is not a failed command -- the readers fall back to the
+    daily bar, which is what they do between polls anyway. A non-zero exit
+    here would have systemd restarting the loop over a quiet market.
+    """
+    from cfdinvest.livequotes import held_instruments, poll_live_quotes, write_quotes
+
+    account = getattr(args, "account", None)
+    held = held_instruments(app_config, account=account)
+    if not held:
+        print("Nothing is confirmed open, so there is nothing to price.")
+        return EXIT_OK
+
+    prices = poll_live_quotes(held)
+    path = write_quotes(prices, app_config, account=account)
+    priced = sum(1 for value in prices.values() if value is not None)
+    print(
+        f"Priced {priced} of {len(held)} held instrument(s)"
+        + (f" -> {path}" if path else " (could not write the quote file)")
+    )
+    return EXIT_OK
+
+
+def _command_daemon(args, app_config, smtp, transport) -> int:
+    """Every scheduled job, in one loop, until stopped.
+
+    The decision about what is owed lives in
+    :func:`cfdinvest.schedule.daemon.jobs_due` and is pure; this is the part
+    that sleeps. A job that raises is logged and does not stop the loop --
+    the whole point of a daemon is that tomorrow's run still happens after
+    today's failed.
+    """
+    import time
+
+    from cfdinvest.schedule import daemon as daemon_module
+
+    last_run: dict[str, object] = {}
+    account = getattr(args, "account", None)
+    ticks = 0
+
+    def run_job(name: str) -> None:
+        if name == "poll-live-quotes":
+            _command_poll_live_quotes(args, app_config)
+        elif name == "ingest-daily":
+            # Ingestion alone, not a pipeline run with --refresh. The two are
+            # separate jobs here precisely so the pipeline reads a lake that
+            # ingestion has finished writing, and folding them back together
+            # would put that ordering back inside one command.
+            backtest = _backtest_config(args, app_config)
+            runner_module._refresh(
+                DataRepository(app_config), backtest.tickers or [], backtest
+            )
+        elif name == "run-daily":
+            _command_run_once(
+                _with(args, refresh=False), app_config, smtp, transport
+            )
+        elif name == "monitoring-snapshot":
+            _command_monitor(args, app_config, smtp, transport)
+        elif name == "risk-snapshot":
+            _command_risk_snapshot(args, app_config)
+
+    print(
+        "cfdinvest scheduler daemon. Quotes every "
+        f"{daemon_module.QUOTE_INTERVAL_MINUTES} minutes; ingestion "
+        f"{daemon_module.INGEST_AT_UTC[0]:02d}:{daemon_module.INGEST_AT_UTC[1]:02d} "
+        f"UTC; pipeline "
+        f"{daemon_module.RUN_AT_UTC[0]:02d}:{daemon_module.RUN_AT_UTC[1]:02d} UTC."
+    )
+    try:
+        while args.max_ticks is None or ticks < args.max_ticks:
+            now = pd.Timestamp.now(tz="UTC")
+            for name in daemon_module.jobs_due(now, last_run):
+                logger.info("Daemon: running %s", name)
+                try:
+                    run_job(name)
+                except Exception as error:  # noqa: BLE001 - one job, not the loop
+                    logger.exception("Daemon: %s failed: %s", name, error)
+                # Recorded whether or not it succeeded. A job that fails every
+                # time must not be retried every tick -- that is a hot loop
+                # against someone else's server, and the failure is already
+                # in the log and the monitoring snapshot.
+                last_run[name] = pd.Timestamp.now(tz="UTC")
+            ticks += 1
+            if args.max_ticks is not None and ticks >= args.max_ticks:
+                break
+            time.sleep(max(1, int(args.tick_seconds)))
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    return EXIT_OK
+
+
+def _with(args, **changes):
+    """A shallow copy of the parsed arguments with a few fields changed."""
+    import copy
+
+    clone = copy.copy(args)
+    for name, value in changes.items():
+        setattr(clone, name, value)
+    return clone
 
 
 def _command_send_test_email(args, smtp, transport) -> int:
@@ -503,6 +628,10 @@ def main(argv: list[str] | None = None) -> int:
             return _command_market_status(args, app_config)
         if args.command == "crontab":
             return _command_crontab(args, app_config)
+        if args.command == "poll-live-quotes":
+            return _command_poll_live_quotes(args, app_config)
+        if args.command == "daemon":
+            return _command_daemon(args, app_config, smtp, transport)
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
         return EXIT_FAILED

@@ -1,0 +1,72 @@
+# The cfdinvest scheduler. One long-running loop that owns every scheduled
+# job: live quotes every five minutes, ingestion at 03:00 UTC, the pipeline
+# at 03:05, and the monitoring and risk snapshots after each run.
+#
+#   sudo systemctl enable --now cfdinvest.service
+#   journalctl -u cfdinvest -f
+#
+# This SUPERSEDES cfdinvest-pipeline.timer and cfdinvest-monitor.timer.
+# Disable both before enabling this, or two schedulers will write the same
+# lake on different schedules:
+#
+#   sudo systemctl disable --now cfdinvest-pipeline.timer cfdinvest-monitor.timer
+#
+# It places no trades and calls no broker. See deployment/systemd/README.md.
+
+[Unit]
+Description=cfdinvest scheduler
+Documentation=https://github.com/brent-jenkins/cfdinvest
+After=network-online.target
+Wants=network-online.target
+# Refuse to start alongside the units this replaces, rather than trusting
+# whoever deploys to have read the note above. Two schedulers writing one
+# lake is the failure this guards.
+Conflicts=cfdinvest-pipeline.service cfdinvest-monitor.service
+
+[Service]
+Type=simple
+User=cfdinvest
+Group=cfdinvest
+WorkingDirectory=/opt/cfdinvest
+EnvironmentFile=/etc/cfdinvest/env
+
+ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule daemon
+
+Restart=always
+RestartSec=5
+# A crash loop against a vendor endpoint is worse than a stopped daemon:
+# it looks like it is working. Five failures in five minutes stops it, and
+# the monitoring snapshot then reports stale quotes and a stale lake.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Binds nothing. The dashboard is a separate unit and this must never
+# acquire a port -- an accidental listener behind Caddy's basic auth would
+# answer the internet directly.
+PrivateNetwork=false
+
+# It writes: run artefacts, scheduler state, snapshots, the quote file.
+# Everything else stays read-only.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+ReadOnlyPaths=/opt/cfdinvest
+ReadWritePaths=/var/lib/cfdinvest
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cfdinvest
+
+[Install]
+WantedBy=multi-user.target

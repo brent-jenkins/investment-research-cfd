@@ -80,7 +80,24 @@ def test_the_units_exist():
         "cfdinvest-dashboard.service",
         "cfdinvest-pipeline.service",
         "cfdinvest-monitor.service",
+        "cfdinvest.service",
     }
+
+
+def test_only_one_unit_may_schedule_the_pipeline():
+    """Two schedulers on one lake is the failure this guards.
+
+    cfdinvest.service supersedes the pipeline and monitor timers. Declaring
+    it in a README is not enough -- systemd has to refuse, or a deploy that
+    enables the new unit without disabling the old ones runs ingestion twice
+    on two different schedules.
+    """
+    body = text(DEPLOYMENT / "systemd" / "cfdinvest.service")
+    conflicts = re.search(r"^Conflicts=(.*)$", body, re.M)
+
+    assert conflicts, "cfdinvest.service must declare what it supersedes"
+    assert "cfdinvest-pipeline.service" in conflicts.group(1)
+    assert "cfdinvest-monitor.service" in conflicts.group(1)
 
 
 @pytest.mark.parametrize("unit", UNITS, ids=lambda p: p.name)
@@ -200,8 +217,25 @@ def test_a_red_monitor_is_not_a_failed_unit():
 
 @pytest.mark.parametrize("timer", TIMERS, ids=lambda p: p.name)
 def test_every_timer_survives_a_reboot(timer):
-    """A machine asleep at the trigger should still run, not skip in silence."""
-    assert "Persistent=true" in text(timer)
+    """A machine asleep at the trigger should still run, not skip in silence.
+
+    Only calendar timers can miss a window. A monotonic watchdog -- one that
+    fires relative to boot or to the unit's own state -- has nothing to catch
+    up on, and `Persistent=` is ignored without `OnCalendar=`. Asserting it
+    everywhere would mean adding a directive systemd discards, to satisfy a
+    test rather than a property.
+    """
+    body = text(timer)
+    if re.search(r"^OnCalendar=", body, re.M):
+        assert "Persistent=true" in body
+        return
+
+    # A monotonic timer must instead start on its own after a reboot,
+    # rather than waiting for the unit it watches to become active first.
+    assert re.search(r"^OnBootSec=", body, re.M), (
+        f"{timer.name} has neither a calendar nor a boot trigger, so a "
+        "reboot would leave it waiting indefinitely"
+    )
 
 
 def test_the_pipeline_timer_is_in_utc():
