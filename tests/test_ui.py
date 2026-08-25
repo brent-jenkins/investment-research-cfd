@@ -749,10 +749,19 @@ def render(page: str):
     return app
 
 
+#: Pages whose job is to report that something is wrong. On these, an
+#: st.error is the product rather than a failure -- the monitoring page
+#: drawing a red banner against a stale fixture lake is it working. Their
+#: content is asserted separately, below.
+REPORTS_PROBLEMS = {"pages/12_Monitoring.py"}
+
+
 def assert_clean(app, page: str) -> None:
     assert not app.exception, (
         f"{page} raised: {[e.value for e in app.exception]}"
     )
+    if page in REPORTS_PROBLEMS:
+        return
     assert not app.error, f"{page} rendered an error: {[e.value for e in app.error]}"
 
 
@@ -859,6 +868,7 @@ def test_the_pages_directory_matches_the_specified_layout():
         "07_Configuration.py", "08_Analytics.py", "09_Live_Helper.py",
         "10_Risk.py",
         "11_Confirm_Trades.py",
+        "12_Monitoring.py",
     }
     assert {p.name for p in (UI / "pages").glob("*.py")} == expected
 
@@ -912,6 +922,48 @@ def test_the_status_page_expands_every_failing_check(populated, monkeypatch):
     drawn = " ".join(element.value for element in app.markdown)
     assert "what was found" in drawn
     assert "what to do" in drawn
+
+
+# --------------------------------------------------------------------------- #
+# The monitoring page reports rather than breaks
+# --------------------------------------------------------------------------- #
+def test_the_monitoring_page_reports_a_stale_lake(populated):
+    """The fixture lake is stale, so the page should say so, loudly.
+
+    This is the page whose st.error means it is working. If it ever renders
+    green against this fixture, the checks have stopped checking.
+    """
+    app = render("pages/12_Monitoring.py")
+
+    assert not app.exception
+    drawn = " ".join(element.value for element in app.error)
+    assert "lake" in drawn.lower()
+    assert "RED" in " ".join(element.value for element in app.markdown)
+
+
+def test_the_monitoring_page_shows_every_check_not_only_the_failures(populated):
+    """A summary of only what broke cannot tell you what was looked at."""
+    from cfdinvest.monitoring.aggregate import TYPE_LABELS
+
+    app = render("pages/12_Monitoring.py")
+    labels = {metric.label for metric in app.metric}
+
+    assert set(TYPE_LABELS.values()) <= labels
+
+
+def test_the_monitoring_page_survives_an_empty_lake(empty_lake):
+    """The state a fresh install is in, and the one most likely to crash."""
+    app = render("pages/12_Monitoring.py")
+    assert not app.exception
+    assert app.markdown
+
+
+def test_opening_the_monitoring_page_records_nothing(populated):
+    """A dashboard left open would otherwise bury the scheduler's passes."""
+    from cfdinvest.persist import monitoring as monitoring_store
+
+    render("pages/12_Monitoring.py")
+    assert monitoring_store.list_monitoring_snapshots(config_for(populated)) == []
 
 
 # --------------------------------------------------------------------------- #

@@ -26,6 +26,7 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
+from cfdinvest.monitoring.core import DEFAULTS as _MONITORING_DEFAULTS
 from cfdinvest.ui.sources import Source, utcnow
 
 logger = logging.getLogger(__name__)
@@ -76,12 +77,18 @@ class HealthThresholds:
         monthly series legitimately go weeks between prints.
     """
 
-    lake_stale_days: float = 3.0
-    scheduler_stale_hours: float = 48.0
-    missed_run_grace_minutes: float = 90.0
-    disk_free_gb: float = 1.0
-    disk_free_fraction: float = 0.05
-    publication_calendar_stale_days: float = 45.0
+    # Taken from cfdinvest.monitoring rather than repeated. The banner and the
+    # unattended email alert read the same numbers, and two copies would drift
+    # -- the day they drift is the day the banner says fine while the email
+    # says critical, and neither is obviously the one to believe.
+    lake_stale_days: float = _MONITORING_DEFAULTS.lake_stale_days
+    scheduler_stale_hours: float = _MONITORING_DEFAULTS.scheduler_stale_hours
+    missed_run_grace_minutes: float = _MONITORING_DEFAULTS.missed_run_grace_minutes
+    disk_free_gb: float = _MONITORING_DEFAULTS.disk_free_gb
+    disk_free_fraction: float = _MONITORING_DEFAULTS.disk_free_fraction
+    publication_calendar_stale_days: float = (
+        _MONITORING_DEFAULTS.publication_calendar_stale_days
+    )
 
 
 @dataclass(frozen=True, slots=True)

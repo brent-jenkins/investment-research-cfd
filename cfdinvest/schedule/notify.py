@@ -32,6 +32,10 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "build_monitoring_alert",
+    "send_monitoring_alert",
+    "delivery_state",
+    "reset_delivery_journal",
     "SmtpConfig",
     "RecordingTransport",
     "ConsoleTransport",
@@ -361,9 +365,155 @@ def build_error_alert(
     return _compose(settings, f"RUN FAILED — {description[:60]}", "\n".join(lines))
 
 
+#: What each monitoring issue type is called in the email. The check names are
+#: for code; these are for a person reading a phone at seven in the morning.
+_MONITORING_LABELS: dict[str, str] = {
+    "lake": "Data lake",
+    "scheduler": "Scheduler",
+    "disk": "Disk space",
+    "run": "The last run",
+    "confirm": "Confirmations",
+    "email": "Notifications",
+    "pipeline": "Pipeline output",
+    "system": "The machine",
+}
+
+
+def build_monitoring_alert(snapshot, config: SmtpConfig | None = None) -> EmailMessage:
+    """Compose the operational-health alert. Pure.
+
+    Takes a :class:`~cfdinvest.monitoring.aggregate.MonitoringSnapshot`.
+
+    The subject carries the worst single problem rather than a count: a
+    subject line reading "7 issues" tells you nothing about whether to get out
+    of bed, and an alert you cannot triage from the notification is one you
+    learn to swipe away.
+
+    Every issue prints its remedy. An alert that names a problem without a
+    next step is one that gets archived.
+    """
+    settings = config or SmtpConfig()
+    status = str(getattr(snapshot, "overall_status", "red")).upper()
+    headline = getattr(snapshot, "headline", "")
+    issues = tuple(getattr(snapshot, "issues", ()))
+
+    lines = [
+        f"Operational monitoring: {status}",
+        "",
+        headline,
+        "",
+        f"critical: {getattr(snapshot, 'critical_count', 0)}   "
+        f"warning: {getattr(snapshot, 'warning_count', 0)}   "
+        f"info: {getattr(snapshot, 'info_count', 0)}",
+    ]
+
+    for issue in issues:
+        lines += [
+            "",
+            f"[{issue.severity.upper()}] "
+            f"{_MONITORING_LABELS.get(issue.type, issue.type)}",
+            f"  {issue.message}",
+        ]
+        if issue.remedy:
+            lines.append(f"  -> {issue.remedy}")
+
+    affected = {issue.type for issue in issues}
+    clean = [
+        label for kind, label in _MONITORING_LABELS.items() if kind not in affected
+    ]
+    if clean:
+        lines += ["", f"Checked and clear: {', '.join(clean)}."]
+
+    resources = getattr(snapshot, "system_resources", None) or {}
+    measured = tuple(resources.get("measured") or ())
+    readings = []
+    if resources.get("free_gb") is not None:
+        readings.append(f"{resources['free_gb']:,.1f} GB free")
+    if resources.get("cpu_percent") is not None:
+        readings.append(f"CPU {resources['cpu_percent']:.0f}%")
+    if resources.get("memory_percent") is not None:
+        readings.append(f"memory {resources['memory_percent']:.0f}%")
+    if readings:
+        lines += ["", "The machine: " + ", ".join(readings)]
+    if "cpu" not in measured:
+        lines.append(
+            "CPU and memory were not measured (psutil is not installed). "
+            "Absent is not the same as healthy."
+        )
+
+    lines += [
+        "",
+        "This system simulates trades and places no orders with any broker. "
+        "Nothing in this message has moved money.",
+    ]
+
+    subject = f"{status} — {headline[:70]}" if headline else f"{status} — monitoring"
+    return _compose(settings, subject, "\n".join(lines))
+
+
 # --------------------------------------------------------------------------- #
 # Sending
 # --------------------------------------------------------------------------- #
+class _DeliveryJournal:
+    """What happened to the mail this process tried to send.
+
+    :func:`send` swallows failures on purpose -- an unattended run that did
+    its work must not be reported as broken because a mail server was
+    unreachable. That is right, and it is exactly why the failure has to
+    surface somewhere else. This is the somewhere else, and
+    :mod:`cfdinvest.monitoring` reads it.
+
+    In-process and bounded. The monitoring pass runs in the same process as
+    the sends it is reporting on, so nothing has to survive a restart; the
+    longer history lives in the monitoring snapshots.
+    """
+
+    __slots__ = ("attempts", "limit")
+
+    def __init__(self, limit: int = 50) -> None:
+        self.attempts: list[dict[str, Any]] = []
+        self.limit = limit
+
+    def record(self, subject: Any, ok: bool, error: BaseException | None = None) -> None:
+        self.attempts.append(
+            {
+                "subject": str(subject),
+                "ok": bool(ok),
+                "error": f"{type(error).__name__}: {error}" if error else None,
+                "at": pd.Timestamp.now(tz="UTC"),
+            }
+        )
+        del self.attempts[: max(0, len(self.attempts) - self.limit)]
+
+    def state(self, config: "SmtpConfig | None" = None) -> dict[str, Any]:
+        failures = [a for a in self.attempts if not a["ok"]]
+        return {
+            "enabled": (config or SmtpConfig()).enabled,
+            "attempted": len(self.attempts),
+            "sent": len(self.attempts) - len(failures),
+            "failed": len(failures),
+            "last_error": failures[-1]["error"] if failures else None,
+            "last_failed_subject": failures[-1]["subject"] if failures else None,
+        }
+
+    def clear(self) -> None:
+        self.attempts.clear()
+
+
+_JOURNAL = _DeliveryJournal()
+
+
+def delivery_state(config: SmtpConfig | None = None) -> dict[str, Any]:
+    """How the notifications this process sent actually went."""
+    return _JOURNAL.state(config)
+
+
+def reset_delivery_journal() -> None:
+    """Forget the record. Called at the start of a run, and by tests."""
+    _JOURNAL.clear()
+
+
+
 def send(
     message: EmailMessage,
     config: SmtpConfig | None = None,
@@ -390,9 +540,11 @@ def send(
     try:
         transport(message)
         logger.info("Sent notification: %s", message["Subject"])
+        _JOURNAL.record(message["Subject"], True)
         return True
     except Exception as error:  # noqa: BLE001 - notification must never break a run
         logger.error("Failed to send notification %r: %s", message["Subject"], error)
+        _JOURNAL.record(message["Subject"], False, error)
         return False
 
 
@@ -409,6 +561,15 @@ def send_daily_summary(summary, config=None, transport=None) -> bool:
 def send_error_alert(error, config=None, transport=None, *, context: str = "") -> bool:
     """Build and send a failure alert."""
     return send(build_error_alert(error, config, context=context), config, transport)
+
+
+def send_monitoring_alert(snapshot, config=None, transport=None) -> bool:
+    """Send the operational-health alert.
+
+    Called only for a red status: an alert that arrives every day for a yellow
+    becomes an alert nobody opens on the day it is red.
+    """
+    return send(build_monitoring_alert(snapshot, config), config, transport)
 
 
 def send_test_email(config: SmtpConfig | None = None, transport=None) -> bool:

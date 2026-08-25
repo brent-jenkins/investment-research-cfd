@@ -53,6 +53,14 @@ class RunConfig:
     refresh_data: bool = False
     #: Keep at most this many run directories. ``None`` keeps everything.
     keep_runs: int | None = 30
+    #: Check the machine's health after each run and record what was found.
+    monitoring: bool = True
+    #: Persist each monitoring pass. The history is how you tell a status that
+    #: turned red an hour ago from one that has been red for a week.
+    store_monitoring: bool = True
+    #: Email on a red status. Off in tests and in any run that should be
+    #: silent; the check still runs and is still recorded.
+    monitoring_alerts: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,6 +323,7 @@ def run_pipeline(
             _prune_old_runs(repository, settings)
 
         _record_finish(repository, summary)
+        _run_monitoring(repository, settings, summary)
         logger.info(summary.headline())
         return summary
 
@@ -372,6 +381,36 @@ def _persist_extras(
     except Exception as error:  # noqa: BLE001
         logger.warning("Could not persist the extended artefacts: %s", error)
         return {}
+
+
+def _run_monitoring(repository, settings, summary: RunSummary) -> None:
+    """Check the machine, record what was found, and shout if it is red.
+
+    Runs *after* the state is recorded, so the monitoring pass sees the run it
+    is reporting on rather than the one before it.
+
+    Never raises. A monitoring failure must not turn a completed run into a
+    failed one -- the layer that reports problems must not become one.
+
+    Only a red status sends mail. An alert that arrives every day for a yellow
+    becomes an alert nobody opens on the day it is red.
+    """
+    if not settings.monitoring:
+        return
+    try:
+        from cfdinvest.monitoring import run_monitoring
+        from cfdinvest.schedule import notify
+
+        snapshot = run_monitoring(
+            getattr(repository, "config", None),
+            run_id=summary.run_id,
+            notify_state=notify.delivery_state(),
+            store=settings.store_monitoring,
+        )
+        if snapshot.overall_status == "red" and settings.monitoring_alerts:
+            notify.send_monitoring_alert(snapshot)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Monitoring pass failed: %s", error)
 
 
 def _persist_confirmed(repository, directory, run_id: str) -> dict[str, str]:

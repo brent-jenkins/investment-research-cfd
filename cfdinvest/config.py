@@ -45,6 +45,15 @@ class PathConfig:
 
     data_root: Path = Path("data")
 
+    def __post_init__(self) -> None:
+        # Coerced rather than required: a data root arrives as a string from
+        # TOML, from an environment variable and from every --data-root flag,
+        # and without this the failure is a TypeError raised deep inside a
+        # property -- "unsupported operand type(s) for /: 'str' and 'str'" --
+        # which says nothing about where the string came from.
+        if not isinstance(self.data_root, Path):
+            object.__setattr__(self, "data_root", Path(self.data_root))
+
     @property
     def raw_dir(self) -> Path:
         """Vendor payloads: normalised in shape, unaltered in value."""

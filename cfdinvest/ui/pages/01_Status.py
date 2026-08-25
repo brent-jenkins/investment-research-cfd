@@ -175,6 +175,47 @@ with st.expander("Run history", expanded=False):
 st.divider()
 
 # --------------------------------------------------------------------------- #
+# Operational monitoring
+# --------------------------------------------------------------------------- #
+st.subheader("Operational monitoring")
+
+try:
+    from cfdinvest.persist import monitoring as monitoring_store
+
+    latest_monitor = monitoring_store.load_latest_monitoring_snapshot(data["config"])
+except Exception as error:  # noqa: BLE001 - a status page must not go dark
+    st.warning(f"Could not read the monitoring history: {error}")
+    latest_monitor = None
+
+if latest_monitor is None:
+    components.render_note(
+        st,
+        "No monitoring pass has been recorded. The scheduler files one after "
+        "every run — see the **Operational Monitoring** page to run the "
+        "checks now.",
+    )
+else:
+    colour = {"green": "#2E7D32", "yellow": "#B26A00", "red": "#C62828"}.get(
+        str(latest_monitor.get("overall_status")), "#B26A00"
+    )
+    st.markdown(
+        f'<div style="background:{colour};color:#fff;padding:10px 16px;'
+        f'border-radius:8px;font-weight:700;">'
+        f"{str(latest_monitor.get('overall_status', '?')).upper()} &nbsp;·&nbsp; "
+        f"{latest_monitor.get('headline', '')}</div>",
+        unsafe_allow_html=True,
+    )
+    cells = st.columns(4)
+    cells[0].metric("Critical", latest_monitor.get("critical_count", 0))
+    cells[1].metric("Warnings", latest_monitor.get("warning_count", 0))
+    cells[2].metric("For information", latest_monitor.get("info_count", 0))
+    cells[3].metric(
+        "Checked", components.short_moment(latest_monitor.get("timestamp"))
+    )
+
+st.divider()
+
+# --------------------------------------------------------------------------- #
 # Confirmations
 # --------------------------------------------------------------------------- #
 st.subheader("Confirmations")

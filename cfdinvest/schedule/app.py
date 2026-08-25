@@ -157,6 +157,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--account", default=None, help="which account's artefacts to read"
     )
 
+    monitor = commands.add_parser(
+        "monitor",
+        help="check the machine's operational health",
+        description=(
+            "Run every operational check against what is on disk. Reads "
+            "artefacts and the machine, and writes one snapshot; it never "
+            "runs the pipeline or touches a position."
+        ),
+    )
+    monitor.add_argument(
+        "--watch", action="store_true", help="keep checking on an interval"
+    )
+    monitor.add_argument("--interval-minutes", type=float, default=30.0)
+    monitor.add_argument("--max-passes", type=int, default=None)
+    monitor.add_argument(
+        "--no-store", action="store_true", help="report without recording"
+    )
+    monitor.add_argument(
+        "--alert",
+        action="store_true",
+        help="email on a red status; off by default so a manual check is quiet",
+    )
+    monitor.add_argument("--account", default=None)
+
     commands.add_parser("send-test-email", help="prove the mail path works")
     commands.add_parser("market-status", help="show session state for the universe")
 
@@ -346,6 +370,50 @@ def _command_market_status(args, app_config) -> int:
     return EXIT_OK
 
 
+_MONITOR_MARK = {"green": "OK", "yellow": "CHECK", "red": "PROBLEM"}
+
+
+def _print_monitoring(snapshot) -> None:
+    """One pass, as the operator reads it."""
+    print(
+        f"{snapshot.timestamp:%Y-%m-%d %H:%M} UTC  "
+        f"[{_MONITOR_MARK.get(snapshot.overall_status, '?')}]  {snapshot.headline}"
+    )
+    for issue in snapshot.issues:
+        print(f"  [{issue.severity:8}] {issue.type:9} {issue.message}")
+        if issue.remedy:
+            print(f"               -> {issue.remedy}")
+
+
+def _command_monitor(args, app_config, smtp, transport) -> int:
+    """Report the machine's health. Runs no pipeline and moves no position."""
+    import time
+
+    from cfdinvest.monitoring import run_monitoring
+
+    passes = 0
+    snapshot = None
+    while True:
+        snapshot = run_monitoring(
+            app_config,
+            account=args.account,
+            notify_state=notify_module.delivery_state(smtp),
+            store=not args.no_store,
+        )
+        _print_monitoring(snapshot)
+        if args.alert and snapshot.overall_status == "red":
+            notify_module.send_monitoring_alert(snapshot, smtp, transport)
+
+        passes += 1
+        if not args.watch:
+            break
+        if args.max_passes is not None and passes >= args.max_passes:
+            break
+        time.sleep(max(1.0, args.interval_minutes * 60.0))
+
+    return EXIT_OK if snapshot.overall_status != "red" else EXIT_FAILED
+
+
 def _print_risk(observation) -> None:
     """One observation, as the operator reads it."""
     snapshot = observation.snapshot
@@ -425,6 +493,8 @@ def main(argv: list[str] | None = None) -> int:
             return _command_run_once(args, app_config, smtp, transport)
         if args.command == "run-continuous":
             return _command_run_continuous(args, app_config, smtp, transport)
+        if args.command == "monitor":
+            return _command_monitor(args, app_config, smtp, transport)
         if args.command == "risk-snapshot":
             return _command_risk_snapshot(args, app_config)
         if args.command == "send-test-email":
