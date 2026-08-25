@@ -1012,3 +1012,81 @@ def test_financing_accrues_on_calendar_days():
     assert DAYS_PER_YEAR == 365.0
     assert ticket.financing_per_day_gbp == pytest.approx(10.0)
     assert close_out(ticket, 36500.0, days_held=7).financing_gbp == pytest.approx(70.0)
+
+
+# --------------------------------------------------------------------------- #
+# Correcting a recorded trade
+# --------------------------------------------------------------------------- #
+def test_a_correction_replaces_the_position_and_keeps_the_history():
+    """Confirmations are append-only, so nothing edits history.
+
+    The replay is last-write-wins per instrument, so recording the same
+    instrument again with the right numbers fixes the book while leaving
+    what you originally typed on the record. That trail is the point: it is
+    how you later find out you keep mistyping the size.
+    """
+    from cfdinvest.persist.confirm import Confirmation, confirmed_positions
+
+    wrong = Confirmation.of(
+        "NKE", "open", direction="short", quantity=2.0, price=68.0,
+        currency="USD", fx_rate=0.79, leverage=5.0,
+        timestamp=pd.Timestamp("2026-08-25 10:00", tz="UTC"),
+    )
+    right = Confirmation.of(
+        "NKE", "open", direction="short", quantity=2.6872, price=68.75,
+        currency="USD", fx_rate=0.79, leverage=5.0,
+        timestamp=pd.Timestamp("2026-08-25 11:00", tz="UTC"),
+    )
+
+    book = confirmed_positions([wrong, right])
+
+    assert book["NKE"]["quantity"] == pytest.approx(-2.6872)
+    assert book["NKE"]["price"] == pytest.approx(68.75)
+    # Order of arrival must not matter; time order decides.
+    assert confirmed_positions([right, wrong])["NKE"]["quantity"] == pytest.approx(
+        -2.6872
+    )
+
+
+def test_the_book_carries_the_terms_a_position_was_opened_on():
+    """So a correction pre-fills with them instead of being retyped, and the
+    GBP figures can be recomputed without guessing."""
+    from cfdinvest.persist.confirm import Confirmation, confirmed_positions
+
+    book = confirmed_positions([
+        Confirmation.of("NKE", "open", direction="short", quantity=1.0,
+                        price=68.75, currency="USD", fx_rate=0.79,
+                        leverage=5.0, financing_rate=0.0295)
+    ])
+
+    entry = book["NKE"]
+    assert entry["currency"] == "USD"
+    assert entry["fx_rate"] == pytest.approx(0.79)
+    assert entry["leverage"] == pytest.approx(5.0)
+    assert entry["financing_rate"] == pytest.approx(0.0295)
+
+
+def test_a_confirmation_written_before_the_terms_existed_still_loads():
+    """Additive with None defaults. None means not recorded -- never a
+    default that lets a GBP figure be computed from a number nobody gave."""
+    from cfdinvest.persist.confirm import Confirmation
+
+    old = Confirmation.from_document({
+        "ticker": "NKE", "action": "open", "quantity": -1.0, "price": 68.0,
+        "timestamp": "2026-08-01T00:00:00+00:00",
+    })
+
+    assert old.currency is None and old.fx_rate is None
+    assert old.leverage is None and old.financing_rate is None
+
+
+def test_the_confirm_page_records_a_correction_rather_than_editing():
+    page = (
+        Path("cfdinvest/ui/views/11_Confirm_Trades.py").read_text(encoding="utf-8")
+    )
+
+    assert "Correct" in page
+    assert "components.PREFILL_KEY" in page
+    # It must not delete or rewrite anything.
+    for destructive in ("unlink(", "rmtree", "os.remove", "truncate"):
+        assert destructive not in page, destructive

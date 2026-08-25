@@ -103,6 +103,13 @@ class Confirmation:
         when omitted, but accepted explicitly because the Trading 212 ticket
         shows a figure and re-deriving it invites a disagreement nobody can
         settle later.
+    currency, fx_rate, leverage, financing_rate:
+        The terms the position was actually opened on. A US share CFD is
+        priced in dollars against a sterling account, so without the rate
+        the GBP figures are unknowable rather than approximately right --
+        and leverage decides the margin. Recorded because they are true of
+        *that fill*: the instrument's leverage can change, and a position
+        opened last month was opened on last month's terms.
     recommended_quantity, recommended_price, run_id:
         What the system had suggested, recorded alongside what happened.
         Not in the original schema, and worth having: runs are pruned
@@ -123,6 +130,15 @@ class Confirmation:
     recommended_quantity: float | None = None
     recommended_price: float | None = None
     run_id: str | None = None
+
+    # The ticket's own terms. Additive with None defaults, so a
+    # confirmation written before these existed still loads -- and None
+    # means "not recorded", never a default that would let the GBP figures
+    # be computed from a number nobody supplied.
+    currency: str | None = None
+    fx_rate: float | None = None
+    leverage: float | None = None
+    financing_rate: float | None = None
 
     def __post_init__(self) -> None:
         if not _TICKER.match(str(self.ticker or "")):
@@ -397,6 +413,13 @@ def confirmed_positions(
             "price": confirmation.price,
             "at": confirmation.timestamp,
             "action": confirmation.action,
+            # The terms it was opened on, carried through so a correction
+            # can be pre-filled with them rather than retyped -- and so the
+            # GBP figures can be recomputed without guessing.
+            "currency": confirmation.currency,
+            "fx_rate": confirmation.fx_rate,
+            "leverage": confirmation.leverage,
+            "financing_rate": confirmation.financing_rate,
         }
     return book
 

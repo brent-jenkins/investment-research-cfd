@@ -26,6 +26,7 @@ from cfdinvest.confirm.recommendation import (  # noqa: E402
     recommended_tickers,
 )
 from cfdinvest.persist import confirm as confirm_store  # noqa: E402
+from cfdinvest.livehelper import ticket as ticket_module
 from cfdinvest.ui import components  # noqa: E402
 
 data = components.page_setup(
@@ -67,6 +68,47 @@ if prefill:
         "Change anything that differs from your actual fill — a partial "
         "fill or a worse price is the normal case, not an error."
     )
+
+# --------------------------------------------------------------------------- #
+# Correcting something already recorded
+# --------------------------------------------------------------------------- #
+# Confirmations are append-only, so nothing here edits history. A correction
+# is a *new* record, and the replay is last-write-wins per instrument -- so
+# recording the same instrument again with the right numbers fixes the book
+# while leaving the trail of what you originally entered intact. That trail
+# is the point: it is how you later find out you keep mistyping the size.
+open_now = components.confirmed_book({"config": config, "account": None})
+if open_now:
+    st.markdown("**Open now** — pick one to correct it")
+    for name, entry in sorted(open_now.items()):
+        held = float(entry.get("quantity") or 0.0)
+        row = st.columns([2, 2, 1])
+        row[0].markdown(
+            f"**{name}** &nbsp; {'short' if held < 0 else 'long'} "
+            f"{abs(held):,.4f}",
+            unsafe_allow_html=True,
+        )
+        row[1].caption(
+            f"at {components.price(entry.get('price'))} · "
+            f"recorded {components.short_moment(entry.get('at'))}"
+        )
+        if row[2].button("Correct", key=f"cfd_fix_{name}"):
+            st.session_state[components.PREFILL_KEY] = {
+                "ticker": name,
+                "direction": "short" if held < 0 else "long",
+                "quantity": abs(held),
+                "price": entry.get("price"),
+                "currency": entry.get("currency"),
+                "fx_rate": entry.get("fx_rate"),
+                "leverage": entry.get("leverage"),
+                "financing_rate": entry.get("financing_rate"),
+            }
+            st.rerun()
+    st.caption(
+        "Correcting records a new confirmation rather than editing the old "
+        "one. The book takes the latest; the history keeps both."
+    )
+    st.divider()
 
 left, right = st.columns([2, 1])
 with left:
@@ -223,8 +265,60 @@ with st.form("confirmation"):
             else None
         )
 
+    # --- the ticket's own terms ------------------------------------------
+    # Recorded because they are true of *this fill*. An instrument's
+    # leverage can change, and a position opened last month was opened on
+    # last month's terms -- storing them beside the fill is what lets the
+    # GBP figures be recomputed later without guessing.
+    st.markdown("**Ticket terms** — from the Trading 212 order screen")
+    terms = st.columns(4)
+    currency = terms[0].text_input(
+        "Priced in", value=str(prefill.get("currency") or "USD"),
+        help="The instrument's currency. A US share CFD is priced in dollars "
+        "even though your account is sterling.",
+    ).strip().upper() or "GBP"
+    fx_rate = terms[1].number_input(
+        "GBP per 1 unit", min_value=0.0,
+        value=float(prefill.get("fx_rate") or 0.0), format="%.4f",
+        help="GBP per one unit of the instrument's currency — 0.79 GBP/USD, "
+        "not 1.27 USD/GBP. Upside down misstates every GBP figure.",
+    )
+    leverage = terms[2].number_input(
+        "Leverage", min_value=0.0,
+        value=float(prefill.get("leverage") or 0.0), format="%.1f",
+        help="What the ticket shows for this instrument. Left at zero it is "
+        "recorded as unknown rather than assumed — margin would be wrong "
+        "by a multiple.",
+    )
+    financing_rate = terms[3].number_input(
+        "Overnight rate (annual)", min_value=0.0,
+        value=float(prefill.get("financing_rate") or 0.0), format="%.4f",
+        help="As a fraction: 0.0295 is 2.95% a year on the notional.",
+    )
+
     notes = st.text_input("Notes", value="", placeholder="optional")
     submitted = st.form_submit_button("Record this", type="primary")
+
+# The ticket as it will read, worked out from what is typed above.
+if quantity and price:
+    worked = ticket_module.build_ticket(
+        ticker if ticker != "—" else "?", direction, quantity, price,
+        currency=currency, fx_rate=fx_rate or None,
+        leverage=leverage or None, financing_rate=financing_rate or None,
+    )
+    components.render_kv(st, worked.describe())
+    if worked.missing:
+        st.caption(
+            ":orange[Not computed: " + ", ".join(worked.missing) + ". "
+            "They are recorded as unknown rather than assumed.]"
+        )
+    else:
+        example = ticket_module.close_out(worked, price, days_held=30)
+        st.caption(
+            f"Held 30 days at this price, financing would cost "
+            f"{components.money(example.financing_gbp)}. A 0.5% FX fee "
+            "applies to the profit or loss when you close."
+        )
 
 if submitted:
     if not ticker or ticker == "—":
@@ -247,6 +341,10 @@ if submitted:
                     else recommendation.get("quantity")
                 ),
                 source="dashboard",
+                currency=currency or None,
+                fx_rate=fx_rate or None,
+                leverage=leverage or None,
+                financing_rate=financing_rate or None,
             )
             path = write_confirmation(confirmation, config)
         except (ValueError, OSError) as error:
