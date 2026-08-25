@@ -59,7 +59,11 @@ __all__ = [
 ]
 
 #: The two account trees the separation layer will use.
-ACCOUNTS: tuple[str, ...] = ("virtual", "live")
+#: ``simulation`` is here so simulated artefacts get the same isolation the
+#: virtual and live trees already have. A simulated equity curve filed where a
+#: real one goes is the worst outcome this project has, and the cheapest
+#: defence is that they cannot share a directory.
+ACCOUNTS: tuple[str, ...] = ("virtual", "live", "simulation")
 
 RUNS_DIR = "runs"
 SCHEDULER_DIR = "scheduler"

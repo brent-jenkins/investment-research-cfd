@@ -50,6 +50,9 @@ __all__ = [
 #: defaulting wrong is asymmetric: a live result filed under virtual is a
 #: nuisance, and a virtual result read as live is a decision made on money that
 #: was never at stake.
+#: ``simulation`` is a tree, not a deployment mode: nothing runs "as
+#: simulation", the simulate layer writes there. Kept out of ACCOUNT_MODES so
+#: CFD_ACCOUNT_MODE=simulation is refused rather than quietly accepted.
 ACCOUNT_MODES: tuple[str, ...] = ("virtual", "live")
 DEFAULT_ACCOUNT_MODE = "virtual"
 
@@ -204,11 +207,18 @@ def resolve_account(
     one-line migration.
     """
     if account is not None:
-        if account not in ACCOUNT_MODES:
+        # An explicit account is checked against the *trees*, not against the
+        # deployment modes. "simulation" is a real tree that nothing runs as:
+        # CFD_ACCOUNT_MODE=simulation is still refused, and
+        # account_root(config, "simulation") is still allowed. Early these
+        # shared one list and the simulate layer could not write anywhere.
+        from cfdinvest.persist.storage import ACCOUNTS
+
+        if account not in ACCOUNTS:
             # Worded to match cfdinvest.persist.storage, which is the other
             # place that can raise this: one message for one mistake.
             raise ValueError(
-                f"unknown account {account!r}; expected one of {ACCOUNT_MODES}"
+                f"unknown account {account!r}; expected one of {ACCOUNTS}"
             )
         return account
     if not account_configured(env):

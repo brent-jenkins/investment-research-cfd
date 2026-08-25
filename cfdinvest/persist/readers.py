@@ -51,6 +51,8 @@ __all__ = [
     "load_stop_events",
     "load_run_warnings",
     "load_positions",
+    "rebuild_analysis_frame",
+    "rebuild_signal_frame",
     "load_confirmed_positions",
     "load_confirmed_fills",
     "merge_simulated_and_confirmed_positions",
@@ -329,4 +331,106 @@ def load_merged_positions(
     return confirm.merge_simulated_and_confirmed_positions(
         load_frame("positions", run_id, config, account),
         confirm.load_confirmations(config, account),
+    )
+
+
+def rebuild_analysis_frame(long_frame=None, run_id=None, config=None, account=None):
+    """Rebuild an :class:`AnalysisFrame` from the persisted long form.
+
+    The inverse of ``writers._to_long``. The engine wants panels keyed by
+    field -- ``prices["close"]``, ``volatility["atr"]`` -- and what is on disk
+    is one long table of ``timestamp, panel, series, value``. Pivoting it back
+    is mechanical, and having it here means anything that needs to re-run the
+    engine over a stored run does not have to know the storage shape.
+
+    **Not everything survives the round trip.** The correlation panels were
+    MultiIndexed matrices before they were flattened, and are returned as they
+    are stored rather than reassembled -- nothing that reads this needs them,
+    and guessing at the original shape would be worse than saying so. The
+    metadata is empty for the same reason: it was written to its own artefact.
+    """
+    from cfdinvest.preprocessing.frame import AnalysisFrame
+
+    frame = (
+        long_frame
+        if long_frame is not None
+        else load_analysis_frame(run_id, config, account)
+    )
+    if frame is None or getattr(frame, "empty", True):
+        return AnalysisFrame()
+    if not {"timestamp", "panel", "series", "value"} <= set(frame.columns):
+        logger.warning("The analysis frame is not in the long form; not rebuilt")
+        return AnalysisFrame()
+
+    groups: dict[str, dict[str, pd.DataFrame]] = {}
+    for name, part in frame.groupby("panel"):
+        family, _, field = str(name).partition(".")
+        if not field:
+            continue
+        wide = part.pivot_table(
+            index="timestamp", columns="series", values="value", aggfunc="last"
+        )
+        wide.index = pd.to_datetime(wide.index, utc=True, errors="coerce")
+        groups.setdefault(family, {})[field] = wide.sort_index()
+
+    return AnalysisFrame(
+        prices=groups.get("prices", {}),
+        returns=groups.get("returns", {}),
+        volatility=groups.get("volatility", {}),
+        correlations=groups.get("correlations", {}),
+    )
+
+
+def rebuild_signal_frame(long_frame=None, run_id=None, config=None, account=None):
+    """Rebuild a :class:`SignalFrame` from the persisted long form.
+
+    ``signals.parquet`` is stored MultiIndexed on ``(timestamp, ticker)`` with
+    one column per field, and flat cells are not stored at all. The engine
+    wants the opposite shape -- one wide ``timestamp x ticker`` panel per
+    field -- so this unstacks and fills the gaps back in.
+
+    **The gaps have to be filled correctly or the run is wrong.** A cell that
+    was not stored means *flat*, not *unknown*: leaving it NaN would let a
+    position persist through a bar the strategy had exited, which is a
+    different strategy with better-looking results.
+    """
+    from cfdinvest.signals.frame import SignalFrame
+
+    frame = (
+        long_frame
+        if long_frame is not None
+        else load_frame("signals", run_id, config, account)
+    )
+    if frame is None or getattr(frame, "empty", True):
+        return SignalFrame()
+    if not isinstance(frame.index, pd.MultiIndex) or frame.index.nlevels < 2:
+        logger.warning("The signal frame is not MultiIndexed; not rebuilt")
+        return SignalFrame()
+
+    panels: dict[str, pd.DataFrame] = {}
+    for column in frame.columns:
+        wide = frame[column].unstack(level=-1)
+        wide.index = pd.to_datetime(wide.index, utc=True, errors="coerce")
+        panels[str(column)] = wide.sort_index()
+
+    direction = panels.get("direction", pd.DataFrame())
+    if not direction.empty:
+        # An unstored cell is flat. See the docstring: NaN here would carry a
+        # position through a bar the strategy was out of.
+        direction = direction.fillna("flat")
+    size = panels.get("size", pd.DataFrame())
+    if not size.empty:
+        size = size.fillna(0.0)
+    confidence = panels.get("confidence", pd.DataFrame())
+    if not confidence.empty:
+        confidence = confidence.fillna(0.0)
+    reason = panels.get("reason", pd.DataFrame())
+    if not reason.empty:
+        reason = reason.fillna("")
+
+    return SignalFrame(
+        direction=direction,
+        size=size,
+        confidence=confidence,
+        reason=reason,
     )

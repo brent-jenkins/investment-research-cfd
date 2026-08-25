@@ -749,18 +749,19 @@ def render(page: str):
     return app
 
 
-#: Pages whose job is to report that something is wrong. On these, an
-#: st.error is the product rather than a failure -- the monitoring page
-#: drawing a red banner against a stale fixture lake is it working. Their
-#: content is asserted separately, below.
-REPORTS_PROBLEMS = {"pages/12_Monitoring.py"}
+#: Pages where an st.error is the *product* rather than a failure. The
+#: monitoring page drawing a red banner against a stale fixture lake is it
+#: working; the simulation page's banner says the figures are not real, and it
+#: is deliberately above the numbers rather than below them. Their content is
+#: asserted separately, below.
+ERROR_IS_CONTENT = {"pages/12_Monitoring.py", "pages/16_Simulation.py"}
 
 
 def assert_clean(app, page: str) -> None:
     assert not app.exception, (
         f"{page} raised: {[e.value for e in app.exception]}"
     )
-    if page in REPORTS_PROBLEMS:
+    if page in ERROR_IS_CONTENT:
         return
     assert not app.error, f"{page} rendered an error: {[e.value for e in app.error]}"
 
@@ -872,6 +873,7 @@ def test_the_pages_directory_matches_the_specified_layout():
         "13_Journal.py",
         "14_Insights.py",
         "15_Behaviour.py",
+        "16_Simulation.py",
     }
     assert {p.name for p in (UI / "pages").glob("*.py")} == expected
 
@@ -967,6 +969,36 @@ def test_opening_the_monitoring_page_records_nothing(populated):
 
     render("pages/12_Monitoring.py")
     assert monitoring_store.list_monitoring_snapshots(config_for(populated)) == []
+
+
+# --------------------------------------------------------------------------- #
+# The simulation page says what it is before it says anything else
+# --------------------------------------------------------------------------- #
+def test_the_simulation_page_warns_before_it_shows_a_number(populated):
+    """A banner underneath is one people scroll past on the way to the figure
+    they came for."""
+    app = render("pages/16_Simulation.py")
+
+    assert not app.exception
+    drawn = " ".join(element.value for element in app.error)
+    assert "rehearsal" in drawn.lower()
+    assert "not your results" in drawn.lower()
+
+
+def test_the_simulation_page_rehearses_nothing_until_asked(populated):
+    """Replaying a run is expensive, and doing it on page load would make the
+    dashboard slow for everyone who was not asking for it."""
+    app = render("pages/16_Simulation.py")
+    drawn = " ".join(element.value for element in app.markdown)
+
+    assert "Nothing has been rehearsed yet" in drawn
+
+
+def test_the_simulation_page_records_nothing_by_opening_it(populated):
+    from cfdinvest.persist import simulation as simulation_store
+
+    render("pages/16_Simulation.py")
+    assert simulation_store.list_simulations(config_for(populated)) == []
 
 
 # --------------------------------------------------------------------------- #
