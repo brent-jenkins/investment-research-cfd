@@ -42,29 +42,37 @@ mode = theme.apply(st)
 components.render_brand(st, mode)
 
 #: (file, title, icon) — the title is both the nav label and the page heading.
+#:
+#: The directory is `views/`, not `pages/`, and that is load-bearing.
+#: Streamlit auto-discovers a directory called `pages/` and builds a sidebar
+#: from it, and that automatic navigation outlived every attempt to suppress
+#: it: a signed-out visitor was shown all twenty-two page names plus the
+#: entry script. st.navigation takes explicit paths, so the directory does
+#: not need the magic name -- and without the name there is nothing to
+#: discover and nothing to suppress.
 PAGES: tuple[tuple[str, str, str], ...] = (
-    ("pages/00_Overview.py", "Overview", "📈"),
-    ("pages/01_Status.py", "System status", "🩺"),
-    ("pages/02_Signals.py", "Signals", "🧭"),
-    ("pages/03_Execution.py", "Execution", "🎯"),
-    ("pages/04_Positions.py", "Positions", "📦"),
-    ("pages/05_Profit_and_Loss.py", "Profit & Loss", "💷"),
-    ("pages/06_Logs.py", "Logs", "📜"),
-    ("pages/07_Configuration.py", "Configuration", "⚙"),
-    ("pages/08_Analytics.py", "Analytics", "🔬"),
-    ("pages/09_Live_Helper.py", "Live-Execution Helper", "🧮"),
-    ("pages/10_Risk.py", "Risk", "⚖"),
-    ("pages/11_Confirm_Trades.py", "Confirm Trades", "✍"),
-    ("pages/12_Monitoring.py", "Operational Monitoring", "🚨"),
-    ("pages/13_Journal.py", "Journal", "📓"),
-    ("pages/14_Insights.py", "Insights", "🔎"),
-    ("pages/15_Behaviour.py", "Behaviour", "🧠"),
-    ("pages/16_Simulation.py", "Simulation", "🎬"),
-    ("pages/17_Accounts.py", "Accounts", "🗂"),
-    ("pages/18_Routing.py", "Routing", "🔀"),
-    ("pages/19_T212_Rules.py", "T212 Rules", "📐"),
-    ("pages/20_Meta_Strategy.py", "Meta-Strategy", "🎚"),
-    ("pages/21_Account.py", "Account", "🔑"),
+    ("views/00_Overview.py", "Overview", "📈"),
+    ("views/01_Status.py", "System status", "🩺"),
+    ("views/02_Signals.py", "Signals", "🧭"),
+    ("views/03_Execution.py", "Execution", "🎯"),
+    ("views/04_Positions.py", "Positions", "📦"),
+    ("views/05_Profit_and_Loss.py", "Profit & Loss", "💷"),
+    ("views/06_Logs.py", "Logs", "📜"),
+    ("views/07_Configuration.py", "Configuration", "⚙"),
+    ("views/08_Analytics.py", "Analytics", "🔬"),
+    ("views/09_Live_Helper.py", "Live-Execution Helper", "🧮"),
+    ("views/10_Risk.py", "Risk", "⚖"),
+    ("views/11_Confirm_Trades.py", "Confirm Trades", "✍"),
+    ("views/12_Monitoring.py", "Operational Monitoring", "🚨"),
+    ("views/13_Journal.py", "Journal", "📓"),
+    ("views/14_Insights.py", "Insights", "🔎"),
+    ("views/15_Behaviour.py", "Behaviour", "🧠"),
+    ("views/16_Simulation.py", "Simulation", "🎬"),
+    ("views/17_Accounts.py", "Accounts", "🗂"),
+    ("views/18_Routing.py", "Routing", "🔀"),
+    ("views/19_T212_Rules.py", "T212 Rules", "📐"),
+    ("views/20_Meta_Strategy.py", "Meta-Strategy", "🎚"),
+    ("views/21_Account.py", "Account", "🔑"),
 )
 
 def _sign_in() -> None:

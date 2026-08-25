@@ -789,7 +789,7 @@ def test_long_collections_are_truncated_for_display():
 # The pages actually run
 # --------------------------------------------------------------------------- #
 PAGE_FILES = ["app.py"] + [
-    f"pages/{path.name}" for path in sorted((UI / "pages").glob("*.py"))
+    f"views/{path.name}" for path in sorted((UI / "views").glob("*.py"))
 ]
 
 
@@ -819,7 +819,7 @@ def render(page: str):
 #: working; the simulation page's banner says the figures are not real, and it
 #: is deliberately above the numbers rather than below them. Their content is
 #: asserted separately, below.
-ERROR_IS_CONTENT = {"pages/12_Monitoring.py", "pages/16_Simulation.py"}
+ERROR_IS_CONTENT = {"views/12_Monitoring.py", "views/16_Simulation.py"}
 
 
 def assert_clean(app, page: str) -> None:
@@ -923,7 +923,7 @@ def test_every_page_file_appears_in_the_navigation():
         ) == "PAGES":
             declared = {element.elts[0].value for element in node.value.elts}
 
-    on_disk = {f"pages/{p.name}" for p in (UI / "pages").glob("*.py")}
+    on_disk = {f"views/{p.name}" for p in (UI / "views").glob("*.py")}
     assert declared == on_disk
 
 
@@ -945,7 +945,7 @@ def test_the_pages_directory_matches_the_specified_layout():
         "20_Meta_Strategy.py",
         "21_Account.py",
     }
-    assert {p.name for p in (UI / "pages").glob("*.py")} == expected
+    assert {p.name for p in (UI / "views").glob("*.py")} == expected
 
 
 def test_the_banner_is_on_every_page(populated, monkeypatch):
@@ -993,7 +993,7 @@ def test_the_status_page_expands_every_failing_check(populated, monkeypatch):
             )
         ),
     )
-    app = render("pages/01_status.py")
+    app = render("views/01_status.py")
     drawn = " ".join(element.value for element in app.markdown)
     assert "what was found" in drawn
     assert "what to do" in drawn
@@ -1008,7 +1008,7 @@ def test_the_monitoring_page_reports_a_stale_lake(populated):
     This is the page whose st.error means it is working. If it ever renders
     green against this fixture, the checks have stopped checking.
     """
-    app = render("pages/12_Monitoring.py")
+    app = render("views/12_Monitoring.py")
 
     assert not app.exception
     drawn = " ".join(element.value for element in app.error)
@@ -1020,7 +1020,7 @@ def test_the_monitoring_page_shows_every_check_not_only_the_failures(populated):
     """A summary of only what broke cannot tell you what was looked at."""
     from cfdinvest.monitoring.aggregate import TYPE_LABELS
 
-    app = render("pages/12_Monitoring.py")
+    app = render("views/12_Monitoring.py")
     labels = {metric.label for metric in app.metric}
 
     assert set(TYPE_LABELS.values()) <= labels
@@ -1028,7 +1028,7 @@ def test_the_monitoring_page_shows_every_check_not_only_the_failures(populated):
 
 def test_the_monitoring_page_survives_an_empty_lake(empty_lake):
     """The state a fresh install is in, and the one most likely to crash."""
-    app = render("pages/12_Monitoring.py")
+    app = render("views/12_Monitoring.py")
     assert not app.exception
     assert app.markdown
 
@@ -1037,7 +1037,7 @@ def test_opening_the_monitoring_page_records_nothing(populated):
     """A dashboard left open would otherwise bury the scheduler's passes."""
     from cfdinvest.persist import monitoring as monitoring_store
 
-    render("pages/12_Monitoring.py")
+    render("views/12_Monitoring.py")
     assert monitoring_store.list_monitoring_snapshots(config_for(populated)) == []
 
 
@@ -1047,7 +1047,7 @@ def test_opening_the_monitoring_page_records_nothing(populated):
 def test_the_simulation_page_warns_before_it_shows_a_number(populated):
     """A banner underneath is one people scroll past on the way to the figure
     they came for."""
-    app = render("pages/16_Simulation.py")
+    app = render("views/16_Simulation.py")
 
     assert not app.exception
     drawn = " ".join(element.value for element in app.error)
@@ -1058,7 +1058,7 @@ def test_the_simulation_page_warns_before_it_shows_a_number(populated):
 def test_the_simulation_page_rehearses_nothing_until_asked(populated):
     """Replaying a run is expensive, and doing it on page load would make the
     dashboard slow for everyone who was not asking for it."""
-    app = render("pages/16_Simulation.py")
+    app = render("views/16_Simulation.py")
     drawn = " ".join(element.value for element in app.markdown)
 
     assert "Nothing has been rehearsed yet" in drawn
@@ -1067,7 +1067,7 @@ def test_the_simulation_page_rehearses_nothing_until_asked(populated):
 def test_the_simulation_page_records_nothing_by_opening_it(populated):
     from cfdinvest.persist import simulation as simulation_store
 
-    render("pages/16_Simulation.py")
+    render("views/16_Simulation.py")
     assert simulation_store.list_simulations(config_for(populated)) == []
 
 
@@ -1116,12 +1116,12 @@ def render_risk(monkeypatch, snapshot):
     monkeypatch.setattr(
         risk_package, "snapshot_from_disk", lambda *a, **k: snapshot
     )
-    return render("pages/10_Risk.py")
+    return render("views/10_Risk.py")
 
 
 def test_the_risk_page_shows_the_exposure_it_was_given(populated, monkeypatch):
     app = render_risk(monkeypatch, risk_snapshot())
-    assert_clean(app, "pages/10_Risk.py")
+    assert_clean(app, "views/10_Risk.py")
 
     shown = {metric.label: metric.value for metric in app.metric}
     # 10 x 100 long and 5 x 80 short: 1,400 gross, 600 net, two positions.
@@ -1554,8 +1554,8 @@ def test_the_overview_and_status_pages_agree_on_what_the_lake_facts_are_called()
     ``series_count`` is market *plus* macro, so labelling it "Instruments
     stored" reported 37 instruments for a lake holding 25 of them.
     """
-    overview = (UI / "pages" / "00_Overview.py").read_text(encoding="utf-8")
-    status = (UI / "pages" / "01_Status.py").read_text(encoding="utf-8")
+    overview = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
+    status = (UI / "views" / "01_Status.py").read_text(encoding="utf-8")
 
     assert "Instruments stored" not in overview
     for label in ("Newest bar", "Instruments", "Macro series",
@@ -1811,7 +1811,7 @@ def test_no_account_is_created_without_a_password_in_the_environment(
 def _anonymous_overview(monkeypatch, populated):
     from streamlit.testing.v1 import AppTest
 
-    app = AppTest.from_file(str(UI / "pages" / "00_Overview.py"), default_timeout=60)
+    app = AppTest.from_file(str(UI / "views" / "00_Overview.py"), default_timeout=60)
     app.run()
     return app
 
@@ -1904,32 +1904,28 @@ def test_an_expired_or_deleted_session_stops_working(tmp_path):
     assert auth.verify_token(token, config) is None
 
 
-def test_the_entry_script_registers_a_navigation_on_every_path():
-    """The bug a signed-out visitor saw: the whole page list, plus "app".
+def test_there_is_no_pages_directory_for_streamlit_to_discover():
+    """The fix that finally held.
 
-    Streamlit falls back to discovering `pages/` whenever a session finishes
-    without calling st.navigation. Stopping at the sign-in screen before
-    that call left the automatic navigation in charge, so gating the pages
-    achieved nothing -- their names were listed anyway, and the entry script
-    appeared among them.
+    Streamlit auto-discovers a directory named `pages/` and builds a sidebar
+    from it. That automatic navigation outlived every attempt to suppress it
+    -- gating the pages, gating before st.navigation, registering a hidden
+    navigation on the signed-out path -- and a signed-out visitor was shown
+    all twenty-two page names plus the entry script.
 
-    Registering a navigation is what tells Streamlit the directory is not in
-    charge, so it has to happen on the signed-out path too.
+    st.navigation takes explicit paths, so the directory does not need the
+    magic name. Without the name there is nothing to discover and nothing to
+    suppress, which is a smaller thing to get right.
     """
+    assert not (UI / "pages").exists(), (
+        "a directory named pages/ is auto-discovered by Streamlit and will "
+        "reappear in the sidebar regardless of st.navigation"
+    )
+    assert (UI / "views").is_dir()
+
     body = (UI / "app.py").read_text(encoding="utf-8")
-
-    gate = body.index("if not components.current_user(st):")
-    signed_out_nav = body.index("st.navigation(", gate)
-    stop = body.index("st.stop()", gate)
-
-    assert signed_out_nav < stop, (
-        "the signed-out path must register a navigation before stopping, or "
-        "Streamlit lists pages/ instead"
-    )
-    assert 'position="hidden"' in body[gate:stop], (
-        "the signed-out navigation must not draw a sidebar"
-    )
-    # And sign-out is drawn after the real navigation, so it sits below it.
+    assert '("pages/' not in body
+    # And sign-out is drawn after the navigation, so it sits below the list.
     assert body.index("components.render_sign_out(st)") > body.index(
         "navigation = st.navigation("
     )

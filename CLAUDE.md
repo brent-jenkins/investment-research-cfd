@@ -164,9 +164,12 @@ it exists to prevent.
   entry. Match that density.
 - **Commit messages are prose**, several paragraphs, explaining the decisions
   and anything found while building. End with the `Co-Authored-By` trailer.
-- **Dashboard pages** are numbered `NN_Name.py`, registered in
-  `ui/app.py: PAGES` and in `tests/test_ui.py`'s layout list. Spec page numbers
-  in older specs have drifted; append rather than renumber.
+- **Dashboard pages** live in `ui/views/`, numbered `NN_Name.py`, registered
+  in `ui/app.py: PAGES` and in `tests/test_ui.py`'s layout list. Spec page
+  numbers in older specs have drifted; append rather than renumber.
+  **The directory must not be called `pages/`** — Streamlit auto-discovers
+  that name and builds its own sidebar from it, which no amount of
+  `st.navigation` suppresses; a signed-out visitor saw every page name.
 - **Follow the spec's file layout** where it does not conflict with what
   exists; say so when deviating.
 
