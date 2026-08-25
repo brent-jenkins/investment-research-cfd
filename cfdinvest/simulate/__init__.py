@@ -27,6 +27,7 @@ from cfdinvest.simulate.controller import (
     SimulationRun,
     run_simulation,
 )
+from cfdinvest.simulate.meta import MetaJournal, PostureChange, simulate_postures
 from cfdinvest.simulate.engine import (
     SimulationConfig,
     SimulationResult,
@@ -44,4 +45,7 @@ __all__ = [
     "apply_advice_to_signals",
     "detect_forced_closures",
     "run_simulation",
+    "MetaJournal",
+    "PostureChange",
+    "simulate_postures",
 ]

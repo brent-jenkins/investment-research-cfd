@@ -129,6 +129,7 @@ class ExitRefinement:
     target_multiplier: float = 1.0
     adjusted_stop: float | None = None
     adjusted_tp: float | None = None
+    entry_price: float | None = None
     original_stop: float | None = None
     original_tp: float | None = None
     risk_after_gbp: float | None = None
@@ -217,6 +218,10 @@ def refine_exit(
         target_multiplier=target_multiplier,
         adjusted_stop=adjusted_stop,
         adjusted_tp=adjusted_target,
+        # Recorded because both levels are distances *from* it. Without it
+        # nothing downstream can move a level again -- it has the two ends of
+        # a line and not the point they are measured from.
+        entry_price=float(entry) if _finite(entry) else None,
         original_stop=float(stop) if _finite(stop) else None,
         original_tp=float(target) if _finite(target) else None,
         risk_after_gbp=risk,
