@@ -291,6 +291,8 @@ def confidence_score(
     agreement: pd.DataFrame | None,
     size_multiplier: pd.DataFrame | None,
     direction: pd.DataFrame,
+    *,
+    include_environment: bool = True,
 ) -> pd.DataFrame:
     """Combine conviction, agreement and environment into ``[0, 1]``.
 
@@ -318,9 +320,18 @@ def confidence_score(
         if agreement is None or agreement.empty
         else agreement.reindex_like(strength).fillna(0.0).clip(0.0, 1.0)
     )
+    # Folding the environment into the score makes it a veto rather than a
+    # scaler once a caller compares it against a threshold. The high-
+    # volatility multiplier is 0.5, so with it included no signal can score
+    # above 0.5 in a volatile market however strong it is, and any gate
+    # above 50% silently forbids trading exactly when the largest moves
+    # happen. 2020-2022 produced 1,039 long signals and not one above 0.60.
+    #
+    # Excluded, "confidence" means how much the engine believes the signal
+    # and the multiplier goes on doing its real job: shrinking the size.
     support = (
         pd.DataFrame(1.0, index=strength.index, columns=strength.columns)
-        if size_multiplier is None or size_multiplier.empty
+        if size_multiplier is None or size_multiplier.empty or not include_environment
         else size_multiplier.reindex_like(strength).fillna(0.0).clip(0.0, 1.0)
     )
 

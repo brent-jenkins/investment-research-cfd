@@ -73,6 +73,16 @@ class SignalConfig:
     short_macro_regimes: frozenset[str] = frozenset({"contraction"})
     high_volatility_multiplier: float = 0.5
     trade_when_regime_unknown: bool = False
+    #: Per-asset-class overrides of ``long_regimes``, as
+    #: ``{class: regimes}``. ``None`` keeps one verdict for the whole book,
+    #: which is what every recorded run used.
+    #: Whether the environment multiplier is folded into the confidence
+    #: score. ``True`` is the recorded behaviour; ``False`` keeps confidence
+    #: a statement about the signal and leaves the environment to sizing.
+    environment_in_confidence: bool = True
+    long_regimes_by_class: dict[str, frozenset[str]] | None = None
+    #: Ticker -> class map for the above. ``None`` uses the module default.
+    asset_classes: dict[str, str] | None = None
 
     # -- correlation filter ----------------------------------------------- #
     breakdown_multiplier: float = 0.0
@@ -316,7 +326,8 @@ def generate_signals(
     size = size.mask(is_flat, 0.0)
 
     confidence = combined_module.confidence_score(
-        strength, agreement, applicable_multiplier, direction
+        strength, agreement, applicable_multiplier, direction,
+        include_environment=settings.environment_in_confidence,
     )
 
     context = (

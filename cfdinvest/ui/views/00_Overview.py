@@ -179,14 +179,37 @@ st.caption(
 )
 
 if not suggestions:
-    components.render_note(
-        st,
-        f"**Nothing clears {threshold:.0%} today.**"
-        + (f" {below} signal(s) were below your bar and are not shown."
-           if below else "")
-        + " That is the system being unconvinced, not broken — most days a "
-        "trend follower should do nothing.",
-    )
+    # Two different silences, and they used to read identically. The engine
+    # multiplies confidence by the environment multiplier, which is 0.5 in
+    # high volatility -- roughly one bar in three. On those days nothing can
+    # score above 0.5 however strong the trend is, so a bar set above that
+    # rejects every signal by construction. Telling you the engine was
+    # "unconvinced" then is a reassurance about a question it never got to
+    # answer.
+    ceiling = actions.confidence_ceiling(latest_rows)
+    unreachable = ceiling is not None and ceiling < threshold and below
+
+    if unreachable:
+        components.render_note(
+            st,
+            f"**Nothing can clear {threshold:.0%} today.** The strongest "
+            f"signal available scores {ceiling:.0%}, so your bar rejects "
+            f"all {below} of them before their merits are considered. "
+            "Confidence is scaled by the market environment — in high "
+            "volatility it is halved, capping it at 50% — so a bar above "
+            "that number is a blackout rather than a filter. Lower it to "
+            "see what is actually on offer.",
+            tone="warning",
+        )
+    else:
+        components.render_note(
+            st,
+            f"**Nothing clears {threshold:.0%} today.**"
+            + (f" {below} signal(s) were below your bar and are not shown."
+               if below else "")
+            + " That is the system being unconvinced, not broken — most days "
+            "a trend follower should do nothing.",
+        )
 else:
     if below:
         st.caption(f"{below} further signal(s) fell below your bar and are hidden.")

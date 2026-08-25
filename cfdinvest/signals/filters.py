@@ -76,6 +76,7 @@ DEFAULT_LONG_REGIMES: frozenset[str] = frozenset({"risk_on", "expansion"})
 DEFAULT_SHORT_REGIMES: frozenset[str] = frozenset({"crisis"})
 
 
+
 #: Flags worth naming in a signal's reason string. The regime block flags
 #: are omitted deliberately: the rule name already says "blocked_long",
 #: so repeating it adds length without information.
@@ -214,6 +215,7 @@ def regime_filter(
 
     allow_long = combined.isin(long_regimes)
     allow_short = combined.isin(short_regimes) | macro.isin(short_macro_regimes)
+
 
     if allow_when_unknown:
         unknown = combined.eq("unknown")

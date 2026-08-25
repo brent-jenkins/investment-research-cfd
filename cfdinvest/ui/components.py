@@ -635,9 +635,16 @@ def render_absent(st, source: Source, what: str) -> bool:
     return False
 
 
-def render_note(st, text: str) -> None:
-    """A muted aside, for context that is not a warning."""
-    st.markdown(f'<div class="cfd-note">{text}</div>', unsafe_allow_html=True)
+def render_note(st, text: str, tone: str = "muted") -> None:
+    """A muted aside, or a warning where the aside would mislead.
+
+    ``tone="warning"`` exists for the case where a note is reporting that a
+    figure could not be produced rather than that it was produced and was
+    unremarkable. Rendering those alike is how "the gate is unreachable" got
+    read as "nothing worth trading".
+    """
+    css = "cfd-note cfd-note-warning" if tone == "warning" else "cfd-note"
+    st.markdown(f'<div class="{css}">{text}</div>', unsafe_allow_html=True)
 
 
 def render_section(st, title: str, note: str = "") -> None:

@@ -17,6 +17,7 @@ from cfdinvest.advisor.actions import (
     Suggestion,
     Watch,
     positions_to_watch,
+    confidence_ceiling,
     suggested_trades,
 )
 
@@ -25,5 +26,6 @@ __all__ = [
     "Suggestion",
     "Watch",
     "positions_to_watch",
+    "confidence_ceiling",
     "suggested_trades",
 ]

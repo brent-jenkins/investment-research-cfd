@@ -438,6 +438,13 @@ def stylesheet(mode: str = "dark") -> str:
     margin: 6px 0 14px 0;
   }}
 
+  .cfd-note-warning {{
+    color: var(--cfd-text);
+    border-left-color: var(--cfd-warning);
+    background: var(--cfd-warning-soft, transparent);
+    padding: 10px 12px;
+  }}
+
   /* Compact key/value rows, for facts that do not deserve a metric card. */
   .cfd-kv {{
     display: flex;

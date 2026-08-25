@@ -94,6 +94,32 @@ class Watch:
         return self.severity in ("warning", "critical")
 
 
+def confidence_ceiling(latest: Sequence[Mapping[str, Any]] | Any) -> float | None:
+    """The best confidence on offer right now, or ``None`` if nothing is.
+
+    Exists because "no suggestions" has two very different meanings and the
+    count of rejected rows tells them apart only if you know the ceiling.
+
+    The engine multiplies confidence by the environment multiplier, which is
+    0.5 in high volatility -- 28.8% of bars in this history. So on those days
+    **no signal can score above 0.5 however strong it is**, and a gate set at
+    0.60 rejects everything by construction. A reader seeing an empty list
+    concludes the engine looked and found nothing worth taking, when what
+    happened is that it was never allowed to say yes.
+
+    Naming that is the same rule the rest of this project runs on: not
+    measured and measured-and-fine are different statements.
+    """
+    best = None
+    for row in list(latest or []):
+        if str(row.get("direction") or "flat").lower() == "flat":
+            continue
+        score = _finite(row.get("confidence"))
+        if score is not None and (best is None or score > best):
+            best = score
+    return best
+
+
 def suggested_trades(
     latest: Sequence[Mapping[str, Any]] | Any,
     *,

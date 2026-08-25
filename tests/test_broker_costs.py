@@ -29,6 +29,10 @@ M61  GBPUSD used as quoted instead of inverted
      -> test_the_dollar_rate_is_the_reciprocal_of_the_published_pair
 M62  a cross's legs collapse to a single direct leg
      -> test_rate_legs_accepts_a_plain_ticker_an_inversion_and_a_cross
+M63  the confidence ceiling counts flat rows
+     -> test_confidence_ceiling_reports_the_best_on_offer
+M64  the environment multiplier folds into confidence regardless of the flag
+     -> test_the_environment_multiplier_can_be_kept_out_of_confidence
 """
 
 from __future__ import annotations
@@ -351,3 +355,58 @@ def test_every_currency_in_the_map_crosses_through_a_pair_the_lake_holds():
         assert legs, f"{currency} has no legs"
         for ticker, _ in legs:
             assert ticker in available, f"{currency} needs {ticker}, not in the lake"
+
+
+# --------------------------------------------------------------------------- #
+# A gate that cannot be cleared is not a filter
+# --------------------------------------------------------------------------- #
+def test_confidence_ceiling_reports_the_best_on_offer():
+    """M63: the ceiling ignores flat rows or reports None when it should not.
+
+    The engine multiplies confidence by the environment multiplier, 0.5 in
+    high volatility. Nothing can then score above 0.5, so a 60% gate rejects
+    every signal by construction -- and the count of rejections alone cannot
+    tell that apart from a genuinely quiet day.
+    """
+    from cfdinvest.advisor.actions import confidence_ceiling, suggested_trades
+
+    rows = [
+        {"ticker": "AAPL", "direction": "long", "confidence": 0.50, "size": 0.1},
+        {"ticker": "MSFT", "direction": "long", "confidence": 0.42, "size": 0.1},
+        {"ticker": "NKE", "direction": "flat", "confidence": 0.99, "size": 0.0},
+    ]
+
+    # The flat row scores highest and must not count: there is no confidence
+    # in a position not taken.
+    assert confidence_ceiling(rows) == pytest.approx(0.50)
+
+    kept, below = suggested_trades(rows, balance=1000.0, threshold=0.60)
+    assert kept == []
+    assert below == 2
+    # The pair together is what distinguishes the two silences.
+    assert confidence_ceiling(rows) < 0.60
+
+    assert confidence_ceiling([]) is None
+    assert confidence_ceiling([{"direction": "flat", "confidence": 0.9}]) is None
+
+
+def test_the_environment_multiplier_can_be_kept_out_of_confidence():
+    """M64: the flag is ignored and the multiplier folds in regardless."""
+    from cfdinvest.signals.combined import confidence_score
+
+    index = pd.date_range("2024-01-01", periods=3, tz="UTC")
+    columns = ["AAPL"]
+    strength = pd.DataFrame(1.0, index=index, columns=columns)
+    agreement = pd.DataFrame(1.0, index=index, columns=columns)
+    halved = pd.DataFrame(0.5, index=index, columns=columns)
+    direction = pd.DataFrame("long", index=index, columns=columns)
+
+    folded = confidence_score(strength, agreement, halved, direction)
+    kept_out = confidence_score(
+        strength, agreement, halved, direction, include_environment=False
+    )
+
+    # With it folded in, a maximal signal in a volatile market caps at 0.5 --
+    # unreachable for any gate above that.
+    assert folded["AAPL"].max() == pytest.approx(0.5)
+    assert kept_out["AAPL"].max() == pytest.approx(1.0)
