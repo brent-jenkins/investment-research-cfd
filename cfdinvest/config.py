@@ -286,11 +286,21 @@ def load_dotenv(
         The key/value pairs parsed from the file.
     """
     env_path = Path(path)
-    if not env_path.is_file():
+    try:
+        if not env_path.is_file():
+            return {}
+        body = env_path.read_text(encoding="utf-8")
+    except OSError as error:
+        # A .env that exists but cannot be read is the same as none: the
+        # environment and the config file still have everything needed.
+        # `is_file()` *raises* on permission denied rather than returning
+        # False, so a service running as one user in a directory holding
+        # another user's .env crashed on import rather than falling back.
+        logger.warning("Ignoring unreadable %s: %s", env_path, error)
         return {}
 
     parsed: dict[str, str] = {}
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+    for raw_line in body.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue

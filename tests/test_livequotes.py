@@ -585,3 +585,27 @@ def test_a_price_panel_still_labels_by_ticker():
     assert set(long["series"].astype(str)) == {"SPY", "GLD", "TLT"}
     assert "|" not in "".join(long["series"].astype(str).unique())
     assert long["panel"].unique().tolist() == ["prices.close"]
+
+
+def test_an_unreadable_dotenv_is_ignored_not_fatal(tmp_path, monkeypatch):
+    """A .env belonging to someone else must not stop the process starting.
+
+    `Path.is_file()` raises PermissionError rather than returning False, so
+    a service running as one user, in a directory holding another user's
+    .env, crashed on import. The environment and the config file already
+    carry everything needed -- an unreadable .env is the same as none.
+    """
+    import os
+    import stat
+
+    from cfdinvest.config import load_dotenv
+
+    env = tmp_path / ".env"
+    env.write_text("SECRET=value\n", encoding="utf-8")
+
+    assert load_dotenv(env) == {"SECRET": "value"}
+
+    # A directory stands in for "exists but cannot be read as a file",
+    # because chmod is not reliably enforced for the owner or on Windows.
+    assert load_dotenv(tmp_path) == {}
+    assert load_dotenv(tmp_path / "absent.env") == {}
