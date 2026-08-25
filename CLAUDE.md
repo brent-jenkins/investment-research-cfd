@@ -102,6 +102,12 @@ and because those severities shrink real positions.
 size. Increasing it requires every requirement clear at once, and the result
 is still capped by the safety engine. See `metastrategy/README.md`.
 
+**A posture may request an increase but cannot exceed the safety engine's
+approved maximum**; overrules are reported explicitly.
+
+**Broker checks report pass / not checked / unverified**; silence is never
+treated as safe.
+
 ---
 
 ## Testing
@@ -190,6 +196,12 @@ it exists to prevent.
 ## Current state
 
 All queued layers are built, tested and pushed. The suite is green.
+
+The Meta-Strategy layer is built, tested, mutation-checked and integrated;
+all refinement inputs now exist.
+
+The lake freshness warning appears until ingestion is run; monitoring
+reports stale data as a warning.
 
 **The one open gap:** `~/.config/cfdinvest/t212_rules.toml` ships empty and
 deliberately so — nothing publishes Trading 212's instrument rules and this
