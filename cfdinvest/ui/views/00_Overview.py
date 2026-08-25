@@ -31,7 +31,8 @@ import streamlit as st  # noqa: E402
 
 from cfdinvest.livehelper import t212_instruments  # noqa: E402
 from cfdinvest.schema import TIMESTAMP  # noqa: E402
-from cfdinvest.ui import actions, components, explain  # noqa: E402
+from cfdinvest.advisor import actions
+from cfdinvest.ui import components, explain  # noqa: E402
 
 components.render_crumb(st, "Overview")
 data = components.page_setup(

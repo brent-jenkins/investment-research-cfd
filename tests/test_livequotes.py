@@ -344,7 +344,9 @@ def test_quotes_are_owed_every_five_minutes():
     at = lambda m: pd.Timestamp("2026-08-25 04:00", tz="UTC") + pd.Timedelta(minutes=m)
 
     assert daemon.jobs_due(at(4), last) == []
-    assert daemon.jobs_due(at(5), last) == ["poll-live-quotes"]
+    # The advisor rides the same tick: a fresh price is only useful if
+    # something notices what it means.
+    assert daemon.jobs_due(at(5), last) == ["poll-live-quotes", "advisor-alert"]
 
 
 # --------------------------------------------------------------------------- #
@@ -722,3 +724,141 @@ def test_the_daemon_prunes_after_the_snapshots_not_before():
     assert due.index("prune-runs") > due.index("run-daily")
     assert due.index("prune-runs") > due.index("monitoring-snapshot")
     assert due.index("prune-runs") > due.index("risk-snapshot")
+
+
+# --------------------------------------------------------------------------- #
+# Alerting: only when it is new
+# --------------------------------------------------------------------------- #
+def a_suggestion(ticker="AAPL", direction="short", confidence=0.7, tradable=True):
+    from cfdinvest.advisor.actions import Suggestion
+
+    return Suggestion(ticker=ticker, direction=direction, confidence=confidence,
+                      size_fraction=0.05, price=100.0, cash=500.0, quantity=5.0,
+                      t212_name="Apple", tradable=tradable)
+
+
+def a_watch(ticker="NVDA", severity="warning"):
+    from cfdinvest.advisor.actions import Watch
+
+    return Watch(ticker=ticker, quantity=1.0, severity=severity, note="close to stop")
+
+
+def test_the_same_alert_is_not_sent_twice():
+    """An advisor that repeats itself every five minutes is one you stop
+    reading -- and then the alert you would have acted on arrives in a thread
+    you have learned to ignore."""
+    from cfdinvest.advisor import alerts
+
+    first, seen = alerts.decide_alerts([a_suggestion()], [a_watch()], set(),
+                                       as_of="2026-08-25")
+    assert len(first) == 2
+
+    again, seen_again = alerts.decide_alerts([a_suggestion()], [a_watch()], seen,
+                                             as_of="2026-08-25")
+    assert again == []
+    assert seen_again == seen
+
+
+def test_a_suggestion_alerts_again_on_a_new_day():
+    """Signals come from daily bars, so the same instrument clearing the bar
+    tomorrow is a fresh statement."""
+    from cfdinvest.advisor import alerts
+
+    _, seen = alerts.decide_alerts([a_suggestion()], [], set(), as_of="2026-08-25")
+    tomorrow, _ = alerts.decide_alerts([a_suggestion()], [], seen, as_of="2026-08-26")
+
+    assert len(tomorrow) == 1
+
+
+def test_a_position_that_recovers_can_alert_again():
+    """It drops out of the state when it is no longer in trouble, so sliding
+    back towards the stop is a real second event."""
+    from cfdinvest.advisor import alerts
+
+    _, seen = alerts.decide_alerts([], [a_watch()], set())
+    assert "position|NVDA|warning" in seen
+
+    # Recovered: not in trouble, so not in the new state.
+    _, recovered = alerts.decide_alerts([], [a_watch(severity="pass")], seen)
+    assert "position|NVDA|warning" not in recovered
+
+    again, _ = alerts.decide_alerts([], [a_watch()], recovered)
+    assert len(again) == 1
+
+
+def test_worsening_from_warning_to_critical_is_a_new_alert():
+    from cfdinvest.advisor import alerts
+
+    _, seen = alerts.decide_alerts([], [a_watch(severity="warning")], set())
+    worse, _ = alerts.decide_alerts([], [a_watch(severity="critical")], seen)
+
+    assert len(worse) == 1
+    assert worse[0].severity == "critical"
+
+
+def test_an_untradable_suggestion_never_wakes_anyone():
+    """Waking someone for an instrument they cannot open is how a channel
+    gets muted."""
+    from cfdinvest.advisor import alerts
+
+    fresh, _ = alerts.decide_alerts([a_suggestion(tradable=False)], [], set())
+    assert fresh == []
+
+
+def test_the_urgent_thing_is_first():
+    from cfdinvest.advisor import alerts
+
+    fresh, _ = alerts.decide_alerts(
+        [a_suggestion()],
+        [a_watch("A", "warning"), a_watch("B", "critical")],
+        set(),
+    )
+    assert [alert.severity for alert in fresh] == ["critical", "warning", "info"]
+
+
+def test_unreadable_alert_state_repeats_rather_than_swallows(tmp_path):
+    """Of the two failure modes, a duplicate beats a missed alert."""
+    from cfdinvest.advisor import alerts
+
+    config = config_for(tmp_path)
+    path = alerts._state_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+
+    assert alerts.load_seen(config) == set()
+
+
+def test_the_alert_email_says_what_to_do_and_what_it_cannot_do():
+    from cfdinvest.advisor import alerts
+    from cfdinvest.schedule import notify
+
+    fresh, _ = alerts.decide_alerts([a_suggestion()], [a_watch()], set())
+    body = notify.build_advisor_alert(fresh).get_content()
+
+    assert "Apple" in body and "units" in body
+    assert "Live-Execution Helper" in body
+    # The constraint that has held since the first commit.
+    assert "places no trades" in body
+
+
+def test_the_advisor_runs_on_the_quote_cadence():
+    """A fresh price is only useful if something notices what it means."""
+    import pandas as pd
+
+    from cfdinvest.schedule import daemon
+
+    due = daemon.jobs_due(pd.Timestamp("2026-08-25 12:00", tz="UTC"), {})
+    assert "advisor-alert" in due
+    assert due.index("advisor-alert") > due.index("poll-live-quotes")
+
+
+def test_the_scheduler_never_imports_the_dashboard():
+    """The advisor logic sits outside ui/ on purpose: the dashboard is an
+    optional install and the notifier has to work where it was never put."""
+    for path in (Path("cfdinvest/advisor/actions.py"),
+                 Path("cfdinvest/advisor/alerts.py"),
+                 Path("cfdinvest/schedule/app.py"),
+                 Path("cfdinvest/schedule/notify.py")):
+        imported = _imports(path)
+        assert not [m for m in imported if m.startswith("cfdinvest.ui")], path
+        assert not [m for m in imported if m == "streamlit"], path

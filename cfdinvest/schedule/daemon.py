@@ -48,6 +48,7 @@ RUN_AT_UTC = (3, 5)
 #: The snapshots come last because they describe the run.
 JOBS: tuple[str, ...] = (
     "poll-live-quotes",
+    "advisor-alert",
     "ingest-daily",
     "run-daily",
     "monitoring-snapshot",
@@ -104,6 +105,9 @@ def jobs_due(now, last_run: Mapping[str, object] | None = None) -> list[str]:
         (moment - quotes_last).total_seconds() >= QUOTE_INTERVAL_MINUTES * 60
     ):
         due.append("poll-live-quotes")
+        # Straight after the poll, on the same cadence: the whole point of a
+        # fresh price is noticing what it means before you are asked.
+        due.append("advisor-alert")
 
     if _due_daily(moment, history.get("ingest-daily"), INGEST_AT_UTC):
         due.append("ingest-daily")

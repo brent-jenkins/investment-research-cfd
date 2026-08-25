@@ -42,6 +42,8 @@ __all__ = [
     "smtp_transport",
     "build_trade_alert",
     "build_daily_summary",
+    "build_advisor_alert",
+    "send_advisor_alert",
     "build_error_alert",
     "send",
     "send_trade_alert",
@@ -298,6 +300,75 @@ def _confirmation_instructions(asset: Any, row: Mapping[str, Any]) -> list[str]:
         "stops assuming this one:",
         f"    {example}",
     ]
+
+
+def build_advisor_alert(alerts, config: SmtpConfig | None = None) -> EmailMessage:
+    """One email covering everything newly worth acting on.
+
+    One message rather than one per item: five separate emails arriving
+    together is how a channel gets filtered, and the ordering already puts
+    the urgent thing first.
+
+    The subject leads with what is wrong, because that is what decides
+    whether it is opened now or later.
+    """
+    settings = config or SmtpConfig.from_env()
+    rows = list(alerts or ())
+
+    urgent = [alert for alert in rows if alert.severity == "critical"]
+    warnings = [alert for alert in rows if alert.severity == "warning"]
+    openings = [alert for alert in rows if alert.kind == "open"]
+
+    if urgent:
+        subject = f"Action needed: {urgent[0].headline}"
+    elif warnings:
+        subject = f"Watch: {warnings[0].headline}"
+    else:
+        subject = (
+            f"{len(openings)} trade(s) to consider"
+            if openings else "Nothing to act on"
+        )
+
+    lines = []
+    if urgent or warnings:
+        lines.append("YOUR OPEN POSITIONS")
+        for alert in urgent + warnings:
+            lines.append(f"  * {alert.headline}")
+            if alert.detail:
+                lines.append(f"      {alert.detail}")
+        lines.append("")
+    if openings:
+        lines.append("TRADES TO CONSIDER")
+        for alert in openings:
+            lines.append(f"  * {alert.headline}")
+            if alert.detail:
+                lines.append(f"      {alert.detail}")
+        lines.append("")
+
+    lines.append(
+        "Sizes are sizes, not permissions. Run anything here through the "
+        "Live-Execution Helper before placing it -- that is what checks it "
+        "against your limits, margin and the broker rules."
+    )
+    lines.append("")
+    lines.append(
+        "This system places no trades and never has. You place them "
+        "yourself in the Trading 212 app."
+    )
+
+    message = EmailMessage()
+    message["Subject"] = f"[CFDInvest] {subject}"
+    message["From"] = settings.sender or "cfdinvest@localhost"
+    message["To"] = ", ".join(getattr(settings, "recipients", ()) or [])
+    message.set_content("\n".join(lines))
+    return message
+
+
+def send_advisor_alert(alerts, config=None, transport=None) -> bool:
+    """Send the advisor alert, if there is anything to say."""
+    if not alerts:
+        return False
+    return send(build_advisor_alert(alerts, config), config, transport)
 
 
 def build_daily_summary(summary: Any, config: SmtpConfig | None = None) -> EmailMessage:

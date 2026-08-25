@@ -202,6 +202,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop after this many ticks; for tests and dry runs",
     )
 
+    advise = commands.add_parser(
+        "advisor-alert",
+        help="email anything newly worth acting on",
+        description=(
+            "Compares the open book and the latest signals against what has "
+            "already been said, and emails only what is new. Places nothing."
+        ),
+    )
+    advise.add_argument("--account", default=None)
+    advise.add_argument(
+        "--balance", type=float, default=None,
+        help="account balance, for sizing the suggestions",
+    )
+    advise.add_argument(
+        "--min-confidence", type=float, default=None,
+        help="the bar a suggestion must clear (default 0.60)",
+    )
+
     prune = commands.add_parser(
         "prune-runs",
         help="remove old run artefacts so the disk does not fill",
@@ -375,6 +393,107 @@ def _command_run_continuous(args, app_config, smtp, transport) -> int:
     return EXIT_OK
 
 
+def _command_advisor_alert(args, app_config, smtp, transport) -> int:
+    """Email anything newly worth acting on. Places nothing, ever."""
+    from cfdinvest.advisor import actions, alerts
+
+    account = getattr(args, "account", None)
+    balance = getattr(args, "balance", None)
+    threshold = getattr(args, "min_confidence", None)
+
+    book, prices, latest, as_of = _advisor_inputs(app_config, account)
+    watches = actions.positions_to_watch(book, prices=prices)
+    suggestions, _ = actions.suggested_trades(
+        latest,
+        balance=float(balance or 0.0),
+        threshold=(
+            actions.DEFAULT_CONFIDENCE if threshold is None else float(threshold)
+        ),
+        prices=prices,
+        mapping=_instrument_mapping(),
+    )
+
+    seen = alerts.load_seen(app_config, account)
+    fresh, now_seen = alerts.decide_alerts(
+        suggestions, watches, seen, as_of=as_of
+    )
+    alerts.save_seen(now_seen, app_config, account)
+
+    if not fresh:
+        logger.info("Advisor: nothing new to say")
+        return EXIT_OK
+
+    for alert in fresh:
+        logger.info("Advisor: %s", alert.headline)
+    if not args.no_email:
+        notify_module.send_advisor_alert(fresh, smtp, transport)
+    print(f"{len(fresh)} new alert(s).")
+    return EXIT_OK
+
+
+def _instrument_mapping():
+    from cfdinvest.livehelper.t212_instruments import mapping_for
+
+    return mapping_for
+
+
+def _advisor_inputs(app_config, account):
+    """The book, the prices, the latest signals and their timestamp.
+
+    Reads only. Every lookup is guarded: an advisor that cannot read the
+    signals should still be able to warn about an open position.
+    """
+    book, prices, latest, as_of = {}, {}, [], None
+
+    try:
+        from cfdinvest.persist.confirm import confirmed_positions, load_confirmations
+
+        replayed = confirmed_positions(
+            load_confirmations(app_config, account=account)
+        )
+        book = {
+            name: entry for name, entry in (replayed or {}).items()
+            if (entry or {}).get("quantity")
+        }
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Advisor: could not read the confirmed book: %s", error)
+
+    try:
+        from cfdinvest.persist import readers
+
+        run_id = readers.load_latest_run(app_config, account=account)
+        # The generic artefact reader: there is no load_signal_frame, and
+        # rebuild_signal_frame returns a SignalFrame rather than the long
+        # form this wants.
+        frame = (
+            None if run_id is None
+            else readers.load_frame("signals", run_id, app_config, account)
+        )
+        if frame is not None and not frame.empty:
+            working = frame.reset_index() if hasattr(frame, "reset_index") else frame
+            if "timestamp" in working.columns:
+                working["timestamp"] = pd.to_datetime(
+                    working["timestamp"], utc=True, errors="coerce"
+                )
+                as_of = working["timestamp"].max()
+                working = working[working["timestamp"] == as_of]
+            latest = working.rename(columns={"ticker": "ticker"}).to_dict("records")
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Advisor: could not read the signals: %s", error)
+
+    try:
+        from cfdinvest.livehelper.price_source import resolve_price
+
+        wanted = list(book) + [str(row.get("ticker")) for row in latest]
+        for ticker in dict.fromkeys(t for t in wanted if t):
+            found = resolve_price(ticker, app_config=app_config, account=account)
+            prices[ticker] = (found.price, found.note)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Advisor: could not price the instruments: %s", error)
+
+    return book, prices, latest, as_of
+
+
 def _command_prune_runs(args, app_config) -> int:
     """Remove old run artefacts. Never fails the caller."""
     from cfdinvest.persist import retention
@@ -472,6 +591,10 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
             )
         elif name == "risk-snapshot":
             _command_risk_snapshot(_job_args(args, "risk-snapshot"), app_config)
+        elif name == "advisor-alert":
+            _command_advisor_alert(
+                _job_args(args, "advisor-alert"), app_config, smtp, transport
+            )
         elif name == "prune-runs":
             _command_prune_runs(_job_args(args, "prune-runs"), app_config)
 
@@ -709,6 +832,8 @@ def main(argv: list[str] | None = None) -> int:
             return _command_market_status(args, app_config)
         if args.command == "crontab":
             return _command_crontab(args, app_config)
+        if args.command == "advisor-alert":
+            return _command_advisor_alert(args, app_config, smtp, transport)
         if args.command == "prune-runs":
             return _command_prune_runs(args, app_config)
         if args.command == "poll-live-quotes":

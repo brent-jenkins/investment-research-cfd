@@ -2086,7 +2086,7 @@ def test_a_signal_below_the_bar_is_counted_not_shown():
     engine produced nothing" are different states and only one of them
     means something is wrong.
     """
-    from cfdinvest.ui import actions
+    from cfdinvest.advisor import actions
 
     kept, below = actions.suggested_trades(
         [signal_row("A", confidence=0.9), signal_row("B", confidence=0.2),
@@ -2099,7 +2099,7 @@ def test_a_signal_below_the_bar_is_counted_not_shown():
 
 
 def test_suggestions_come_back_strongest_first():
-    from cfdinvest.ui import actions
+    from cfdinvest.advisor import actions
 
     kept, _ = actions.suggested_trades(
         [signal_row("A", confidence=0.7), signal_row("B", confidence=0.95)],
@@ -2109,7 +2109,7 @@ def test_suggestions_come_back_strongest_first():
 
 
 def test_a_flat_signal_is_never_a_suggestion():
-    from cfdinvest.ui import actions
+    from cfdinvest.advisor import actions
 
     kept, below = actions.suggested_trades(
         [signal_row("A", direction="flat", confidence=1.0)],
@@ -2124,7 +2124,7 @@ def test_the_stake_is_a_share_of_the_balance_not_a_unit_count():
     A signal's size is a share of equity. Cash is size x balance, and
     quantity is cash / price -- never size treated as units.
     """
-    from cfdinvest.ui import actions
+    from cfdinvest.advisor import actions
 
     kept, _ = actions.suggested_trades(
         [signal_row("A", size=0.05)], balance=10_000, threshold=0.6,
@@ -2139,7 +2139,7 @@ def test_the_stake_is_a_share_of_the_balance_not_a_unit_count():
 
 def test_a_suggestion_without_a_price_is_not_actionable():
     """No price means no quantity, and a quantity is the actionable part."""
-    from cfdinvest.ui import actions
+    from cfdinvest.advisor import actions
 
     kept, _ = actions.suggested_trades(
         [signal_row("A")], balance=10_000, threshold=0.6, prices={},
@@ -2151,7 +2151,7 @@ def test_a_suggestion_without_a_price_is_not_actionable():
 
 def test_a_position_past_its_stop_sorts_above_a_healthy_one():
     """Worst first: the page is read top-down when something is wrong."""
-    from cfdinvest.ui import actions
+    from cfdinvest.advisor import actions
 
     watches = actions.positions_to_watch(
         {
@@ -2168,7 +2168,7 @@ def test_a_position_past_its_stop_sorts_above_a_healthy_one():
 
 
 def test_a_position_near_its_stop_is_a_warning():
-    from cfdinvest.ui import actions
+    from cfdinvest.advisor import actions
 
     watches = actions.positions_to_watch(
         {"NEAR": {"quantity": 1.0, "price": 100.0}},
@@ -2182,7 +2182,7 @@ def test_a_position_near_its_stop_is_a_warning():
 def test_a_position_that_cannot_be_priced_is_not_reported_calm():
     """Not knowing what something is worth is not the same as it being fine,
     and this is the page you would read to decide you need do nothing."""
-    from cfdinvest.ui import actions
+    from cfdinvest.advisor import actions
 
     watches = actions.positions_to_watch(
         {"DARK": {"quantity": 1.0, "price": 100.0}}, prices={},
@@ -2194,7 +2194,7 @@ def test_a_position_that_cannot_be_priced_is_not_reported_calm():
 
 
 def test_a_closed_position_is_not_watched():
-    from cfdinvest.ui import actions
+    from cfdinvest.advisor import actions
 
     assert actions.positions_to_watch({"OUT": {"quantity": 0.0, "price": 1.0}}) == []
 
@@ -2202,7 +2202,7 @@ def test_a_closed_position_is_not_watched():
 def test_the_confidence_bar_is_sixty_percent_by_default():
     """Asked for explicitly, and it is not a probability of profit -- the
     page has to say so, because the number invites that reading."""
-    from cfdinvest.ui import actions
+    from cfdinvest.advisor import actions
 
     assert actions.DEFAULT_CONFIDENCE == 0.60
 
