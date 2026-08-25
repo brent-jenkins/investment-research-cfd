@@ -60,6 +60,11 @@ __all__ = [
     "change_password",
     "bootstrap_from_environment",
     "is_configured",
+    "COOKIE_NAME",
+    "SESSION_DAYS",
+    "issue_token",
+    "verify_token",
+    "session_secret",
 ]
 
 AUTH_DIR = "auth"
@@ -262,3 +267,87 @@ def change_password(
         return False, "The new password could not be saved. It is unchanged."
     logger.info("Password changed for %r", name)
     return True, "Password changed."
+
+
+# --------------------------------------------------------------------------- #
+# Staying signed in across a refresh
+# --------------------------------------------------------------------------- #
+#: Streamlit's ``session_state`` lives for one websocket session, so a browser
+#: refresh starts a new one and signs you out. That is not a policy, it is an
+#: accident of where the state lives -- so the session is carried in a signed
+#: cookie instead, and ``session_state`` becomes a per-run cache of it.
+COOKIE_NAME = "cfd_session"
+
+#: How long a signed-in browser stays signed in. Long enough not to be a
+#: nuisance on a dashboard someone opens daily; short enough that a forgotten
+#: session on an old laptop expires by itself.
+SESSION_DAYS = 14
+
+
+def session_secret(config=None) -> bytes:
+    """The key the session cookie is signed with, created once and kept.
+
+    Stored in the credential file so it survives a restart -- generating it
+    per process would sign everybody out on every deploy, which is the exact
+    failure this cookie exists to fix.
+    """
+    document = load_credentials(config) or {}
+    existing = document.get("session_secret")
+    if isinstance(existing, str) and len(existing) >= 32:
+        return bytes.fromhex(existing)
+
+    secret = secrets.token_bytes(32)
+    document["session_secret"] = secret.hex()
+    document.setdefault("schema_version", SCHEMA_VERSION)
+    save_credentials(document, config)
+    return secret
+
+
+def issue_token(username: str, config=None, *, now: float | None = None) -> str:
+    """A signed ``username|expiry|signature`` for the session cookie.
+
+    The signature covers the expiry, so a browser cannot extend its own
+    session by editing the cookie -- the whole value is opaque and checked,
+    not trusted.
+    """
+    import hashlib
+    import time
+
+    name = str(username or "").strip()
+    expires = int((now if now is not None else time.time()) + SESSION_DAYS * 86400)
+    payload = f"{name}|{expires}"
+    signature = hmac.new(
+        session_secret(config), payload.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return f"{payload}|{signature}"
+
+
+def verify_token(token: str, config=None, *, now: float | None = None) -> str | None:
+    """The username a token proves, or ``None``. Never raises.
+
+    ``None`` covers every way a token can fail -- malformed, expired, wrong
+    signature, or naming an account that no longer exists. A token for a
+    deleted user must not still open the dashboard.
+    """
+    import hashlib
+    import time
+
+    try:
+        name, expires, signature = str(token or "").rsplit("|", 2)
+    except ValueError:
+        return None
+
+    expected = hmac.new(
+        session_secret(config), f"{name}|{expires}".encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        return None
+
+    try:
+        if int(expires) < int(now if now is not None else time.time()):
+            return None
+    except (TypeError, ValueError):
+        return None
+
+    users = (load_credentials(config) or {}).get("users") or {}
+    return name if name in users else None

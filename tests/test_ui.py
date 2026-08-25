@@ -1185,16 +1185,17 @@ def test_the_risk_page_offers_no_control_that_changes_anything(
 ):
     """It is a dashboard. Nothing on it may close, size or place a trade.
 
-    The shared sidebar's "Refresh data" re-reads the lake and "Sign out"
-    ends the session, so the assertion is not "no buttons" but "no button
-    that acts on the book". Listing the chrome explicitly rather than
-    loosening the check: a new button appearing here should fail this test
-    until someone has looked at it.
+    The shared sidebar's "Refresh data" re-reads the lake, so the assertion
+    is not "no buttons" but "no button that acts on the book". Sign out is
+    drawn by the entry script rather than by a page, so it does not appear
+    when a page is rendered on its own. Listing the chrome explicitly rather
+    than loosening the check: a new button here should fail this test until
+    someone has looked at it.
     """
     app = render_risk(monkeypatch, risk_snapshot())
     labels = [button.label for button in app.button]
 
-    assert sorted(labels) == ["Refresh data", "Sign out"]
+    assert labels == ["Refresh data"]
     forbidden = ("close", "sell", "buy", "place", "reduce", "hedge", "size")
     assert not [
         label for label in labels
@@ -1848,3 +1849,70 @@ def test_an_unconfigured_dashboard_refuses_everyone(monkeypatch, populated):
     errors = " ".join(block.value for block in app.error)
     assert "No dashboard account exists" in errors
     assert not any("Sign in" in header.value for header in app.subheader)
+
+
+def test_a_session_survives_a_refresh(tmp_path):
+    """The bug a refresh found.
+
+    Streamlit's session_state lives for one websocket session, so a browser
+    refresh starts a new one and signed you out. The session is carried in a
+    signed cookie instead; session_state is a per-run cache of it.
+    """
+    from cfdinvest.ui import auth
+
+    config = auth_config(tmp_path)
+    auth.save_credentials({"users": {"admin": auth.hash_password("x" * 14)}}, config)
+
+    token = auth.issue_token("admin", config)
+    assert auth.verify_token(token, config) == "admin"
+
+    # The secret is kept, so a restart does not sign everybody out.
+    reread = auth.session_secret(config)
+    assert reread == auth.session_secret(config)
+    assert auth.verify_token(token, config) == "admin"
+
+
+def test_a_session_cookie_cannot_be_edited_to_last_longer(tmp_path):
+    """The signature covers the expiry, so the browser holds nothing it can
+    usefully change."""
+    from cfdinvest.ui import auth
+
+    config = auth_config(tmp_path)
+    auth.save_credentials({"users": {"admin": auth.hash_password("x" * 14)}}, config)
+
+    name, expires, signature = auth.issue_token("admin", config).rsplit("|", 2)
+    forged = f"{name}|{int(expires) + 86400 * 365}|{signature}"
+
+    assert auth.verify_token(forged, config) is None
+    assert auth.verify_token(f"admin|{expires}|{'0' * 64}", config) is None
+    assert auth.verify_token("not a token", config) is None
+
+
+def test_an_expired_or_deleted_session_stops_working(tmp_path):
+    from cfdinvest.ui import auth
+
+    config = auth_config(tmp_path)
+    auth.save_credentials({"users": {"admin": auth.hash_password("x" * 14)}}, config)
+    token = auth.issue_token("admin", config)
+
+    assert auth.verify_token(token, config, now=9e9) is None
+
+    # A token for an account that no longer exists must not still open it.
+    document = auth.load_credentials(config)
+    document["users"] = {}
+    auth.save_credentials(document, config)
+    assert auth.verify_token(token, config) is None
+
+
+def test_the_entry_script_gates_before_it_draws_the_navigation():
+    """The other half of what a refresh showed: the page list leaked.
+
+    st.navigation draws the sidebar as soon as it is called, so gating only
+    inside the pages showed an anonymous visitor every page name and then
+    refused each one.
+    """
+    body = (UI / "app.py").read_text(encoding="utf-8")
+
+    gate = body.index("components.require_login(st)")
+    navigation = body.index("st.navigation(")
+    assert gate < navigation, "the gate must come before the navigation"

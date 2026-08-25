@@ -29,6 +29,7 @@ import pandas as pd
 from cfdinvest.ui import theme
 # Imported as a module, not by name: the checks are looked up at call time so
 # a caller -- or a test -- can substitute them.
+from cfdinvest.ui import auth as auth_module
 from cfdinvest.ui import health as health_module
 from cfdinvest.ui.health import HealthReport, HealthThresholds
 from cfdinvest.ui.sources import Source, utcnow
@@ -63,6 +64,8 @@ __all__ = [
     "coverage_table",
     "render_state_card",
     "require_login",
+    "current_user",
+    "sign_out",
     "render_sign_out",
     "state_colour",
     "style_states",
@@ -239,25 +242,80 @@ def _empty_bundle() -> dict[str, Any]:
     return bundle
 
 
+def _write_cookie(st, value: str, max_age: int) -> None:
+    """Set (or clear) the session cookie from the browser.
+
+    Streamlit cannot write a response header, so this goes through a
+    zero-height component. The component runs in a srcdoc iframe, which
+    inherits the page's origin, so it writes a cookie for the real host --
+    ``window.parent`` first, falling back to the iframe's own document.
+
+    Best-effort by design. If a browser refuses the cookie the only cost is
+    signing in again after a refresh, which is exactly where this started.
+    """
+    import json as _json
+
+    import streamlit.components.v1 as components
+
+    secure = "; Secure" if st.context.headers.get("X-Forwarded-Proto") == "https" else ""
+    cookie = (
+        f"{auth_module.COOKIE_NAME}={value}; Path=/; Max-Age={max_age}; "
+        f"SameSite=Lax{secure}"
+    )
+    components.html(
+        "<script>"
+        "try { window.parent.document.cookie = " + _json.dumps(cookie) + "; }"
+        "catch (e) { document.cookie = " + _json.dumps(cookie) + "; }"
+        "</script>",
+        height=0,
+    )
+
+
+def current_user(st) -> str | None:
+    """Who is signed in, from the session or the cookie. Never raises.
+
+    ``session_state`` is checked first because it is free; the cookie is what
+    survives a refresh. A valid cookie repopulates the session, so the rest
+    of the app can keep reading one place.
+    """
+    signed_in = st.session_state.get(auth_module.SESSION_KEY)
+    if signed_in:
+        return signed_in
+
+    try:
+        token = st.context.cookies.get(auth_module.COOKIE_NAME)
+    except Exception:  # noqa: BLE001 - no cookies is not signed in
+        return None
+
+    user = auth_module.verify_token(token) if token else None
+    if user:
+        st.session_state[auth_module.SESSION_KEY] = user
+    return user
+
+
+def sign_out(st) -> None:
+    """End the session here and in the browser."""
+    st.session_state.pop(auth_module.SESSION_KEY, None)
+    _write_cookie(st, "", 0)
+
+
 def require_login(st) -> str | None:
     """Draw the sign-in screen unless already signed in. Returns the user.
 
     Called from :func:`page_setup`, so every page is gated by the one path
-    each of them already goes through -- a page that forgot to call this
-    would also have no theme, no banner and no data, which is the kind of
-    mistake that announces itself.
+    each of them already goes through, and from the entry script before the
+    navigation is built, so an anonymous visitor is not shown the list of
+    pages they cannot open.
 
-    Stops the script when not signed in. Nothing after this point renders,
-    so no page content reaches an anonymous visitor.
+    Stops the script when not signed in. Nothing after this point renders.
     """
-    from cfdinvest.ui import auth
+    user = current_user(st)
+    if user:
+        return user
 
-    if st.session_state.get(auth.SESSION_KEY):
-        return st.session_state[auth.SESSION_KEY]
+    auth_module.bootstrap_from_environment()
 
-    auth.bootstrap_from_environment()
-
-    if not auth.is_configured():
+    if not auth_module.is_configured():
         st.error(
             "**No dashboard account exists.** Set `CFD_DASHBOARD_PASSWORD` "
             "in `/etc/cfdinvest/env` and restart the dashboard. There is no "
@@ -275,9 +333,15 @@ def require_login(st) -> str | None:
                 "Password", type="password", autocomplete="current-password"
             )
             if st.form_submit_button("Sign in", width="stretch"):
-                if auth.check_login(username, password):
-                    st.session_state[auth.SESSION_KEY] = username.strip()
+                if auth_module.check_login(username, password):
+                    name = username.strip()
+                    st.session_state[auth_module.SESSION_KEY] = name
                     st.session_state.pop("cfd_login_failed", None)
+                    _write_cookie(
+                        st,
+                        auth_module.issue_token(name),
+                        auth_module.SESSION_DAYS * 86400,
+                    )
                     st.rerun()
                 else:
                     # One message for a bad name and a bad password. Telling
@@ -292,17 +356,16 @@ def require_login(st) -> str | None:
 
 
 def render_sign_out(st) -> None:
-    """The signed-in user and a way out, in the sidebar."""
-    from cfdinvest.ui import auth
-
-    user = st.session_state.get(auth.SESSION_KEY)
+    """The signed-in user and a way out, at the top of the sidebar."""
+    user = st.session_state.get(auth_module.SESSION_KEY)
     if not user:
         return
     with st.sidebar:
         st.caption(f"Signed in as **{user}**")
-        if st.button("Sign out", width="stretch"):
-            st.session_state.pop(auth.SESSION_KEY, None)
+        if st.button("Sign out", width="stretch", key="cfd_sign_out"):
+            sign_out(st)
             st.rerun()
+        st.divider()
 
 
 def page_setup(st, title: str, *, icon: str = "📈", subtitle: str = "") -> dict:
@@ -326,7 +389,6 @@ def page_setup(st, title: str, *, icon: str = "📈", subtitle: str = "") -> dic
     # Before anything is read or drawn. An anonymous visitor should not be
     # able to tell from the page whether the pipeline has even run.
     require_login(st)
-    render_sign_out(st)
 
     data = read_everything(st)
     data["mode"] = mode

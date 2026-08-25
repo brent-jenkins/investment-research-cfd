@@ -67,6 +67,13 @@ PAGES: tuple[tuple[str, str, str], ...] = (
     ("pages/21_Account.py", "Account", "🔑"),
 )
 
+# Before the navigation is built. st.navigation draws the page list in the
+# sidebar as soon as it is called, so gating only inside the pages showed an
+# anonymous visitor every page name and then refused each one. The sign-in
+# screen should be the only thing on the page.
+components.require_login(st)
+components.render_sign_out(st)
+
 navigation = st.navigation(
     [
         st.Page(
