@@ -70,6 +70,7 @@ RUN_ARTEFACTS: dict[str, str] = {
     "equity": "equity.parquet",
     "trades": "trades.parquet",
     "positions": "positions.parquet",
+    "positions_confirmed": "positions_confirmed.parquet",
     "signals": "signals.parquet",
 }
 
@@ -377,7 +378,10 @@ def load_execution_frame(config: AppConfig, output_dir: str = "runs") -> Source:
     the run summary's metrics. See the README.
     """
     summary = load_last_pipeline_summary(config, output_dir)
-    empty = {"trades": _empty(), "positions": _empty(), "equity": _empty()}
+    empty = {
+        "trades": _empty(), "positions": _empty(), "equity": _empty(),
+        "positions_source": "simulated",
+    }
     if not summary.ok:
         return Source(
             value=empty, available=False, error=summary.error, note=summary.note
@@ -392,6 +396,17 @@ def load_execution_frame(config: AppConfig, output_dir: str = "runs") -> Source:
             errors.append(read.error)
         elif not read.available and read.note:
             notes.append(read.note)
+
+    # Your confirmed fills win over the simulation where you recorded any.
+    # The simulated frame is kept alongside rather than replaced: the useful
+    # question afterwards is how far the two differ, and an overwritten
+    # artefact cannot answer it.
+    parts["positions_simulated"] = parts["positions"]
+    parts["positions_source"] = "simulated"
+    overlay = _read_parquet(directory / RUN_ARTEFACTS["positions_confirmed"])
+    if overlay.available and overlay.value is not None and not overlay.value.empty:
+        parts["positions"] = overlay.value
+        parts["positions_source"] = "confirmed"
 
     if errors:
         return Source.broken("; ".join(errors), path=str(directory), value=parts)

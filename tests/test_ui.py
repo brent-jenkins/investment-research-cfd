@@ -858,6 +858,7 @@ def test_the_pages_directory_matches_the_specified_layout():
         "04_Positions.py", "05_Profit_and_Loss.py", "06_Logs.py",
         "07_Configuration.py", "08_Analytics.py", "09_Live_Helper.py",
         "10_Risk.py",
+        "11_Confirm_Trades.py",
     }
     assert {p.name for p in (UI / "pages").glob("*.py")} == expected
 

@@ -52,6 +52,41 @@ if isinstance(equity_frame, pd.DataFrame) and not equity_frame.empty:
 
 st.caption(f"As at {components.moment(as_of)}")
 
+# Which book this is. Silence here would be the worst of the options: the
+# numbers change when you confirm a fill, and nothing on the page would say
+# why they had.
+source = parts.get("positions_source", "simulated")
+if source == "confirmed":
+    simulated = parts.get("positions_simulated")
+    st.success(
+        "Showing **your confirmed fills**, not the simulation. Recorded on "
+        "the Confirm Trades page."
+    )
+    if isinstance(simulated, pd.DataFrame) and not simulated.empty:
+        differences = {}
+        for name in held.index:
+            if name not in simulated.columns:
+                continue
+            was = float(pd.to_numeric(
+                pd.Series([simulated.iloc[-1].get(name)]), errors="coerce"
+            ).fillna(0.0).iloc[0])
+            if was != float(held[name]):
+                differences[name] = {"simulated": was, "confirmed": float(held[name])}
+        if differences:
+            with st.expander(
+                f"{len(differences)} position(s) differ from the simulation"
+            ):
+                components.render_frame(
+                    st, pd.DataFrame(differences).T.rename_axis("instrument")
+                )
+else:
+    components.render_note(
+        st,
+        "Showing the **simulated** positions. Nothing has been confirmed for "
+        "this run, so the system is still assuming its own recommendations "
+        "were followed exactly.",
+    )
+
 if held.empty:
     st.info("The book is flat. Nothing is open.")
     st.stop()

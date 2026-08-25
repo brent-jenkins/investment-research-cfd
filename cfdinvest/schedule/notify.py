@@ -25,7 +25,7 @@ import os
 import smtplib
 from dataclasses import dataclass, field
 from email.message import EmailMessage
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import pandas as pd
 
@@ -248,7 +248,30 @@ def build_trade_alert(trade: Any, config: SmtpConfig | None = None) -> EmailMess
             lines.append(f"{key:>15}: {formatted}")
 
     lines += ["", "Simulated fill. No order was placed with any broker."]
+    lines += _confirmation_instructions(asset, row)
     return _compose(settings, subject, "\n".join(lines))
+
+
+def _confirmation_instructions(asset: Any, row: Mapping[str, Any]) -> list[str]:
+    """How to reply to this alert if you actually took the trade.
+
+    The reply is parsed by :mod:`cfdinvest.confirm.reply`, which reads text
+    and never fetches mail -- something else has to hand it the body. The
+    lines belong in the alert because the moment you know your fill price is
+    the moment you are reading this, and a later step is one that gets
+    skipped.
+    """
+    action = str(row.get("action", "")).lower()
+    verb = "CLOSE" if "close" in action else "OPEN"
+    example = f"CONFIRM {verb} {asset} PRICE=<your fill>"
+    if verb == "OPEN":
+        example += " QTY=<your size>"
+    return [
+        "",
+        "If you took this trade, reply with your real fill so the system "
+        "stops assuming this one:",
+        f"    {example}",
+    ]
 
 
 def build_daily_summary(summary: Any, config: SmtpConfig | None = None) -> EmailMessage:

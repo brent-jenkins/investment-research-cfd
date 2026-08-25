@@ -175,6 +175,45 @@ with st.expander("Run history", expanded=False):
 st.divider()
 
 # --------------------------------------------------------------------------- #
+# Confirmations
+# --------------------------------------------------------------------------- #
+st.subheader("Confirmations")
+
+try:
+    from cfdinvest.persist import confirm as confirm_store
+
+    confirmations = confirm_store.load_confirmations(data["config"])
+except Exception as error:  # noqa: BLE001 - a status page must not go dark
+    st.warning(f"Could not read the confirmations: {error}")
+    confirmations = []
+
+if not confirmations:
+    components.render_note(
+        st,
+        "Nothing has been confirmed. Every page is showing the **simulated** "
+        "positions — which is correct until you say otherwise, but it does "
+        "mean the numbers assume the recommendations were followed exactly.",
+    )
+else:
+    latest = confirmations[-1]
+    held = {
+        name: entry
+        for name, entry in confirm_store.confirmed_positions(confirmations).items()
+        if entry["quantity"]
+    }
+    cells = st.columns(4)
+    cells[0].metric("Recorded", len(confirmations))
+    cells[1].metric("Last confirmed", components.short_moment(latest.timestamp))
+    cells[2].metric("Age", components.age(latest.timestamp, now))
+    cells[3].metric("Instruments held", len(held))
+    st.caption(
+        f"Most recent: {latest.action} {latest.ticker}"
+        + (f" at {latest.price:,.4f}" if latest.price is not None else "")
+    )
+
+st.divider()
+
+# --------------------------------------------------------------------------- #
 # Market
 # --------------------------------------------------------------------------- #
 st.subheader("Market")

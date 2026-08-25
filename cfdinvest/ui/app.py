@@ -52,6 +52,7 @@ PAGES: tuple[tuple[str, str, str], ...] = (
     ("pages/08_Analytics.py", "Analytics", "🔬"),
     ("pages/09_Live_Helper.py", "Live-Execution Helper", "🧮"),
     ("pages/10_Risk.py", "Risk", "⚖"),
+    ("pages/11_Confirm_Trades.py", "Confirm Trades", "✍"),
 )
 
 navigation = st.navigation(

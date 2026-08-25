@@ -50,6 +50,11 @@ __all__ = [
     "load_attribution",
     "load_stop_events",
     "load_run_warnings",
+    "load_positions",
+    "load_confirmed_positions",
+    "load_confirmed_fills",
+    "merge_simulated_and_confirmed_positions",
+    "load_merged_positions",
 ]
 
 
@@ -210,8 +215,36 @@ def load_run_warnings(run_id: str | None = None, config=None, account=None) -> l
     return list(warnings) if isinstance(warnings, (list, tuple)) else []
 
 
+def load_positions(
+    run_id: str | None = None,
+    config=None,
+    account: str | None = None,
+    *,
+    confirmed: bool = True,
+) -> tuple[pd.DataFrame, str]:
+    """The run's positions, preferring your confirmed fills over the simulated.
+
+    Returns the frame and which of the two it is, because every number
+    downstream depends on that choice and a caller that cannot see it cannot
+    label its own output honestly.
+
+    The confirmed artefact is written only when something was confirmed, so
+    its absence means the simulation stands unchallenged -- which is different
+    from a book that was confirmed as flat.
+    """
+    if confirmed:
+        overlaid = load_frame("positions_confirmed", run_id, config, account)
+        if not overlaid.empty:
+            return overlaid, "confirmed"
+    return load_frame("positions", run_id, config, account), "simulated"
+
+
 def load_execution_frame(
-    run_id: str | None = None, config=None, account: str | None = None
+    run_id: str | None = None,
+    config=None,
+    account: str | None = None,
+    *,
+    confirmed: bool = True,
 ) -> dict[str, pd.DataFrame]:
     """Trades, positions, equity and stop events, as a dictionary.
 
@@ -222,11 +255,78 @@ def load_execution_frame(
     """
     parts = {
         name: load_frame(name, run_id, config, account)
-        for name in ("trades", "positions", "equity", "stop_events")
+        for name in ("trades", "equity", "stop_events")
     }
+    parts["positions"], parts["positions_source"] = load_positions(
+        run_id, config, account, confirmed=confirmed
+    )
     equity = parts.get("equity")
     if equity is not None and not equity.empty and "equity" in equity.columns:
         parts["equity_curve"] = pd.to_numeric(
             equity["equity"], errors="coerce"
         ).rename("equity")
     return parts
+
+
+# --------------------------------------------------------------------------- #
+# Confirmations: what actually happened
+# --------------------------------------------------------------------------- #
+# Thin entry points. The model, the replay and the merge live in
+# cfdinvest.persist.confirm, so there is one home for what a confirmation
+# means and these are only the doors into it from the reading side.
+def load_confirmed_positions(config=None, account: str | None = None) -> dict:
+    """The book as the confirmations describe it, per instrument.
+
+    Empty when nothing has been confirmed, which is not the same as a flat
+    book: it means the simulated positions stand unchallenged.
+    """
+    from cfdinvest.persist import confirm
+
+    return confirm.confirmed_positions(confirm.load_confirmations(config, account))
+
+
+def load_confirmed_fills(
+    run_id: str | None = None, config=None, account: str | None = None
+) -> pd.DataFrame:
+    """Confirmed fills, as a table. Filtered to one run when asked.
+
+    Filtering by ``run_id`` returns only confirmations recorded *against* that
+    run. A confirmation carries the run it answers, so a trade you took on
+    your own initiative is not attributed to a recommendation that never
+    existed.
+    """
+    from cfdinvest.persist import confirm
+
+    found = confirm.load_confirmations(config, account)
+    if run_id is not None:
+        found = [c for c in found if c.run_id == run_id]
+    return confirm.to_frame(found)
+
+
+def merge_simulated_and_confirmed_positions(simulated, confirmed=None, **kwargs):
+    """Overlay confirmed positions onto a simulated panel.
+
+    Re-exported from :mod:`cfdinvest.persist.confirm`; see that module for
+    what the merge does and does not do to history.
+    """
+    from cfdinvest.persist import confirm
+
+    return confirm.merge_simulated_and_confirmed_positions(
+        simulated, confirmed, **kwargs
+    )
+
+
+def load_merged_positions(
+    run_id: str | None = None, config=None, account: str | None = None
+) -> tuple[pd.DataFrame, dict]:
+    """A run's positions with confirmations overlaid, and what changed.
+
+    The report is returned rather than logged because a silent override is
+    indistinguishable from a bug -- the position changes and nothing says why.
+    """
+    from cfdinvest.persist import confirm
+
+    return confirm.merge_simulated_and_confirmed_positions(
+        load_frame("positions", run_id, config, account),
+        confirm.load_confirmations(config, account),
+    )

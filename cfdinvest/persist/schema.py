@@ -104,6 +104,17 @@ ARTEFACTS: dict[str, ArtefactSpec] = {
         description="Signed units held, timestamp by ticker.",
         index="timestamp",
     ),
+    "positions_confirmed": ArtefactSpec(
+        name="positions_confirmed",
+        filename="positions_confirmed.parquet",
+        kind="parquet",
+        description=(
+            "Positions with your confirmed fills overlaid. Written only when "
+            "something has been confirmed; absent means the simulation stands."
+        ),
+        index="timestamp",
+        required=(),
+    ),
     "signals": ArtefactSpec(
         name="signals",
         filename="signals.parquet",

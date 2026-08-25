@@ -11,6 +11,10 @@ from before the persistence layer carries trades and equity but no
 decomposition, and the attribution then falls back to the reconstruction —
 which says so, rather than quietly producing a different set of numbers under
 the same name.
+
+Where you have confirmed real fills, those positions are scored in preference
+to the simulated ones, and ``metadata["positions_source"]`` says which was
+used. The two are genuinely different claims about the same run.
 """
 
 from __future__ import annotations
@@ -57,6 +61,11 @@ def execution_frame_from_run(config, run_id: str | None = None) -> ExecutionFram
 
     metadata = dict(readers.load_execution_metadata(chosen, config) or {})
     metadata.setdefault("run_id", chosen)
+    # Which book was scored. The reader prefers your confirmed fills where you
+    # recorded any, and a metric computed on confirmed positions is a
+    # different claim from the same metric on simulated ones -- so the answer
+    # carries which it was rather than leaving the caller to guess.
+    metadata["positions_source"] = parts.get("positions_source", "simulated")
 
     return ExecutionFrame(
         positions=parts.get("positions", pd.DataFrame()),

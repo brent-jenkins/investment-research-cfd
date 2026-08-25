@@ -310,6 +310,7 @@ def run_pipeline(
                     repository, result, summary, backtest_config, directory, run_id
                 )
             )
+            paths.update(_persist_confirmed(repository, directory, run_id))
             summary = _with_paths(summary, paths)
             _prune_old_runs(repository, settings)
 
@@ -370,6 +371,53 @@ def _persist_extras(
         )
     except Exception as error:  # noqa: BLE001
         logger.warning("Could not persist the extended artefacts: %s", error)
+        return {}
+
+
+def _persist_confirmed(repository, directory, run_id: str) -> dict[str, str]:
+    """Write the run's positions with your confirmations overlaid.
+
+    **As a separate artefact, never over the top of ``positions.parquet``.**
+    That file records what the engine did, and rewriting it with fills the
+    engine never made would leave the run unable to answer the one question
+    worth asking of it -- how far reality drifted from the simulation. Two
+    files, both true, and a reader that prefers the confirmed one.
+
+    Written only when something has been confirmed. An empty overlay file
+    would be indistinguishable from "everything was confirmed as simulated",
+    and those are not the same claim.
+
+    Never raises: a confirmation problem must not fail a completed run.
+    """
+    try:
+        from cfdinvest.persist import confirm, writers
+
+        confirmations = confirm.load_confirmations(getattr(repository, "config", None))
+        if not confirmations:
+            return {}
+
+        from cfdinvest import storage as lake_storage
+
+        simulated = lake_storage.read_parquet(directory / "positions.parquet")
+        merged, report = confirm.merge_simulated_and_confirmed_positions(
+            simulated, confirmations
+        )
+        if merged.empty:
+            return {}
+
+        path = directory / "positions_confirmed.parquet"
+        lake_storage.write_parquet(merged, path)
+
+        if report["overridden"]:
+            logger.info(
+                "Confirmations overrode %d position(s) in run %s: %s",
+                len(report["overridden"]),
+                run_id,
+                ", ".join(sorted(report["overridden"])),
+            )
+        return {"positions_confirmed": str(path)}
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not overlay confirmations: %s", error)
         return {}
 
 
