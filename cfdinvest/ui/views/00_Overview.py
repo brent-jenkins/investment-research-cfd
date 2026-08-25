@@ -90,6 +90,15 @@ components.render_tiles(st, [
 ])
 
 # --------------------------------------------------------------------------- #
+# The market you are trading into
+# --------------------------------------------------------------------------- #
+# Above everything, because it is the context every line below is read in:
+# a short suggestion in a risk-off market means something different from the
+# same one in a rally, and you should know which before reading the list.
+st.markdown("##### Market regime")
+components.render_regime_summary(st, data)
+
+# --------------------------------------------------------------------------- #
 # 1. Anything wrong
 # --------------------------------------------------------------------------- #
 if failing:
@@ -183,32 +192,80 @@ if not suggestions:
 else:
     if below:
         st.caption(f"{below} further signal(s) fell below your bar and are hidden.")
-    for suggestion in suggestions:
-        with st.container(border=True):
-            left, middle, right = st.columns([1.4, 1, 1.2])
-            with left:
-                st.markdown(
-                    f"#### {suggestion.ticker} &nbsp; "
-                    f"{components.direction_badge(suggestion.direction, mode)}",
-                    unsafe_allow_html=True,
-                )
-                if suggestion.tradable:
-                    st.caption(f"**Trading 212:** {suggestion.t212_name}")
-                else:
-                    st.caption(":orange[Not tradable on Trading 212.]")
-                st.caption(explain.reason(suggestion.reason))
-            with middle:
-                components.render_kv(st, {
-                    "Confidence": components.percent(suggestion.confidence, 0),
-                    "Of your balance": components.percent(suggestion.size_fraction),
-                    "Price": components.price(suggestion.price),
-                })
-            with right:
-                components.render_kv(st, {
-                    "Stake": components.money(suggestion.cash),
-                    "Quantity": components.number(suggestion.quantity, 4),
-                    "Priced from": suggestion.price_source or components.DASH,
-                })
+
+    # A table, not cards. These are compared against each other -- which is
+    # the strongest, which needs the biggest stake -- and comparison down a
+    # column is what a table is for. The reasons are long and go underneath.
+    #
+    # Direction carries an arrow as well as a colour: an arrow survives a
+    # colourblind reader and a phone screen, and the colour is doing the
+    # scanning work for everyone else.
+    table = pd.DataFrame([
+        {
+            "": "📉" if suggestion.direction == "short" else "📈",
+            "Instrument": suggestion.ticker,
+            "Trading 212": suggestion.t212_name or components.DASH,
+            "Direction": suggestion.direction,
+            # Whole percent, not a fraction: a ProgressColumn formats the
+            # raw value, so 0.80 with "%.0f%%" renders "1%" -- the same
+            # trap the slider had.
+            "Confidence": suggestion.confidence * 100.0,
+            "Stake": suggestion.cash,
+            "Quantity": suggestion.quantity,
+            "Price": suggestion.price,
+            "Priced from": (
+                "live quote" if suggestion.price_source.startswith("Using live")
+                else "daily bar"
+            ),
+        }
+        for suggestion in suggestions
+    ])
+
+    chosen = st.dataframe(
+        components.style_states(table, mode),
+        width="stretch",
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="cfd_suggestion_pick",
+        column_config={
+            "": st.column_config.TextColumn("", width="small"),
+            "Confidence": st.column_config.ProgressColumn(
+                "Confidence", min_value=0, max_value=100, format="%d%%",
+                help="How sure the engine is. NOT a probability of profit.",
+            ),
+            "Stake": st.column_config.NumberColumn(
+                "Stake", format=f"{components.CURRENCY}%.2f"
+            ),
+            "Quantity": st.column_config.NumberColumn("Quantity", format="%.4f"),
+            "Price": st.column_config.NumberColumn("Price", format="%.4f"),
+        },
+    )
+
+    picked = (chosen.selection.rows or [None])[0] if chosen else None
+    if picked is not None and picked < len(suggestions):
+        suggestion = suggestions[picked]
+        st.markdown(
+            f"**{suggestion.ticker}** selected — "
+            f"{suggestion.direction} {components.number(suggestion.quantity, 4)} "
+            f"at about {components.price(suggestion.price)}"
+        )
+        if st.button("Log this trade", type="primary", key="cfd_log_pick"):
+            # Hand the numbers over rather than making them be retyped. This
+            # records what you did; it does not place anything.
+            st.session_state[components.PREFILL_KEY] = {
+                "ticker": suggestion.ticker,
+                "direction": suggestion.direction,
+                "quantity": suggestion.quantity,
+                "price": suggestion.price,
+            }
+            st.switch_page("views/11_Confirm_Trades.py")
+
+    with st.expander("Why each of these", expanded=False):
+        for suggestion in suggestions:
+            st.markdown(
+                f"**{suggestion.ticker}** — {explain.reason(suggestion.reason)}"
+            )
 
     components.render_note(
         st,
@@ -218,9 +275,3 @@ else:
         "only thing here that can say no.",
     )
 
-# --------------------------------------------------------------------------- #
-# Market regime
-# --------------------------------------------------------------------------- #
-st.divider()
-st.subheader("Market regime")
-components.render_regime_summary(st, data)

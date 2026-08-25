@@ -57,13 +57,29 @@ except Exception as error:  # noqa: BLE001 - the page must still let you type
     st.warning(f"Could not read the last run's instruments: {error}")
     tickers = []
 
+# A suggestion picked on the Overview arrives here rather than being
+# retyped. It pre-fills the form and nothing more -- what gets recorded is
+# still what you tell this page you actually did.
+prefill = st.session_state.get(components.PREFILL_KEY) or {}
+if prefill:
+    st.info(
+        f"Pre-filled from the **{prefill.get('ticker')}** suggestion. "
+        "Change anything that differs from your actual fill — a partial "
+        "fill or a worse price is the normal case, not an error."
+    )
+
 left, right = st.columns([2, 1])
 with left:
-    ticker = st.selectbox(
-        "Instrument",
-        options=tickers or ["—"],
-        help="Instruments the latest run traded or holds.",
-    ) if tickers else st.text_input("Instrument", value="")
+    if tickers:
+        wanted = str(prefill.get("ticker") or "")
+        ticker = st.selectbox(
+            "Instrument",
+            options=tickers or ["—"],
+            index=tickers.index(wanted) if wanted in tickers else 0,
+            help="Instruments the latest run traded or holds.",
+        )
+    else:
+        ticker = st.text_input("Instrument", value=str(prefill.get("ticker") or ""))
 with right:
     action = st.radio("What happened", tuple(ACTION_HELP), horizontal=True)
 
@@ -173,7 +189,8 @@ with st.form("confirmation"):
     else:
         cells = st.columns(3)
         default_direction = (
-            0 if (recommendation.get("direction") or "long") == "long" else 1
+            0 if (prefill.get("direction")
+                  or recommendation.get("direction") or "long") == "long" else 1
         )
         direction = cells[0].radio(
             "Direction", ("long", "short"), index=default_direction,
@@ -181,7 +198,10 @@ with st.form("confirmation"):
         )
         quantity = cells[1].number_input(
             "Quantity you took", min_value=0.0,
-            value=float(recommendation.get("scaled_quantity") or 0.0),
+            value=float(
+                prefill.get("quantity")
+                or recommendation.get("scaled_quantity") or 0.0
+            ),
             format="%.4f",
             help="Prefilled with the recommendation, scaled to your balance. "
             "Change it to whatever you actually got — a partial fill is a "
@@ -189,7 +209,9 @@ with st.form("confirmation"):
         )
         price = cells[2].number_input(
             "Fill price you got", min_value=0.0,
-            value=float(recommendation.get("entry_price") or 0.0),
+            value=float(
+                prefill.get("price") or recommendation.get("entry_price") or 0.0
+            ),
             format="%.4f",
         )
         close_price = (
@@ -233,6 +255,9 @@ if submitted:
             # exactly as authoritative as a right one.
             st.error(f"**Not recorded.** {error}")
         else:
+            # Consumed. Left in place it would re-fill the form on the next
+            # trade, quietly offering yesterday's numbers for today's fill.
+            st.session_state.pop(components.PREFILL_KEY, None)
             st.success(
                 f"Recorded: {confirmation.action} {confirmation.ticker}"
                 + (

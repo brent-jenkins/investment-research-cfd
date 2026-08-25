@@ -2245,3 +2245,79 @@ def test_the_default_bar_survives_the_percent_round_trip():
     percent = round(actions.DEFAULT_CONFIDENCE * 100)
     assert percent == 60
     assert percent / 100.0 == pytest.approx(actions.DEFAULT_CONFIDENCE)
+
+
+def test_suggestions_are_a_table_and_the_regime_is_above_them():
+    """A table because these are compared against each other; the regime on
+    top because it is the context the whole list is read in."""
+    page = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
+
+    # st.dataframe directly rather than render_frame, because the row
+    # selection that hands a trade to the Confirm page needs on_select.
+    assert "st.dataframe(" in page, "the suggestions should be a table"
+    # Compare the rendered sections, not the docstring, which names them
+    # both in its own order.
+    assert page.index("render_regime_summary") < page.index(
+        'st.subheader("Trades to consider")'
+    )
+    for column in ("Instrument", "Trading 212", "Confidence", "Stake",
+                   "Quantity", "Priced from"):
+        assert f'"{column}"' in page, column
+
+
+def test_the_poller_prices_what_is_offered_as_well_as_what_is_held():
+    """A suggestion carries a stake and a quantity, and both come from a
+    price. Priced from yesterday's close, the quantity you are told to place
+    is the quantity that was right yesterday."""
+    import inspect
+
+    from cfdinvest.livequotes import poller
+
+    body = inspect.getsource(poller.instruments_to_price)
+
+    assert "held_instruments" in body, "open positions are still priced"
+    assert "confidence" in body, "and so is anything clearing the bar"
+
+    command = inspect.getsource(
+        __import__("cfdinvest.schedule.app", fromlist=["x"])._command_poll_live_quotes
+    )
+    assert "instruments_to_price" in command
+
+
+def test_a_suggestion_can_be_handed_to_the_confirm_page():
+    """Picked on the Overview, pre-filled on Confirm Trades.
+
+    A hand-off, not a decision: it carries the numbers so they need not be
+    retyped at the moment you are committing, which is exactly when a typo
+    is expensive. Nothing about it places an order.
+    """
+    overview = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
+    confirm = (UI / "views" / "11_Confirm_Trades.py").read_text(encoding="utf-8")
+
+    assert 'selection_mode="single-row"' in overview
+    assert "components.PREFILL_KEY" in overview
+    assert "st.switch_page" in overview
+    # And the other end reads it.
+    assert "components.PREFILL_KEY" in confirm
+    for field in ("ticker", "direction", "quantity", "price"):
+        assert f'prefill.get("{field}")' in confirm or f'"{field}":' in overview
+
+
+def test_the_prefill_is_cleared_once_it_has_been_used():
+    """Left in place it would offer yesterday's numbers for today's fill."""
+    confirm = (UI / "views" / "11_Confirm_Trades.py").read_text(encoding="utf-8")
+
+    assert "st.session_state.pop(components.PREFILL_KEY, None)" in confirm
+    # Cleared on a successful record, not on a failed one -- a refused entry
+    # should keep what you had typed.
+    recorded = confirm.index("st.session_state.pop(components.PREFILL_KEY")
+    refused = confirm.index("**Not recorded.**")
+    assert recorded > refused
+
+
+def test_the_suggestion_table_marks_direction_without_relying_on_colour():
+    """An arrow survives a colourblind reader and a phone screen."""
+    overview = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
+
+    assert "📉" in overview and "📈" in overview
+    assert "ProgressColumn" in overview, "confidence should be scannable"

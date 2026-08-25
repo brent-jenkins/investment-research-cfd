@@ -38,6 +38,7 @@ __all__ = [
     "DASH",
     "DISPLAY_TZ",
     "CURRENCY",
+    "PREFILL_KEY",
     "DEFAULT_BALANCE",
     "bootstrap",
     "display_zone",
@@ -96,6 +97,14 @@ DISPLAY_TZ: str = os.environ.get("CFD_DISPLAY_TZ", "Europe/London")
 
 #: Account currency symbol, for display only.
 CURRENCY: str = os.environ.get("CFD_CURRENCY_SYMBOL", "£")
+
+#: Where a suggestion picked on the Overview waits for the Confirm page.
+#:
+#: A hand-off, not a decision: it carries the numbers so they need not be
+#: retyped at the moment you are committing to a trade, which is exactly when
+#: a typo is expensive. Confirm Trades still records what you *actually* did,
+#: and nothing about this places an order.
+PREFILL_KEY = "cfd_prefill_trade"
 
 #: Session key holding the operator's real account balance.
 BALANCE_KEY = "cfd_account_balance"
@@ -721,6 +730,31 @@ def latest_signal_rows(data: Mapping[str, Any] | None = None):
     return working.to_dict("records"), as_of
 
 
+#: Regime label -> (icon, severity). The severity is a *stance*, not a
+#: judgement about the market: risk-off and a correlation breakdown mean
+#: trade smaller, so they carry the warning colour. Nothing here says a
+#: falling market is a bad one -- the strategy is happy to be short.
+REGIME_MARKS: dict[str, tuple[str, str]] = {
+    # Volatility
+    "low": ("🟢", "pass"), "medium": ("🟡", "muted"), "high": ("🔴", "warning"),
+    "extreme": ("🔴", "critical"),
+    # Trend
+    "uptrend": ("📈", "pass"), "downtrend": ("📉", "warning"),
+    "sideways": ("➖", "muted"), "choppy": ("〰", "warning"),
+    # Correlation
+    "diversified": ("🟢", "pass"), "normal": ("🟡", "muted"),
+    "elevated": ("🟠", "warning"), "breakdown": ("🔴", "warning"),
+    "crisis": ("🔴", "critical"),
+    # Macro
+    "expansion": ("🟢", "pass"), "contraction": ("🟠", "warning"),
+    "slowdown": ("🟡", "muted"), "recovery": ("🟢", "pass"),
+    # Overall
+    "risk_on": ("🟢", "pass"), "risk on": ("🟢", "pass"),
+    "risk_off": ("🟠", "warning"), "risk off": ("🟠", "warning"),
+    "neutral": ("🟡", "muted"),
+}
+
+
 def render_regime_summary(st, data: Mapping[str, Any] | None = None) -> None:
     """The current regime as a row of tiles, or a note saying there is none."""
     persisted = (data or {}).get("persisted")
@@ -753,11 +787,16 @@ def render_regime_summary(st, data: Mapping[str, Any] | None = None) -> None:
         ("Correlation", "correlation_regime"), ("Macro", "macro_regime"),
         ("Overall", "combined_regime"),
     ]
-    tiles = [
-        (label, explain.phrase(str(row.get(key, "")), {}).capitalize() or DASH,
-         "", "muted")
-        for label, key in labels if key in row
-    ]
+    tiles = []
+    for label, key in labels:
+        if key not in row:
+            continue
+        raw = str(row.get(key, ""))
+        icon, level = REGIME_MARKS.get(raw.lower(), ("", "muted"))
+        text = explain.phrase(raw, {}).capitalize() or DASH
+        tiles.append(
+            (label, f"{icon} {text}".strip(), "", level)
+        )
     if tiles:
         render_tiles(st, tiles)
     st.caption(f"As at {short_moment(row.get('timestamp'))}")

@@ -530,12 +530,17 @@ def _command_poll_live_quotes(args, app_config) -> int:
     daily bar, which is what they do between polls anyway. A non-zero exit
     here would have systemd restarting the loop over a quiet market.
     """
-    from cfdinvest.livequotes import held_instruments, poll_live_quotes, write_quotes
+    from cfdinvest.livequotes import poll_live_quotes, write_quotes
+    from cfdinvest.livequotes.poller import instruments_to_price
 
     account = getattr(args, "account", None)
-    held = held_instruments(app_config, account=account)
+    # Open positions and anything clearing the confidence bar. A suggestion
+    # carries a stake and a quantity, and priced from yesterday's close those
+    # are yesterday's numbers.
+    held = instruments_to_price(app_config, account)
     if not held:
-        print("Nothing is confirmed open, so there is nothing to price.")
+        print("Nothing is open and nothing clears the bar, so there is "
+              "nothing to price.")
         return EXIT_OK
 
     prices = poll_live_quotes(held)

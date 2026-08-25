@@ -17,7 +17,7 @@ from typing import Iterable, Sequence
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["poll_live_quotes", "held_instruments"]
+__all__ = ["poll_live_quotes", "held_instruments", "instruments_to_price"]
 
 
 def held_instruments(config=None, account: str | None = None) -> list[str]:
@@ -48,6 +48,63 @@ def held_instruments(config=None, account: str | None = None) -> list[str]:
         for name, entry in (book or {}).items()
         if (entry or {}).get("quantity")
     )
+
+
+def instruments_to_price(
+    config=None,
+    account: str | None = None,
+    *,
+    min_confidence: float | None = None,
+) -> list[str]:
+    """What is worth a quote: what you hold, plus what you are being offered.
+
+    Open positions are the obvious half -- you need to know what they are
+    worth now. The other half is the instruments clearing the confidence
+    bar, and they matter for a reason worth stating: a suggestion carries a
+    **stake and a quantity**, and those are computed from a price. Priced
+    from yesterday's close, the quantity you are told to place is the
+    quantity that was right yesterday.
+
+    Still a small list. Open positions are few, and most days nothing clears
+    the bar at all -- this is not a licence to poll the universe.
+    """
+    from cfdinvest.advisor.actions import DEFAULT_CONFIDENCE
+
+    wanted = list(held_instruments(config, account))
+    bar = DEFAULT_CONFIDENCE if min_confidence is None else float(min_confidence)
+
+    try:
+        from cfdinvest.persist import readers
+
+        run_id = readers.load_latest_run(config, account=account)
+        frame = (
+            None if run_id is None
+            else readers.load_frame("signals", run_id, config, account)
+        )
+        if frame is not None and not getattr(frame, "empty", True):
+            working = frame.reset_index() if hasattr(frame, "reset_index") else frame
+            if "timestamp" in working.columns:
+                import pandas as pd
+
+                stamps = pd.to_datetime(
+                    working["timestamp"], utc=True, errors="coerce"
+                )
+                working = working[stamps == stamps.max()]
+            for _, row in working.iterrows():
+                if str(row.get("direction", "flat")).lower() == "flat":
+                    continue
+                try:
+                    if float(row.get("confidence", 0.0)) < bar:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+                ticker = str(row.get("ticker") or "").strip()
+                if ticker:
+                    wanted.append(ticker)
+    except Exception as error:  # noqa: BLE001 - no signals is not a failure
+        logger.warning("Could not read signals for pricing: %s", error)
+
+    return list(dict.fromkeys(wanted))
 
 
 def poll_live_quotes(
