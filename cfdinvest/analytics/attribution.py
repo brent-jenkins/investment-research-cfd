@@ -386,6 +386,18 @@ def compute_instrument_attribution(execution_frame) -> pd.DataFrame:
     summary = grouped[present].sum() if present else pd.DataFrame(index=grouped.size().index)
     summary.insert(0, "trades", grouped.size())
 
+    # Financing from the engine's per-bar accrual, where the frame carries
+    # it. The trade log holds only the carry booked alongside a fill, so
+    # summing it attributes nothing to the nights a position was merely
+    # held -- and those are most of the nights. Left unfixed, the per-asset
+    # net summed to £28,266 of loss on a run that actually lost £57,772,
+    # and no column in the table said which of the two it was.
+    accrued = getattr(execution_frame, "financing_by_asset", None)
+    if accrued is not None and len(accrued) and "financing" in summary.columns:
+        summary["financing"] = (
+            pd.Series(accrued).reindex(summary.index).fillna(summary["financing"])
+        )
+
     costs = sum(
         summary[column]
         for column in present

@@ -152,6 +152,12 @@ class ExecutionFrame:
         default_factory=lambda: pd.Series(dtype="float64")
     )
     entry_prices: pd.Series = field(default_factory=lambda: pd.Series(dtype="float64"))
+    #: Financing accrued per instrument across every bar it was carried,
+    #: not only the bars it was traded on. The trade log holds the latter;
+    #: the difference between them was 60% of the total.
+    financing_by_asset: pd.Series = field(
+        default_factory=lambda: pd.Series(dtype="float64")
+    )
     fx_open_cost: pd.Series = field(
         default_factory=lambda: pd.Series(dtype="float64")
     )
@@ -414,6 +420,7 @@ def run_backtest(
         stop_levels=result["stop_levels"],
         take_profit_levels=result["take_profit_levels"],
         entry_prices=result["entry_prices"],
+        financing_by_asset=result["financing_by_asset"],
         fx_open_cost=result["fx_open_cost"],
         fx_close_cost=result["fx_close_cost"],
         fx_rate_used=result["fx_rate_used"],

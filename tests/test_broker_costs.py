@@ -21,6 +21,10 @@ M57  shorts keep the earning sign of the benchmark model
      -> test_every_recorded_short_is_a_charge_not_an_income
 M58  _execution_config leaves FX disabled
      -> test_the_runner_enables_fx_and_charges_on_the_result
+M59  financing accrued only on bars that carry a trade
+     -> test_financing_accrues_on_bars_that_carry_no_trade
+M60  attribution ignores the per-bar accrual and sums the trade log
+     -> test_per_instrument_attribution_sums_to_the_runs_own_pnl
 """
 
 from __future__ import annotations
@@ -210,3 +214,80 @@ def test_an_unreadable_table_does_not_stop_the_run(monkeypatch):
 
     assert config.financing_rates is None
     assert not config.fx.enabled, "unknown currencies must not be converted"
+
+
+# --------------------------------------------------------------------------- #
+# The accounting identity that was quietly broken
+# --------------------------------------------------------------------------- #
+def _held_market():
+    """One instrument, held long throughout, so financing accrues on bars
+    that carry no trade at all."""
+    from cfdinvest.preprocessing import PreprocessConfig
+    from cfdinvest.preprocessing.frame import build_analysis_frame
+    from cfdinvest.signals.frame import SignalFrame
+
+    calendar = pd.bdate_range("2021-01-04", periods=180, tz="UTC", name="timestamp")
+    rng = np.random.default_rng(11)
+    close = 100 * np.exp(np.cumsum(rng.normal(0.0004, 0.01, len(calendar))))
+    tidy = pd.DataFrame(
+        {
+            "open": close * 0.999, "high": close * 1.01, "low": close * 0.99,
+            "close": close, "volume": 1e6, "ticker": "SPX",
+        },
+        index=calendar,
+    ).set_index("ticker", append=True).sort_index()
+
+    analysis = build_analysis_frame(
+        tidy, interval="1d", config=PreprocessConfig(correlation_window=63)
+    )
+    columns = analysis.close.columns
+    signals = SignalFrame(
+        direction=pd.DataFrame("long", index=analysis.calendar, columns=columns),
+        size=pd.DataFrame(0.5, index=analysis.calendar, columns=columns),
+        confidence=pd.DataFrame(0.9, index=analysis.calendar, columns=columns),
+        reason=pd.DataFrame("test", index=analysis.calendar, columns=columns),
+    )
+    return analysis, signals
+
+
+def test_financing_accrues_on_bars_that_carry_no_trade():
+    """M59: financing attributed only where a fill happened.
+
+    A position held for a hundred bars and traded on three of them pays
+    financing on all hundred. Summing the trade log finds the three.
+    """
+    from cfdinvest.execution import ExecutionConfig, run_backtest
+
+    analysis, signals = _held_market()
+    result = run_backtest(signals, analysis, ExecutionConfig())
+
+    booked_on_trades = result.trades["financing"].sum()
+    accrued = result.financing_by_asset.sum()
+
+    assert accrued > 0.0
+    assert accrued > booked_on_trades * 1.5, (
+        "the per-bar accrual must exceed what the trade log booked, or the "
+        "fixture is not holding anything between trades"
+    )
+
+
+def test_per_instrument_attribution_sums_to_the_runs_own_pnl():
+    """M60: the identity the project claims and this artefact broke.
+
+    Before this, a run that lost £57,772 produced a per-instrument table
+    summing to £28,266 of loss. Both numbers were displayed; nothing said
+    which was the P&L.
+    """
+    from cfdinvest.analytics.attribution import compute_instrument_attribution
+    from cfdinvest.execution import ExecutionConfig, run_backtest
+
+    analysis, signals = _held_market()
+    result = run_backtest(signals, analysis, ExecutionConfig())
+
+    table = compute_instrument_attribution(result)
+    actual = float(result.equity_curve.iloc[-1] - result.equity_curve.iloc[0])
+
+    # Realised only: an open position at the end has realised nothing, so
+    # close the comparison against realised plus the unrealised remainder.
+    unrealised = float(result.pnl["unrealized"].iloc[-1])
+    assert table["net_pnl"].sum() == pytest.approx(actual - unrealised, rel=0.02)

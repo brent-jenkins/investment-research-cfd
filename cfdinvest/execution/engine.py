@@ -204,6 +204,14 @@ def run_execution(signal_frame, analysis_frame, config):
     # a smaller set, and not derivable from the currency.
     fx_fee_mask = fx_module.fee_charging_assets(columns, fx_config)
 
+    # Financing accrues on every bar a position is carried, not only on the
+    # bars it is traded. The trade log records the carry booked alongside a
+    # fill and nothing else, so attributing cost from the log alone loses
+    # every night a position was simply held -- which for a strategy holding
+    # a median of five days is most of them. Accumulated per asset here so
+    # the per-instrument attribution can sum to the run's actual P&L.
+    financing_by_asset = np.zeros(assets, dtype="float64")
+
     close = fills_module.convert_prices(
         _as_matrix(close_panel, index, columns), fx_rates
     )
@@ -307,6 +315,7 @@ def run_execution(signal_frame, analysis_frame, config):
             day_count=config.day_count,
         )
         carry = np.nan_to_num(carry)
+        financing_by_asset += carry
 
         # 2. Levels resting from a previous bar are checked BEFORE any new
         #    decision. A stop reached during this bar took the position out;
@@ -555,6 +564,7 @@ def run_execution(signal_frame, analysis_frame, config):
         unrealized_series, equity_series, exposure_series, trades, config,
         stop_events, stop_level, target_level, entry_price,
         fx_open_series, fx_close_series, fx_rates[-1] if bars else None,
+        financing_by_asset=financing_by_asset,
     )
 
 
@@ -700,6 +710,7 @@ def _assemble(
     equity, exposure, trades, config,
     stop_events=None, stop_level=None, target_level=None, entry_price=None,
     fx_open=None, fx_close=None, fx_rate_used=None,
+    financing_by_asset=None,
 ):
     """Package the loop's arrays into frames."""
     position_frame = pd.DataFrame(positions, index=index, columns=columns)
@@ -732,6 +743,11 @@ def _assemble(
     blank = pd.Series(np.nan, index=columns, dtype="float64")
 
     return {
+        "financing_by_asset": pd.Series(
+            np.zeros(len(columns)) if financing_by_asset is None
+            else financing_by_asset,
+            index=columns, name="financing",
+        ),
         "positions": position_frame,
         "notionals": notional_frame,
         "pnl": pnl_frame,
@@ -769,6 +785,7 @@ def _assemble(
 def _empty_result():
     """A correctly shaped result for an empty run."""
     return {
+        "financing_by_asset": pd.Series(dtype="float64", name="financing"),
         "positions": pd.DataFrame(),
         "notionals": pd.DataFrame(),
         "pnl": pd.DataFrame(),
