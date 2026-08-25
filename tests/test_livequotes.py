@@ -1324,3 +1324,38 @@ def test_an_unrecorded_financing_rate_stays_unknown_not_zero():
     from cfdinvest.livehelper.t212_rules import InstrumentRules
 
     assert InstrumentRules(ticker="X").annual_financing_rate is None
+
+
+def test_whether_the_fx_fee_applies_is_recorded_not_inferred():
+    """Real data got my inference backwards.
+
+    USA 500 is funded in sterling and charges the 0.5% conversion on the
+    result, because the market underneath is American. UK 100 is funded in
+    sterling and does not. Reading it off the quoted currency would have
+    called both the same.
+    """
+    from cfdinvest.livehelper.ticket import build_ticket, close_out
+
+    charged = build_ticket("^GSPC", "long", 1.0, 100.0, currency="GBP",
+                           leverage=20.0, financing_rate=0.0,
+                           fx_fee_applies=True)
+    free = build_ticket("^FTSE", "long", 1.0, 100.0, currency="GBP",
+                        leverage=20.0, financing_rate=0.0,
+                        fx_fee_applies=False)
+
+    assert close_out(charged, 110.0).fx_fee_gbp == pytest.approx(0.05)
+    assert close_out(free, 110.0).fx_fee_gbp == 0.0
+
+
+def test_an_unrecorded_flag_falls_back_to_the_currency():
+    """Right for a plainly foreign instrument, and the reason the flag is
+    worth recording for anything funded in sterling."""
+    from cfdinvest.livehelper.ticket import build_ticket, close_out
+
+    foreign = build_ticket("NKE", "long", 1.0, 100.0, currency="USD",
+                           fx_rate=1.0, leverage=5.0, financing_rate=0.0)
+    home = build_ticket("^FTSE", "long", 1.0, 100.0, currency="GBP",
+                        leverage=20.0, financing_rate=0.0)
+
+    assert close_out(foreign, 110.0).fx_fee_gbp == pytest.approx(0.05)
+    assert close_out(home, 110.0).fx_fee_gbp == 0.0

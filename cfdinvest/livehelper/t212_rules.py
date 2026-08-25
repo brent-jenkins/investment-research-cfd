@@ -145,6 +145,12 @@ class InstrumentRules:
     #: mistake that produces a plausible-looking small number rather than an
     #: obviously broken one, which is the dangerous kind.
     financing_daily_pct: float | None = None
+    #: Whether the 0.5% conversion fee is charged on the result at close.
+    #:
+    #: Recorded because it cannot be inferred: USA 500 is bought in GBP and
+    #: charges it (the market underneath is American), while UK 100 is
+    #: bought in GBP and does not.
+    fx_fee_applies: bool | None = None
     #: ``False`` when Trading 212 does not offer it at all, so the signal
     #: layer can stop suggesting something you cannot place.
     available: bool | None = None

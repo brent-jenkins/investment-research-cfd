@@ -81,6 +81,13 @@ class TradeTicket:
     fx_rate: float | None = None
     leverage: float | None = None
     financing_rate: float | None = None
+    #: Whether Trading 212 charges its 0.5% conversion fee on the result.
+    #:
+    #: Recorded, never inferred from the currency. USA 500 is bought in GBP
+    #: and still charges it, because the market underneath is American --
+    #: while UK 100 is bought in GBP and does not. Inferring it from the
+    #: quoted currency got that pair exactly backwards.
+    fx_fee_applies: bool | None = None
 
     notional: float | None = None
     notional_gbp: float | None = None
@@ -143,6 +150,7 @@ def build_ticket(
     fx_rate: Any = None,
     leverage: Any = None,
     financing_rate: Any = None,
+    fx_fee_applies: bool | None = None,
 ) -> TradeTicket:
     """Work out the ticket. Never raises; absences are reported, not filled.
 
@@ -160,6 +168,7 @@ def build_ticket(
         return TradeTicket(
             ticker=str(ticker), direction=str(direction).lower(),
             quantity=units or 0.0, price=unit_price or 0.0, currency=str(currency),
+            fx_fee_applies=fx_fee_applies,
             missing=("quantity or price",),
         )
 
@@ -199,6 +208,7 @@ def build_ticket(
         notional_gbp=notional_gbp,
         margin_gbp=margin_gbp,
         financing_per_day_gbp=per_day,
+        fx_fee_applies=fx_fee_applies,
         missing=tuple(missing),
     )
 
@@ -235,9 +245,18 @@ def close_out(
     rate = ticket.fx_rate
     gross_gbp = None if rate is None else gross * rate
 
-    # A GBP instrument converts nothing, so it is charged nothing. Applying
-    # the fee anyway would invent a cost the ticket will not show.
-    if ticket.currency == "GBP":
+    # Whether the fee applies is recorded per instrument, not inferred from
+    # the currency. USA 500 is bought in GBP and charges it; UK 100 is
+    # bought in GBP and does not. Inferring it got that pair backwards.
+    #
+    # Unrecorded falls back to the currency, which is right for a plainly
+    # foreign instrument and is the reason the flag is worth recording for
+    # anything bought in sterling.
+    applies = (
+        ticket.fx_fee_applies if ticket.fx_fee_applies is not None
+        else ticket.currency != "GBP"
+    )
+    if not applies:
         fx_fee = 0.0
     elif gross_gbp is None:
         fx_fee = None
