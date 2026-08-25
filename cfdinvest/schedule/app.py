@@ -403,7 +403,9 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
 
     def run_job(name: str) -> None:
         if name == "poll-live-quotes":
-            _command_poll_live_quotes(args, app_config)
+            _command_poll_live_quotes(
+                _job_args(args, "poll-live-quotes"), app_config
+            )
         elif name == "ingest-daily":
             # Ingestion alone, not a pipeline run with --refresh. The two are
             # separate jobs here precisely so the pipeline reads a lake that
@@ -415,12 +417,16 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
             )
         elif name == "run-daily":
             _command_run_once(
-                _run_once_args(args, refresh=False), app_config, smtp, transport
+                _job_args(args, "run-once", refresh=False),
+                app_config, smtp, transport,
             )
         elif name == "monitoring-snapshot":
-            _command_monitor(args, app_config, smtp, transport)
+            _command_monitor(
+                _job_args(args, "monitor", alert=not args.no_email),
+                app_config, smtp, transport,
+            )
         elif name == "risk-snapshot":
-            _command_risk_snapshot(args, app_config)
+            _command_risk_snapshot(_job_args(args, "risk-snapshot"), app_config)
 
     print(
         "cfdinvest scheduler daemon. Quotes every "
@@ -461,23 +467,30 @@ GLOBAL_OPTIONS: tuple[str, ...] = (
 )
 
 
-def _run_once_args(args, **changes):
-    """A ``run-once`` namespace, built from ``run-once``'s own defaults.
+def _job_args(args, command: str, **changes):
+    """An argument namespace for ``command``, built from its own defaults.
 
-    The daemon's parser does not define run-once's flags -- ``--force``,
-    ``--refresh`` and the rest -- so handing it the daemon's own namespace
-    raised ``AttributeError`` on the first daily run. The loop caught it, as
-    it is meant to, and carried on: the failure was contained, logged, and
-    otherwise invisible, so the daemon looked healthy while never once
-    running the pipeline.
+    Each subcommand defines its own flags -- run-once has ``--force``,
+    monitor has ``--no-store``, risk-snapshot has ``--balance`` -- and the
+    daemon parser defines none of them. Handing a job the daemon's own
+    namespace raised ``AttributeError`` on the first run of all three.
 
-    Taking the defaults from the parser rather than listing them here means
-    they cannot drift from what ``run-once`` actually accepts.
+    The loop caught each one, as it is meant to, so the service stayed up,
+    logged a failure a day and did no work. Error containment turning a hard
+    failure into a silent one is the thing to watch for here: the daemon
+    looked healthy the whole time.
+
+    Defaults come from the parser rather than a list kept here, so a flag
+    added to any subcommand is picked up without this function changing.
     """
-    namespace = build_parser().parse_args(["run-once"])
+    namespace = build_parser().parse_args([command])
     for name in GLOBAL_OPTIONS:
         if hasattr(args, name):
             setattr(namespace, name, getattr(args, name))
+    # The daemon's own --account applies to whichever job reads one.
+    account = getattr(args, "account", None)
+    if account is not None and hasattr(namespace, "account"):
+        namespace.account = account
     for name, value in changes.items():
         setattr(namespace, name, value)
     return namespace

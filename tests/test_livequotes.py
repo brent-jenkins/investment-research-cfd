@@ -482,26 +482,33 @@ def test_the_rules_template_covers_the_universe_and_asserts_no_numbers():
 
 
 def test_the_daemon_can_actually_invoke_every_job_it_schedules():
-    """The bug a real deployment found, and the suite did not.
+    """The bug two deployments found, and the suite did not.
 
-    The daemon handed its own argument namespace to `run-once`, which
-    defines flags -- --force, --refresh, --no-save -- that the daemon parser
-    does not. Every daily run raised AttributeError. The loop caught it, as
-    it is meant to, so the daemon stayed up, logged the failure and never ran
-    the pipeline again: contained, and invisible unless you read the journal.
+    The daemon handed each job its own argument namespace. Every subcommand
+    defines flags the daemon parser does not -- run-once has --force,
+    monitor has --no-store, risk-snapshot has --balance -- so all three
+    raised AttributeError on their first run.
+
+    The loop caught each one, as it is meant to, so the service stayed
+    active, logged a failure a day and did no work. Error containment
+    turning a hard failure into a silent one is the thing to watch for.
     """
-    from cfdinvest.schedule.app import _run_once_args, build_parser
+    from cfdinvest.schedule.app import _job_args, build_parser
 
     daemon_args = build_parser().parse_args(["--no-email", "daemon"])
-    once = _run_once_args(daemon_args, refresh=False)
 
-    # Every flag run-once reads must be present.
-    for flag in ("force", "refresh", "trade_alerts", "no_save"):
-        assert hasattr(once, flag), f"run-once reads --{flag}"
-
-    assert once.refresh is False
-    # The globals the daemon was invoked with survive into the job.
-    assert once.no_email is True
+    expected = {
+        "run-once": ("force", "refresh", "trade_alerts", "no_save"),
+        "monitor": ("no_store", "alert", "watch", "interval_minutes"),
+        "risk-snapshot": ("balance", "no_store", "watch", "max_observations"),
+        "poll-live-quotes": ("account",),
+    }
+    for command, flags in expected.items():
+        namespace = _job_args(daemon_args, command)
+        for flag in flags:
+            assert hasattr(namespace, flag), f"{command} reads --{flag}"
+        # The globals the daemon was started with survive into every job.
+        assert namespace.no_email is True, command
 
 
 def test_the_daemons_job_names_all_map_to_something_runnable():
