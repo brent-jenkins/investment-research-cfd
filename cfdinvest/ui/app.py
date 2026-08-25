@@ -67,12 +67,24 @@ PAGES: tuple[tuple[str, str, str], ...] = (
     ("pages/21_Account.py", "Account", "🔑"),
 )
 
-# Before the navigation is built. st.navigation draws the page list in the
-# sidebar as soon as it is called, so gating only inside the pages showed an
-# anonymous visitor every page name and then refused each one. The sign-in
-# screen should be the only thing on the page.
-components.require_login(st)
-components.render_sign_out(st)
+def _sign_in() -> None:
+    """The whole app for someone who is not signed in."""
+    components.require_login(st)
+
+
+# st.navigation has to run on *every* path, signed in or not.
+#
+# Streamlit falls back to discovering `pages/` whenever a session finishes
+# without calling it -- so stopping at the sign-in screen before this point
+# left the automatic navigation in charge, and an anonymous visitor was
+# shown every page name plus the entry script itself. Registering a
+# navigation is what tells Streamlit the pages/ directory is not in charge.
+#
+# Signed out, that navigation holds one hidden page: the sign-in form, and
+# nothing else in the sidebar.
+if not components.current_user(st):
+    st.navigation([st.Page(_sign_in, title="Sign in")], position="hidden").run()
+    st.stop()
 
 navigation = st.navigation(
     [
@@ -85,4 +97,7 @@ navigation = st.navigation(
         for index, (relative, title, icon) in enumerate(PAGES)
     ]
 )
+# After the navigation, so it sits at the foot of the sidebar under the
+# page list rather than above it.
+components.render_sign_out(st)
 navigation.run()

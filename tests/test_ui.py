@@ -1904,18 +1904,35 @@ def test_an_expired_or_deleted_session_stops_working(tmp_path):
     assert auth.verify_token(token, config) is None
 
 
-def test_the_entry_script_gates_before_it_draws_the_navigation():
-    """The other half of what a refresh showed: the page list leaked.
+def test_the_entry_script_registers_a_navigation_on_every_path():
+    """The bug a signed-out visitor saw: the whole page list, plus "app".
 
-    st.navigation draws the sidebar as soon as it is called, so gating only
-    inside the pages showed an anonymous visitor every page name and then
-    refused each one.
+    Streamlit falls back to discovering `pages/` whenever a session finishes
+    without calling st.navigation. Stopping at the sign-in screen before
+    that call left the automatic navigation in charge, so gating the pages
+    achieved nothing -- their names were listed anyway, and the entry script
+    appeared among them.
+
+    Registering a navigation is what tells Streamlit the directory is not in
+    charge, so it has to happen on the signed-out path too.
     """
     body = (UI / "app.py").read_text(encoding="utf-8")
 
-    gate = body.index("components.require_login(st)")
-    navigation = body.index("st.navigation(")
-    assert gate < navigation, "the gate must come before the navigation"
+    gate = body.index("if not components.current_user(st):")
+    signed_out_nav = body.index("st.navigation(", gate)
+    stop = body.index("st.stop()", gate)
+
+    assert signed_out_nav < stop, (
+        "the signed-out path must register a navigation before stopping, or "
+        "Streamlit lists pages/ instead"
+    )
+    assert 'position="hidden"' in body[gate:stop], (
+        "the signed-out navigation must not draw a sidebar"
+    )
+    # And sign-out is drawn after the real navigation, so it sits below it.
+    assert body.index("components.render_sign_out(st)") > body.index(
+        "navigation = st.navigation("
+    )
 
 
 def test_the_brand_blue_has_one_value():
