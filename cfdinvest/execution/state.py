@@ -97,6 +97,19 @@ class HysteresisThresholds:
     entry_confidence: float = 0.35
     exit_confidence: float = 0.20
     exit_on_opposing_signal: bool = True
+    #: Whether a signal going flat closes an open position.
+    #:
+    #: ``True`` is the recorded behaviour. ``False`` reads flat as "no view
+    #: this bar" rather than "get out", so a position is closed only by a
+    #: signal that has decayed while still pointing somewhere, or by one
+    #: that has turned against it.
+    #:
+    #: The distinction is invisible from the hold band, which is why it
+    #: needs its own switch: a flat cell scores zero size and zero
+    #: confidence by construction, so it fails the band as well. Widening
+    #: exit_size and exit_confidence therefore cannot lengthen a hold that
+    #: ends this way -- tested down to 0.001 with no effect at all.
+    exit_on_flat: bool = True
 
     def __post_init__(self) -> None:
         if self.exit_size > self.entry_size:
@@ -136,7 +149,7 @@ def next_direction(
     Pure and vectorised across assets. The rules, applied in this order:
 
     1. **Close** anything whose signal has fallen out of the hold band, or
-       gone flat.
+       gone flat -- the latter only when ``exit_on_flat``.
     2. **Close** anything whose signal now opposes the position but is too
        weak to justify flipping (when ``exit_on_opposing_signal``).
     3. **Open or flip** anything whose signal clears the entry band.
@@ -168,7 +181,15 @@ def next_direction(
     result = held.copy()
 
     # 1. Signal decayed out of the hold band, or went flat.
-    result[(held != FLAT) & (~maintains | (desired == FLAT))] = FLAT
+    #
+    # With exit_on_flat off, a flat bar is treated as silence rather than
+    # instruction, and the band is only consulted where the signal still
+    # points somewhere. Testing the band on a flat cell would close the
+    # position anyway: flat scores zero on both measures by construction.
+    if thresholds.exit_on_flat:
+        result[(held != FLAT) & (~maintains | (desired == FLAT))] = FLAT
+    else:
+        result[(held != FLAT) & (desired != FLAT) & ~maintains] = FLAT
 
     # 2. Signal turned against the position but is too weak to flip on.
     if thresholds.exit_on_opposing_signal:

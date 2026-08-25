@@ -43,6 +43,10 @@ M68  the value floor fills in for a missing unit floor
      -> test_the_value_floor_is_not_read_as_a_unit_count
 M69  an absent position value is assumed to clear the floor
      -> test_an_unknown_position_value_is_not_assumed_to_clear_the_floor
+M70  exit_on_flat ignored, so a flat signal always closes
+     -> test_a_flat_signal_need_not_close_a_position
+M71  the switch becomes "never close", losing the decay exit
+     -> test_holding_through_flat_still_exits_a_decayed_signal
 """
 
 from __future__ import annotations
@@ -539,3 +543,67 @@ def test_an_unknown_position_value_is_not_assumed_to_clear_the_floor():
 
     issues = validate_quantity(0.04, rules, value=None)
     assert not [i for i in issues if i.check == "min_trade_value"]
+
+
+# --------------------------------------------------------------------------- #
+# A flat signal is silence, not an instruction
+# --------------------------------------------------------------------------- #
+def test_a_flat_signal_need_not_close_a_position():
+    """M70: exit_on_flat ignored, so flat always closes.
+
+    A flat cell scores zero size and zero confidence by construction, so it
+    fails the hold band as well as being flat. That is why widening
+    exit_size and exit_confidence cannot lengthen a hold ending this way --
+    measured down to 0.001 with no effect on mean hold at all. The
+    behaviour needs its own switch or it cannot be reached.
+    """
+    import numpy as np
+
+    from cfdinvest.execution.state import (
+        FLAT, LONG, HysteresisThresholds, next_direction,
+    )
+
+    held = np.array([LONG, LONG])
+    desired = np.array([FLAT, LONG])
+    # Zero on both measures, as a flat cell always is.
+    size = np.array([0.0, 0.5])
+    confidence = np.array([0.0, 0.9])
+
+    closes = next_direction(
+        held, desired, size, confidence,
+        HysteresisThresholds(exit_on_flat=True),
+    )
+    holds = next_direction(
+        held, desired, size, confidence,
+        HysteresisThresholds(exit_on_flat=False),
+    )
+
+    assert closes[0] == FLAT, "the recorded behaviour closes on a flat signal"
+    assert holds[0] == LONG, "with the switch off, silence is not an exit"
+    # The instrument still signalling is untouched either way.
+    assert closes[1] == LONG and holds[1] == LONG
+
+
+def test_holding_through_flat_still_exits_a_decayed_signal():
+    """The switch must not become 'never close'.
+
+    A signal that still points somewhere and has fallen out of the hold band
+    is a real exit, and turning off the flat exit must leave that intact --
+    otherwise the only way out is an opposing signal.
+    """
+    import numpy as np
+
+    from cfdinvest.execution.state import (
+        FLAT, LONG, HysteresisThresholds, next_direction,
+    )
+
+    held = np.array([LONG])
+    desired = np.array([LONG])          # still pointing long...
+    size = np.array([0.001])            # ...but decayed out of the band
+    confidence = np.array([0.001])
+
+    result = next_direction(
+        held, desired, size, confidence,
+        HysteresisThresholds(exit_on_flat=False),
+    )
+    assert result[0] == FLAT
