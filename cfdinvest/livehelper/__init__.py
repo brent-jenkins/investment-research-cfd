@@ -34,7 +34,18 @@ from cfdinvest.livehelper.sizing_helper import (
     SizingRecommendation,
     compute_safe_sizing,
 )
+from cfdinvest.livehelper.confirm_checks import (
+    ConfirmationReview,
+    review_confirmation,
+    validate_confirmation_deviation,
+)
 from cfdinvest.livehelper.summary import build_execution_helper_summary
+from cfdinvest.livehelper.t212_rules import (
+    InstrumentRules,
+    RuleTable,
+    load_rules,
+    validate_quantity,
+)
 
 __all__ = [
     "LiveHelperConfig",
@@ -48,6 +59,13 @@ __all__ = [
     "SizingRecommendation",
     "compute_safe_sizing",
     "build_execution_helper_summary",
+    "InstrumentRules",
+    "RuleTable",
+    "load_rules",
+    "validate_quantity",
+    "ConfirmationReview",
+    "review_confirmation",
+    "validate_confirmation_deviation",
     "assess",
     "check",
 ]

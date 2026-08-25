@@ -32,6 +32,92 @@ anywhere in it.
 
 ---
 
+## Trading 212's own limits
+
+Your limits are about how much you are willing to lose. Trading 212's are
+about what its ticket will accept — and a trade can pass every one of yours
+and still be rejected for having three decimal places.
+
+```bash
+cfdinvest-helper "long SPX500 0.684 entry=4434.8 stop=4390"     --rules ~/.config/cfdinvest/t212_rules.toml
+```
+
+```
+[CRITICAL] 0.684 has more than 2 decimal place(s); SPX500 will not accept it.
+        -> Use 0.68. Rounded down, so it stays inside the limit that
+           produced it.
+```
+
+**The table is not shipped filled in.** Nothing publishes a machine-readable
+list of Trading 212's instrument rules, and this project makes no broker API
+calls. An invented table would be the exact failure the rest of this codebase
+is built to avoid: numbers that look measured, are not, and get trusted
+because they sit beside numbers that are.
+
+So you fill it in from the ticket. Start from
+`deployment/scripts/t212_rules.example.toml`. Every field is optional — a
+partial entry makes the checks it covers real and leaves the rest honestly
+unchecked.
+
+Three of these matter more than they look:
+
+**Precision.** Trading 212 rejects an over-precise quantity *silently*: the
+ticket does not fill and nothing says why. Suggested sizes always round
+**down**, because rounding up to fit would undo the limit that produced the
+number.
+
+**Minimum size.** When your risk limit says 0.04 and the instrument will not
+go below 0.1, the answer is not to round up. It is that **the trade cannot be
+taken at your risk limit** — either skip it, or widen the stop so the risk
+budget buys the minimum size.
+
+**Close-only.** Trading 212 does this around expiries and corporate actions.
+A closing order fills; an opening one does not, and you find out when the
+position fails to move.
+
+Without a table the broker checks report themselves *not consulted* — as an
+`info` line that does not touch the verdict. Nobody has a table until they
+write one, and capping every trade at `BORDERLINE` on a fresh install would
+make the verdict meaningless, which costs more than it protects. With a table
+that lacks the instrument you asked about, that **is** an unknown: you opted
+into the checks and this one could not run.
+
+---
+
+## After the fill
+
+```python
+from cfdinvest.livehelper import validate_confirmation_deviation
+
+review = validate_confirmation_deviation(confirmation, recommendation)
+review.status          # "AS PLANNED" | "CHANGED" | "WORSE"
+```
+
+Deliberately not `SAFE`/`BORDERLINE`/`UNSAFE`. Those are a verdict on a trade
+you may still decline; this describes one you have already taken, and sharing
+the vocabulary would suggest they are the same decision.
+
+**Slippage is measured against the stop distance, not the price.** Two points
+off a 4,000-level index is nothing. Two points against a ten-point stop is a
+fifth of the risk budget spent on entry — and the reward-to-risk you checked
+no longer holds:
+
+```
+The fill was 25.2000 worse than planned — 56% of the 44.8000 stop distance.
+After this fill the reward-to-risk is 0.86, down from the 1.90 you checked.
+```
+
+Absolute slippage is a number nobody can act on. Everything here is a ratio to
+the thing it endangers: quantity against what was sized, exposure against the
+per-instrument cap, margin against the balance.
+
+A **partial fill** is reported, not scolded — smaller than planned is inside
+every limit the full size was. Taking **more** than was approved is the
+critical one: the limits were cleared for the smaller position, and every risk
+figure on the dashboard understates what you now hold.
+
+---
+
 ## The one rule that matters
 
 **Anything that cannot be computed caps the verdict at `BORDERLINE`.**
@@ -197,7 +283,8 @@ assessment, not separate computations.
 ## Testing
 
 ```bash
-pytest tests/test_livehelper.py -q      # 58 tests, no network
+pytest tests/test_livehelper.py -q        # 58 tests, no network
+pytest tests/test_execution_safety.py -q  # 56 more: broker rules, fills
 ```
 
 The tests that matter are the ones about **refusing to say `SAFE`**. A sizing

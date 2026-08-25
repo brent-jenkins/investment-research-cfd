@@ -49,6 +49,22 @@ def _rule(character: str = "-") -> str:
     return character * WIDTH
 
 
+def _bullet(text: str, indent: str = "    ") -> list[str]:
+    """A wrapped bullet, hanging under its dash.
+
+    Bullets used to be emitted unwrapped, which worked only for as long as
+    every message happened to be short. One long recommendation produced a
+    185-character line in a block that is otherwise 68 wide -- and a mail
+    client that does not soft-wrap turns that into a single unreadable row.
+    """
+    return textwrap.wrap(
+        text,
+        width=WIDTH,
+        initial_indent=f"{indent}- ",
+        subsequent_indent=f"{indent}  ",
+    ) or [f"{indent}- {text}"]
+
+
 def _wrap(text: str, indent: str = "  ") -> list[str]:
     """Fold a paragraph to the summary width.
 
@@ -101,7 +117,9 @@ def build_execution_helper_summary(
     lines.append(_rule("="))
     lines.append(f"  {safety_assessment.status}   {trade_intent.instrument} "
                  f"{trade_intent.direction.upper()}")
-    lines.append(f"  {_VERDICT_TEXT.get(safety_assessment.status, '')}")
+    # Wrapped like everything else. The BORDERLINE line is the long one, and
+    # it ran to 113 characters in a block that is otherwise 68 wide.
+    lines.extend(_wrap(_VERDICT_TEXT.get(safety_assessment.status, "")))
     lines.append(_rule("="))
 
     # -- what to do -------------------------------------------------------- #
@@ -120,7 +138,7 @@ def build_execution_helper_summary(
         lines.append("")
         lines.append("  WHAT TO DO")
         for action in actions:
-            lines.append(f"    - {action}")
+            lines.extend(_bullet(action))
 
     # -- the trade as written ---------------------------------------------- #
     lines.append("")
@@ -233,7 +251,7 @@ def build_execution_helper_summary(
         lines.append("")
         lines.append("  WHY")
         for reason in safety_assessment.reasons:
-            lines.append(f"    - {reason}")
+            lines.extend(_bullet(reason))
 
     if safety_assessment.unknowns:
         lines.append("")

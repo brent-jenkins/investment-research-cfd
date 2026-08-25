@@ -160,8 +160,20 @@ def evaluate_trade_safety(
     trade_intent: TradeIntent,
     config: LiveHelperConfig | None = None,
     market_state: MarketState | None = None,
+    *,
+    rules=None,
+    now=None,
 ) -> TradeSafetyAssessment:
-    """Measure an intended trade against your limits.
+    """Measure an intended trade against your limits, and against the broker's.
+
+    Two different kinds of constraint, deliberately both here. Yours are about
+    how much you are willing to lose; Trading 212's are about what its ticket
+    will accept, and a trade can pass every one of yours and still be silently
+    rejected for having three decimal places.
+
+    ``rules`` is a :class:`~cfdinvest.livehelper.t212_rules.RuleTable`. With
+    none, the broker checks report themselves unchecked rather than passed --
+    the table is one you fill in, since nothing publishes it.
 
     Pure. Returns every figure it could compute, every check that fired, and
     a verdict that never reaches ``SAFE`` on incomplete information.
@@ -249,6 +261,7 @@ def evaluate_trade_safety(
     spread_flag = _check_spread(trade_intent, market, limits, price, findings)
     reward_risk = _check_reward_risk(trade_intent, price, findings)
     _check_broker_state(market, findings)
+    _check_broker_rules(trade_intent, rules, findings, unknowns, now)
 
     status = _verdict(findings, unknowns)
 
@@ -267,6 +280,67 @@ def evaluate_trade_safety(
         findings=tuple(findings),
         unknowns=tuple(dict.fromkeys(unknowns)),
     )
+
+
+def _check_broker_rules(intent, rules, findings, unknowns, now) -> None:
+    """What Trading 212's ticket will accept, if you have recorded it.
+
+    Folded into the same finding list as everything else so one verdict covers
+    both kinds of constraint. A trade that is safe by your limits and
+    unplaceable by the broker's is not a trade, and two separate answers would
+    let you act on the reassuring one.
+    """
+    from cfdinvest.livehelper import t212_rules as broker
+
+    if rules is None:
+        # Noted, not counted against the verdict. Nobody has a rules table
+        # until they write one, and an unknown here would cap every trade at
+        # BORDERLINE on a fresh install -- a verdict that is always the same
+        # is a verdict nobody reads, which would cost more than it protects.
+        findings.append(
+            Finding(
+                check="broker_rules",
+                severity="info",
+                message=(
+                    "Trading 212's own limits were not checked: no rules table "
+                    "was supplied."
+                ),
+                recommendation=(
+                    "Record the instrument's precision, minimum size and "
+                    "leverage from the ticket; see cfdinvest/livehelper/"
+                    "README.md. Until then the ticket may still reject a "
+                    "trade this says is safe."
+                ),
+            )
+        )
+        return
+
+    instrument = rules.get(intent.instrument)
+    if instrument.empty:
+        # A table exists and this instrument is not in it. *That* is an
+        # unknown: you opted into these checks and this one could not run.
+        unknowns.append(f"the Trading 212 rules for {intent.instrument}")
+
+    issues = (
+        broker.validate_quantity(intent.quantity, instrument)
+        + broker.validate_close_only(instrument, intent.direction)
+        + broker.validate_trading_hours(instrument, now)
+    )
+    for issue in issues:
+        if issue.severity == "info" and issue.check == "quantity_rules":
+            # Already carried as an unknown; two lines saying the same absence
+            # reads as two problems.
+            continue
+        findings.append(
+            Finding(
+                check=issue.check,
+                severity=issue.severity,
+                message=issue.message,
+                recommendation=issue.recommendation,
+                value=issue.value,
+                limit=issue.limit,
+            )
+        )
 
 
 # --------------------------------------------------------------------------- #

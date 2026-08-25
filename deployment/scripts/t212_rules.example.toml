@@ -1,0 +1,30 @@
+# Trading 212 instrument rules — copy to ~/.config/cfdinvest/t212_rules.toml
+# and fill in from what the ticket shows you.
+#
+#     cfdinvest-helper "long SPX500 0.68 entry=4434.8 stop=4390" \
+#         --rules ~/.config/cfdinvest/t212_rules.toml
+#
+# These numbers are NOT shipped filled in, and that is deliberate. Nothing
+# publishes a machine-readable table of Trading 212's instrument rules, and
+# this project makes no broker API calls. A plausible invented table would be
+# the worst of both worlds: numbers that look measured, are not, and get
+# trusted because they sit next to numbers that are.
+#
+# An instrument you have not recorded is reported as *unverified*, never as
+# compliant — every check returns "not checked" rather than "passed".
+#
+# Every field is optional. A partial entry is better than none: it makes the
+# checks it covers real and leaves the rest honestly unchecked.
+
+# [SPX500]
+# quantity_precision = 2          # decimal places the ticket accepts
+# min_quantity       = 0.1        # below this the order will not go
+# max_quantity       = 100.0
+# leverage           = 20.0       # T212 sets this per instrument
+# financing_rate     = 0.0295     # annual, as a fraction, on the notional
+# spread_typical     = 0.7        # instrument currency, not basis points
+# currency           = "USD"
+# trading_hours      = "23:00-22:00"   # UTC; wrapping midnight is normal
+# close_only         = false
+# source             = "T212 ticket, 2026-08-25"   # so future-you can tell
+                                                   # a transcript from a guess

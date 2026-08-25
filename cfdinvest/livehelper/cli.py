@@ -80,6 +80,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     account = parser.add_argument_group("your limits")
     account.add_argument("--config", help="path to config.toml")
+    account.add_argument(
+        "--rules",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Trading 212 instrument rules (TOML), for the checks the broker "
+            "would apply: quantity precision, minimum size, close-only. "
+            "Nothing publishes these, so the table is one you write; without "
+            "it those checks report themselves unchecked."
+        ),
+    )
     account.add_argument("--balance", type=float, help="account balance")
     account.add_argument(
         "--used-margin", type=float, help="margin already committed"
@@ -199,7 +210,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     limits = _config(args)
     market = _market(args)
 
-    assessment = evaluate_trade_safety(intent, limits, market)
+    rules = None
+    if args.rules:
+        from cfdinvest.livehelper.t212_rules import load_rules
+
+        rules = load_rules(args.rules)
+        if not len(rules):
+            print(
+                f"No instrument rules were read from {args.rules}.",
+                file=sys.stderr,
+            )
+
+    assessment = evaluate_trade_safety(intent, limits, market, rules=rules)
     sizing = compute_safe_sizing(intent, limits, market)
     summary = build_execution_helper_summary(
         intent, assessment, sizing, config=limits
