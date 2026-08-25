@@ -46,12 +46,17 @@ from cfdinvest.signals import SignalFrame
 #: every expected value below can be checked by hand.
 RATE = 0.80
 
+# The basis is stated rather than inherited. These tests exercise the
+# notional mechanism, which is still supported -- but the *default* is now
+# "result", because that is what Trading 212 charges, and a fixture that
+# silently follows the default tests whichever one happens to be set.
 FEE_ONLY = FXConfig(
     enabled=True,
     instrument_currencies={"SPX": "USD"},
     fx_rate_source="static",
     static_fx_rate=RATE,
     fx_conversion_fee_pct=0.005,
+    fx_fee_basis="notional",
 )
 BUY, SELL = 1.0, -1.0
 
@@ -177,7 +182,7 @@ def test_9_nothing_converts_when_fx_is_disabled():
 def test_4_fx_spread_only():
     config = FXConfig(
         enabled=True, fx_conversion_fee_pct=0.0, fx_spread_bps=25.0,
-        instrument_currencies={"SPX": "USD"},
+        instrument_currencies={"SPX": "USD"}, fx_fee_basis="notional",
     )
     result = apply_fx_conversion_open(
         [100.0], [10.0], [RATE], config, converts=[True]
@@ -237,6 +242,7 @@ def test_1_open_applies_all_three_charges():
     config = FXConfig(
         enabled=True, fx_conversion_fee_pct=0.005, fx_spread_bps=25.0,
         fx_slippage_bps=10.0, instrument_currencies={"SPX": "USD"},
+        fx_fee_basis="notional",
     )
     result = apply_fx_conversion_open(
         [100.0], [10.0], [RATE], config, converts=[True]
@@ -389,6 +395,7 @@ def test_6_all_three_charges_are_reported_separately():
     config = FXConfig(
         enabled=True, fx_conversion_fee_pct=0.005, fx_spread_bps=25.0,
         fx_slippage_bps=10.0, instrument_currencies={"SPX": "USD"},
+        fx_fee_basis="notional",
     )
     result = apply_fx_conversion_open(
         [100.0], [10.0], [RATE], config, converts=[True]
@@ -822,7 +829,8 @@ def test_a_larger_fee_costs_more(analysis, signals):
 def test_the_result_basis_costs_far_less_than_the_notional_basis(analysis, signals):
     """A round trip on notional dwarfs a fee on the outcome."""
     notional = run_backtest(
-        signals, analysis, static_fx(fx_conversion_fee_pct=0.005)
+        signals, analysis,
+        static_fx(fx_conversion_fee_pct=0.005, fx_fee_basis="notional"),
     )
     result = run_backtest(
         signals, analysis,

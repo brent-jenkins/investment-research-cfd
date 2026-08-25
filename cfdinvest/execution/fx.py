@@ -190,7 +190,15 @@ class FXConfig:
     static_fx_rate: float = 1.0
 
     fx_rounding_mode: str = "none"
-    fx_fee_basis: str = "notional"
+    # "result", because that is what Trading 212 does: the 0.5% is charged
+    # on the profit or loss when the position closes, not on the position
+    # value. Confirmed against the app on every instrument recorded so far.
+    #
+    # The difference is not a detail. On a £5,000 position closed at £100
+    # profit, the notional basis charges £25 and the result basis £0.50 --
+    # fifty times over. Defaulting to the wrong one for this broker would
+    # make every backtest of a foreign-currency instrument unreadable.
+    fx_fee_basis: str = "result"
     record_fx_details: bool = True
 
     def __post_init__(self) -> None:

@@ -1419,3 +1419,18 @@ def test_the_reference_is_recorded_so_the_cost_can_be_rechecked():
     without = Confirmation.of("NKE", "open", quantity=1.0, price=68.20)
     assert without.reference_price is None
     assert without.reference_age_minutes is None
+
+
+def test_the_fx_fee_defaults_to_the_basis_trading_212_actually_uses():
+    """0.5% of the profit or loss at close, not of the position value.
+
+    Confirmed against the app on every instrument recorded. The difference
+    is fifty-fold on a typical trade -- £25 against £0.50 on a £5,000
+    position closed at £100 profit -- so defaulting to the wrong one would
+    make every backtest of a foreign-currency instrument unreadable.
+    """
+    from cfdinvest.execution.fx import FX_FEE_BASES, FXConfig
+
+    assert FXConfig().fx_fee_basis == "result"
+    assert set(FX_FEE_BASES) == {"notional", "result"}, "both stay available"
+    assert FXConfig().fx_conversion_fee_pct == pytest.approx(0.005)
