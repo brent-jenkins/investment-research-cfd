@@ -283,3 +283,54 @@ def test_a_selection_records_what_it_rejected_and_cannot_be_edited(tmp_path, mon
     both = screen.load_screens()
     assert len(both) == 2, "the earlier selection was overwritten"
     assert both[0]["as_of"].startswith("2026-08-26"), "history was reordered or lost"
+
+
+def test_the_daily_lake_keeps_being_refreshed_after_the_move_to_hourly():
+    """M176: a lake that quietly stops updating.
+
+    Every scheduled ingest follows ``config.market.interval``. The moment
+    the engine moved to hourly bars, that became 1h -- and the daily lake
+    stopped being refreshed by anything at all. Nothing broke, which is
+    exactly the problem: the universe screen reads daily bars, and so does
+    any analysis wanting more than the two years the vendor serves intraday.
+    The failure would have surfaced as a screen ranking on months-old
+    turnover, with no error anywhere.
+
+    In the daily job rather than the intraday one, because a daily bar
+    changes once a day and re-fetching it every fifteen minutes would ask
+    the vendor for the same row ninety times a session.
+    """
+    import inspect
+
+    from cfdinvest.schedule import app
+
+    source = inspect.getsource(app)
+    assert '_SCREENING_INTERVAL = "1d"' in source
+
+    daily = source[source.index('elif name == "ingest-daily":"'.rstrip('"')):]
+    daily = daily[: daily.index('elif name == "ingest-intraday":')]
+    assert "_SCREENING_INTERVAL" in daily, (
+        "the daily job does not top up the screening interval"
+    )
+    assert "_refresh" in daily
+
+    intraday = source[source.index('elif name == "ingest-intraday":'):]
+    intraday = intraday[: intraday.index("elif name ==", 10)]
+    assert "_SCREENING_INTERVAL" not in intraday, (
+        "the intraday job re-fetches daily bars every fifteen minutes"
+    )
+
+
+def test_the_screen_reads_daily_bars_whatever_the_engine_trades():
+    """Liquidity is a property of the instrument, not of the bar size.
+
+    Screening on the trading interval would tie the universe to a decision
+    it has nothing to do with, and would throw away every year of history
+    beyond the two the vendor serves intraday.
+    """
+    import inspect
+
+    from cfdinvest.universe import screen
+
+    signature = inspect.signature(screen.select_universe)
+    assert signature.parameters["interval"].default == "1d"

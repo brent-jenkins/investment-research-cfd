@@ -692,6 +692,15 @@ def _command_poll_live_quotes(args, app_config) -> int:
     return EXIT_OK
 
 
+#: The interval the universe screen and the long-history analyses read.
+#:
+#: Daily, and independent of what the engine trades. Liquidity and
+#: volatility are properties of an instrument rather than of the bar size
+#: somebody happens to be trading it on, and daily bars carry years of
+#: history where hourly carries two.
+_SCREENING_INTERVAL = "1d"
+
+
 def _command_paper_book(args, app_config, smtp=None, transport=None) -> int:
     """One pass of the simulated book, and an email if it did anything.
 
@@ -809,9 +818,34 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
             # ingestion has finished writing, and folding them back together
             # would put that ordering back inside one command.
             backtest = _backtest_config(args, app_config)
-            runner_module._refresh(
-                DataRepository(app_config), backtest.tickers or [], backtest
-            )
+            repository = DataRepository(app_config)
+            runner_module._refresh(repository, backtest.tickers or [], backtest)
+
+            # And the daily bars, whatever interval the engine trades on.
+            #
+            # Every scheduled ingest follows config.market.interval, which is
+            # now 1h -- so the moment the engine moved to hourly bars the
+            # daily lake stopped being refreshed by anything and began
+            # quietly going stale. Nothing broke, which is the problem: the
+            # universe screen reads daily bars, and so does any analysis
+            # wanting more than the two years the vendor serves intraday.
+            #
+            # Here rather than in the intraday job because a daily bar
+            # changes once a day, and re-fetching it every fifteen minutes
+            # would be asking the vendor for the same row ninety times a
+            # session.
+            if backtest.interval != _SCREENING_INTERVAL:
+                try:
+                    import dataclasses as _dc
+
+                    runner_module._refresh(
+                        repository, backtest.tickers or [],
+                        _dc.replace(backtest, interval=_SCREENING_INTERVAL),
+                    )
+                except Exception as error:  # noqa: BLE001
+                    logger.warning(
+                        "Could not top up %s bars: %s", _SCREENING_INTERVAL, error
+                    )
         elif name == "ingest-intraday":
             # The same top-up, on the trading cadence. Separate from the
             # daily job because they do different work: this one keeps the
