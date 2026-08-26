@@ -599,6 +599,49 @@ def _refresh(repository: DataRepository, tickers, backtest_config) -> None:
     else:
         logger.info("No FRED API key configured; skipping the macro refresh")
 
+    _refresh_events(config, tickers)
+
+
+def _refresh_events(config, tickers) -> None:
+    """Top up the reporting dates and the filings. Never raises.
+
+    Both were being stored by hand, which meant the earnings blackout and
+    the filing rate were reading whatever happened to have been fetched
+    last -- the same staleness that let a daemon run eleven hours on code
+    it had imported before the change.
+
+    Unlike the market refresh above, a failure here is logged rather than
+    raised: these feed a warning and a size, not a price, and a run that
+    dies because the SEC was briefly unreachable would be a worse outcome
+    than one that proceeds with last week's filing count.
+    """
+    from cfdinvest.ingestion import earnings as earnings_module
+    from cfdinvest.ingestion import filings as filings_module
+
+    universe = list(tickers or ())
+    if not universe:
+        return
+
+    try:
+        dates = earnings_module.fetch_earnings_dates(universe)
+        if dates:
+            earnings_module.store_earnings_dates(dates, config)
+            logger.info("Refreshed reporting dates for %d instrument(s)", len(dates))
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not refresh the reporting dates: %s", error)
+
+    try:
+        found = filings_module.fetch_filings(universe)
+        if found:
+            filings_module.store_filings(found, config)
+            total = sum(len(rows) for rows in found.values())
+            logger.info(
+                "Refreshed filings for %d instrument(s), %d filings",
+                len(found), total,
+            )
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not refresh the filings: %s", error)
+
 
 def load_summary(path: str | Path) -> dict[str, Any]:
     """Read a persisted run summary back from disk."""

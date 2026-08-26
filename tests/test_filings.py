@@ -150,3 +150,57 @@ def test_the_window_default_matches_what_was_measured():
 
     signature = inspect.signature(module.filing_rate)
     assert signature.parameters["window_days"].default == 90
+
+
+def test_the_daily_refresh_tops_up_both_event_sources(monkeypatch):
+    """M106: the refresh forgets one of them.
+
+    Both were stored by hand until now, which meant the earnings blackout
+    and the filing rate read whatever happened to have been fetched last.
+    That is the same staleness that let a daemon run eleven hours on code
+    it had imported before the change.
+    """
+    from cfdinvest.schedule import runner
+
+    called = {}
+
+    monkeypatch.setattr(
+        "cfdinvest.ingestion.earnings.fetch_earnings_dates",
+        lambda tickers: called.setdefault("earnings", list(tickers)) or {"LULU": ["2026-09-03"]},
+    )
+    monkeypatch.setattr(
+        "cfdinvest.ingestion.earnings.store_earnings_dates",
+        lambda dates, config=None, account=None: called.setdefault("stored_earnings", dates) or True,
+    )
+    monkeypatch.setattr(
+        "cfdinvest.ingestion.filings.fetch_filings",
+        lambda tickers: called.setdefault("filings", list(tickers)) or {"LULU": [{"accepted": "x", "items": "8.01"}]},
+    )
+    monkeypatch.setattr(
+        "cfdinvest.ingestion.filings.store_filings",
+        lambda found, config=None, account=None: called.setdefault("stored_filings", found) or True,
+    )
+
+    runner._refresh_events(object(), ["LULU", "NVDA"])
+
+    assert called.get("earnings") == ["LULU", "NVDA"]
+    assert called.get("filings") == ["LULU", "NVDA"]
+    assert "stored_earnings" in called and "stored_filings" in called
+
+
+def test_an_unreachable_vendor_does_not_fail_the_run(monkeypatch):
+    """These feed a warning and a size, not a price.
+
+    A run that died because the SEC was briefly unreachable would be worse
+    than one that proceeds on last week's filing count -- unlike the market
+    refresh, where stale prices must fail loudly.
+    """
+    from cfdinvest.schedule import runner
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("vendor down")
+
+    monkeypatch.setattr("cfdinvest.ingestion.earnings.fetch_earnings_dates", explode)
+    monkeypatch.setattr("cfdinvest.ingestion.filings.fetch_filings", explode)
+
+    runner._refresh_events(object(), ["LULU"])      # must not raise
