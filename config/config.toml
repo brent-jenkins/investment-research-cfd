@@ -49,9 +49,33 @@ data_root = "data"
 # volatility 99.4% -- and the signals come back. Restoring FX, commodities
 # and the European and Asian indices to intraday needs per-session panels
 # in the preprocessing layer, which is real work and not yet done.
+# Individual stocks only, and that is the objective rather than a leftover.
+#
+# Every source of non-price evidence this system has -- EDGAR filings,
+# earnings dates, company news, sentiment -- exists for companies and cannot
+# exist for an index. An index can only ever be traded on price, which is
+# the one thing the trend engine already knows. Narrowing to stocks aligns
+# the universe with the evidence available about it.
+#
+# The measurement agrees, and more strongly than expected. Over two years on
+# hourly bars, at 2bp slippage:
+#
+#   universe               n    CAGR   max drawdown   Sharpe
+#   shares + US indices   22   81.3%        -19.0%     1.97
+#   shares only           19  126.7%        -19.6%     2.57
+#   US indices only        3   -3.7%        -17.4%    -0.21
+#
+# The three indices lost money on their own and ranked 13th, 17th and 19th
+# of twenty-two, contributing 7.6% of the gross while taking 14% of the
+# universe. Under a gross exposure cap that is not neutral: capital in an
+# index is capital not in a better position, which is why removing them
+# raises the return rather than merely leaving it alone.
+#
+# Deliberately small. Twenty or thirty is the ceiling being considered, not
+# a target -- a tight universe is what makes it possible to hold detailed
+# data on each name, watch its filings and read its news, and a wider one
+# would be monitored more thinly rather than more thoroughly.
 tickers = [
-    # US indices -> US 500, US Tech 100, US 30
-    "^GSPC", "^NDX", "^DJI",
     # Large-cap technology
     "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
     "AVGO", "NFLX", "ADBE", "ORCL",

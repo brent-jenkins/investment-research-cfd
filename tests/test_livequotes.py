@@ -409,11 +409,27 @@ def test_an_unknown_ticker_is_unmapped_not_absent():
 # The universe, and what may be traded in it
 # --------------------------------------------------------------------------- #
 def test_every_configured_instrument_is_classified():
-    """An unclassified ticker would get no leverage ceiling in the template."""
+    """An unclassified ticker would get no leverage ceiling in the template.
+
+    The universe no longer spans asset classes, and that is the objective
+    rather than an omission: every source of non-price evidence this system
+    has -- filings, earnings dates, company news, sentiment -- exists for
+    companies and cannot exist for an index or a currency pair. Measured
+    over two years, the three US indices lost money on their own and their
+    removal took the return from 81.3% a year to 126.7%.
+
+    A floor still applies, because a universe that quietly shrank to three
+    names would pass every other test here.
+    """
     from cfdinvest.config import load_config
 
     universe = list(load_config().market.tickers)
-    assert len(universe) >= 20, "the universe should span the asset classes"
+    assert len(universe) >= 10, "the universe has collapsed"
+
+    classes = {t212_instruments.asset_class(t) for t in universe}
+    assert classes == {"share"}, (
+        f"the universe is meant to be individual stocks only, found {classes}"
+    )
 
     unknown = [t for t in universe if t212_instruments.asset_class(t) == "unknown"]
     assert not unknown, f"unclassified: {unknown}"
