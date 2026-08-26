@@ -304,6 +304,13 @@ def current_user(st) -> str | None:
     survives a refresh. A valid cookie repopulates the session, so the rest
     of the app can keep reading one place.
     """
+    # A sign-out in progress beats a cookie that is still in the browser.
+    # Without this the cookie -- which survives until the next run clears
+    # it -- would re-authenticate immediately and the sign-out would be
+    # invisible.
+    if st.session_state.get(SIGNED_OUT_KEY):
+        return None
+
     signed_in = st.session_state.get(auth_module.SESSION_KEY)
     if signed_in:
         return signed_in
@@ -319,10 +326,27 @@ def current_user(st) -> str | None:
     return user
 
 
+#: Set while a sign-out is in progress, and read by :func:`current_user`.
+#:
+#: It exists because clearing the cookie and rerunning cannot happen in the
+#: same script run. The cookie is written by a zero-height component, and a
+#: component is only delivered to the browser when the run it belongs to
+#: finishes rendering -- ``st.rerun()`` aborts that run, so the clearing
+#: cookie was never sent. The cookie stayed valid, ``current_user`` read it
+#: on the next run and signed the user straight back in, and the Log out
+#: button appeared to do nothing at all.
+SIGNED_OUT_KEY = "cfd_signing_out"
+
+
 def sign_out(st) -> None:
-    """End the session here and in the browser."""
+    """Begin signing out. The cookie is cleared on the next run.
+
+    Only the flag and the session key here. Writing the cookie is left to
+    :func:`require_login`, which runs on a script pass that finishes and can
+    therefore actually deliver the component that does it.
+    """
     st.session_state.pop(auth_module.SESSION_KEY, None)
-    _write_cookie(st, "", 0)
+    st.session_state[SIGNED_OUT_KEY] = True
 
 
 def hide_sidebar(st) -> None:
@@ -360,6 +384,11 @@ def require_login(st) -> str | None:
     if user:
         return user
 
+    # The other half of signing out. This run renders the form and finishes,
+    # so the component that clears the cookie is actually delivered.
+    if st.session_state.pop(SIGNED_OUT_KEY, None):
+        _write_cookie(st, "", 0)
+
     auth_module.bootstrap_from_environment()
 
     if not auth_module.is_configured():
@@ -395,6 +424,7 @@ def require_login(st) -> str | None:
             if st.form_submit_button("Sign in", width="stretch"):
                 if auth_module.check_login(username, password):
                     name = username.strip()
+                    st.session_state.pop(SIGNED_OUT_KEY, None)
                     st.session_state[auth_module.SESSION_KEY] = name
                     st.session_state.pop("cfd_login_failed", None)
                     _write_cookie(

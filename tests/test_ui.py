@@ -2740,3 +2740,70 @@ def test_the_status_page_does_not_repeat_the_wordmark_above_its_title():
     in the sidebar; a page does not need to introduce itself twice."""
     page = (UI / "views" / "01_Status.py").read_text(encoding="utf-8")
     assert "render_crumb" not in page
+
+
+def test_signing_out_survives_a_cookie_that_is_still_in_the_browser():
+    """M170: the Log out button that did nothing.
+
+    Clearing the cookie and rerunning cannot happen in one script run. The
+    cookie is written by a zero-height component, and a component only
+    reaches the browser when the run it belongs to finishes rendering --
+    ``st.rerun()`` aborts that run, so the clearing cookie was never sent.
+    The cookie stayed valid, ``current_user`` read it on the very next run
+    and signed the user straight back in, and the button appeared inert.
+    Refreshing did not help, because refreshing is what re-read the cookie.
+
+    So the flag has to outrank the cookie for exactly one run.
+    """
+    from cfdinvest.ui import auth as auth_module
+    from cfdinvest.ui import components as ui
+
+    class Context:
+        cookies: dict = {}
+        headers: dict = {}
+
+    class Fake:
+        def __init__(self):
+            self.session_state = {}
+            self.context = Context()
+
+    st = Fake()
+    Context.cookies = {auth_module.COOKIE_NAME: "a-valid-looking-token"}
+    st.session_state[auth_module.SESSION_KEY] = "admin"
+    assert ui.current_user(st) == "admin"
+
+    ui.sign_out(st)
+
+    # The cookie is still there -- nothing has reached the browser yet.
+    assert Context.cookies, "the fixture must keep the cookie to be meaningful"
+    assert ui.current_user(st) is None, (
+        "the browser cookie signed the user back in before it could be cleared"
+    )
+    assert st.session_state.get(ui.SIGNED_OUT_KEY) is True
+
+    # Signing back in must not be haunted by the flag.
+    st.session_state.pop(ui.SIGNED_OUT_KEY, None)
+    st.session_state[auth_module.SESSION_KEY] = "admin"
+    assert ui.current_user(st) == "admin"
+
+
+def test_the_cookie_is_cleared_on_a_run_that_finishes():
+    """The other half: sign_out must not try to write it itself.
+
+    Writing it there is what failed, because the caller reruns immediately
+    afterwards. require_login does it instead, on a pass that renders the
+    form and completes.
+    """
+    import inspect
+
+    from cfdinvest.ui import components as ui
+
+    out = inspect.getsource(ui.sign_out)
+    assert "_write_cookie" not in out, (
+        "sign_out writes the cookie again -- the rerun will discard it"
+    )
+
+    login = inspect.getsource(ui.require_login)
+    assert "SIGNED_OUT_KEY" in login and "_write_cookie" in login, (
+        "nothing clears the cookie on a run that finishes"
+    )
