@@ -166,3 +166,35 @@ def test_the_configured_stop_is_shorter_than_the_bar_interval_allows_to_be_usele
     )
     # The cooldown must not lock out most of the universe most of the time.
     assert config.strategy.reentry_cooldown_days <= 3.0
+
+
+def test_the_margin_ceiling_reaches_the_execution_engine():
+    """M152: a limit that exists in code and is set by nobody.
+
+    ``max_leverage`` bounds gross notional as a multiple of equity, and at
+    Trading 212's 5x on shares that is the margin dial: 5.0 commits the
+    whole balance, 2.5 commits half. It was never passed from the strategy
+    config into ExecutionConfig, so the execution default of 5.0 applied and
+    the book ran at full margin utilisation by omission -- no file said so,
+    and the backtest reported 374% a year on positions the account could not
+    have carried through an adverse move.
+
+    One owner, and it must actually arrive.
+    """
+    from cfdinvest.config import StrategyConfig, load_config
+    import cfdinvest.schedule.app as app
+
+    config = load_config()
+    execution = app._execution_config(list(config.market.tickers), config.strategy)
+    assert execution.max_leverage == config.strategy.max_leverage, (
+        "the configured ceiling does not reach the engine"
+    )
+
+    # A book at full margin has no room before the broker closes it.
+    assert config.strategy.max_leverage <= 2.5, (
+        f"{config.strategy.max_leverage / 5 * 100:.0f}% of the balance as margin"
+    )
+
+    # And an override travels rather than being ignored.
+    strategy = StrategyConfig(max_leverage=1.5)
+    assert app._execution_config(["AAPL"], strategy).max_leverage == 1.5

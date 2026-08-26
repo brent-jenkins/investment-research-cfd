@@ -234,6 +234,26 @@ reentry_cooldown_days = 2     # was 14, which suited 7-day holds and not 22-hour
 # rebalancing is off entirely and only opens and closes remain.
 rebalance_threshold = 3.0     # was 0.25; drift rebalancing off entirely
 
+# Gross notional the book may carry, as a multiple of equity -- the margin
+# dial. Trading 212 gives 5x on shares, so gross exposure of G times equity
+# commits about G/5 of the account as margin.
+#
+# This was never passed through from the configuration at all: the execution
+# default of 5.0 applied, which is 100% of the balance committed as margin,
+# by omission rather than by choice. Measured over two years on hourly bars:
+#
+#   max_leverage   margin   CAGR    max drawdown   Sharpe
+#          5.0      100%   374.4%        -21.5%     3.37
+#          2.5       50%   121.4%        -18.4%     2.60
+#          1.5       30%    87.6%        -11.1%     3.06
+#          1.0       20%    53.9%         -8.6%     2.91
+#
+# 2.5 because a book at full margin has no room for an adverse move before
+# the broker closes it, and because the return that comes with it is gearing
+# rather than edge -- the strategy beats buy-and-hold of the same universe
+# (22.4% a year, -23.9% drawdown) at every setting on this table.
+max_leverage = 2.5            # 50% of the balance as margin, not 100%
+
 # Notional per unit of signal size, as a multiple of equity. Raising this is
 # gearing rather than edge -- efficiency peaks around 4 and degrades after.
 exposure_per_unit_size = 4.0  # was 1.0; efficiency peaks here and degrades after

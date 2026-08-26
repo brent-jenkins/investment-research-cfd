@@ -338,7 +338,7 @@ def _execution_config(tickers, strategy=None):
             "Could not read the broker rules; financing falls back to the "
             "house rate for the whole universe: %s", error
         )
-        return ExecutionConfig()
+        return ExecutionConfig(max_leverage=strategy.max_leverage)
 
     if missing:
         logger.warning(
@@ -360,6 +360,7 @@ def _execution_config(tickers, strategy=None):
 
     return ExecutionConfig(
         financing_rates=rates or None,
+        max_leverage=strategy.max_leverage,
         rebalance_threshold=strategy.rebalance_threshold,
         exposure_per_unit_size=strategy.exposure_per_unit_size,
         reentry_cooldown_days=strategy.reentry_cooldown_days,

@@ -239,6 +239,16 @@ class StrategyConfig:
     reentry_cooldown_days: float = 0.0
     #: Relative drift before an open position is resized.
     rebalance_threshold: float = 0.25
+    #: Gross notional the book may carry, as a multiple of equity.
+    #:
+    #: This is the margin dial. Trading 212 gives 5x on shares, so gross
+    #: exposure of G times equity commits roughly G/5 of the account as
+    #: margin: 5.0 spends the entire balance, 2.5 spends half.
+    #:
+    #: It was never passed through from here at all -- the execution
+    #: default of 5.0 applied, so the book ran at full margin utilisation
+    #: by omission rather than by choice, and no configuration file said so.
+    max_leverage: float = 2.5
     #: Notional per unit of signal size, as a multiple of equity.
     exposure_per_unit_size: float = 1.0
     #: Days either side of a reporting date to hold no position. ``0`` off.
