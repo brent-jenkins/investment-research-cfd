@@ -104,6 +104,21 @@ class ExecutionConfig:
     #: a trend that genuinely reverses is a different trade.
     reentry_cooldown_days: int = 0
 
+    #: Days after which a position still under water is closed. ``None``
+    #: disables it, which is what every recorded run used.
+    #:
+    #: Not a stop. A stop asks how far the price has gone against you; this
+    #: asks how long it has failed to go for you, which the trade log says
+    #: is the better question. Marked to market with financing deducted and
+    #: measured on index CFDs long, 73% of eventual losers were already
+    #: negative on their first day against 29% of eventual winners, and the
+    #: gap widens: by day 13 it is 89% against 4%. Losers do not plunge,
+    #: they fail to start.
+    time_stop_days: int | None = None
+    #: How far under water counts, as a percent of the entry price. ``0.0``
+    #: means any loss at all; a small negative figure tolerates noise.
+    time_stop_threshold: float = 0.0
+
     # -- risk ------------------------------------------------------------- #
     #: Cap on gross notional divided by equity.
     max_leverage: float = 5.0

@@ -57,6 +57,12 @@ M75  the cooldown comparison inverted
      -> test_a_longer_cooldown_blocks_a_re_entry_a_shorter_one_allows
 M76  the cooldown computed and never applied
      -> test_a_longer_cooldown_blocks_a_re_entry_a_shorter_one_allows
+M77  the time stop never fires
+     -> test_the_time_stop_closes_a_position_that_is_not_working
+M78  the time stop cuts winners as well as losers
+     -> test_the_time_stop_leaves_a_working_position_alone
+M79  the time stop measures the price move, ignoring financing
+     -> test_the_time_stop_counts_financing_against_the_position
 """
 
 from __future__ import annotations
@@ -815,3 +821,126 @@ def test_the_cooldown_does_not_close_anything_it_only_blocks_entry():
     # its own.
     actions = result.trades["action"]
     assert (actions.str.startswith("open")).any(), "the first entry is never blocked"
+
+
+# --------------------------------------------------------------------------- #
+# The time stop: how long it has failed to work, not how far it has fallen
+# --------------------------------------------------------------------------- #
+def _drifting_market(daily_return, periods=40):
+    """One instrument moving a fixed amount a day."""
+    from cfdinvest.preprocessing import PreprocessConfig
+    from cfdinvest.preprocessing.frame import build_analysis_frame
+
+    calendar = pd.bdate_range(
+        "2021-01-04", periods=periods, tz="UTC", name="timestamp"
+    )
+    close = 100.0 * (1.0 + daily_return) ** np.arange(len(calendar))
+    tidy = pd.DataFrame(
+        {
+            "open": close, "high": close * 1.001, "low": close * 0.999,
+            "close": close, "volume": 1e6, "ticker": "SPX",
+        },
+        index=calendar,
+    ).set_index("ticker", append=True).sort_index()
+    return build_analysis_frame(
+        tidy, interval="1d", config=PreprocessConfig(correlation_window=10)
+    )
+
+
+def _always_long(analysis):
+    from cfdinvest.signals.frame import SignalFrame
+
+    columns = analysis.close.columns
+    return SignalFrame(
+        direction=pd.DataFrame("long", index=analysis.calendar, columns=columns),
+        size=pd.DataFrame(0.5, index=analysis.calendar, columns=columns),
+        confidence=pd.DataFrame(0.9, index=analysis.calendar, columns=columns),
+        reason=pd.DataFrame("test", index=analysis.calendar, columns=columns),
+    )
+
+
+def test_the_time_stop_closes_a_position_that_is_not_working():
+    """M77: the time stop never fires.
+
+    Measured on index CFDs long, 73% of eventual losers were already under
+    water on their first day against 29% of eventual winners. Losers do not
+    plunge, they fail to start -- which a price stop cannot ask about and
+    this can.
+    """
+    import dataclasses
+
+    from cfdinvest.execution import ExecutionConfig, run_backtest
+
+    falling = _drifting_market(-0.004)
+    signals = _always_long(falling)
+
+    without = run_backtest(signals, falling, ExecutionConfig()).positions
+    with_stop = run_backtest(
+        signals, falling,
+        dataclasses.replace(ExecutionConfig(), time_stop_days=1),
+    ).positions
+
+    held_without = int((without.to_numpy() != 0).sum())
+    held_with = int((with_stop.to_numpy() != 0).sum())
+    assert held_with < held_without, (
+        f"a losing position must be cut sooner: {held_with} bars held with "
+        f"the stop against {held_without} without"
+    )
+
+
+def test_the_time_stop_leaves_a_working_position_alone():
+    """It must cut losers, not everything.
+
+    A stop that closed a winner would raise the win rate by throwing away
+    the trades the whole thing exists to catch, and the summary statistics
+    would look better for it.
+    """
+    import dataclasses
+
+    from cfdinvest.execution import ExecutionConfig, run_backtest
+
+    # Rising faster than the default financing costs to carry it.
+    rising = _drifting_market(0.006)
+    signals = _always_long(rising)
+
+    without = run_backtest(signals, rising, ExecutionConfig()).positions
+    with_stop = run_backtest(
+        signals, rising,
+        dataclasses.replace(ExecutionConfig(), time_stop_days=1),
+    ).positions
+
+    assert int((with_stop.to_numpy() != 0).sum()) == int(
+        (without.to_numpy() != 0).sum()
+    ), "a position in profit must not be touched by the time stop"
+
+
+def test_the_time_stop_counts_financing_against_the_position():
+    """Rising, but slower than it costs to carry, is not working.
+
+    The distinction needs a market that is genuinely up on price and still
+    behind after financing -- a flat one proves nothing, because a zero move
+    trips a "no better than zero" test whether or not carry was counted.
+
+    The default long rate is 8% a year. This drifts up at about 2.6% a year,
+    so the price move is positive throughout and the position is only ever
+    behind once its own carry is deducted.
+    """
+    import dataclasses
+
+    from cfdinvest.execution import ExecutionConfig, run_backtest
+
+    crawling = _drifting_market(0.0001)
+    signals = _always_long(crawling)
+
+    held = int((run_backtest(
+        signals, crawling,
+        dataclasses.replace(ExecutionConfig(), time_stop_days=3),
+    ).positions.to_numpy() != 0).sum())
+    unstopped = int((run_backtest(
+        signals, crawling, ExecutionConfig()
+    ).positions.to_numpy() != 0).sum())
+
+    assert held < unstopped, (
+        "a position up on price but behind on carry is not working, and the "
+        "time stop must measure the result rather than the price move"
+    )

@@ -247,6 +247,11 @@ def run_execution(signal_frame, analysis_frame, config):
     # its cooldown and quietly cuts the book from 3,383 trades to 171.
     bar_stamps = pd.DatetimeIndex(index).as_unit("ns").asi8.astype("float64")
     cooldown = max(int(getattr(config, "reentry_cooldown_days", 0) or 0), 0)
+    time_stop = getattr(config, "time_stop_days", None)
+    time_stop = None if time_stop is None else max(int(time_stop), 0)
+    time_stop_threshold = float(getattr(config, "time_stop_threshold", 0.0) or 0.0)
+    # When each open position was entered, for the time stop.
+    opened_at = np.full(assets, np.nan, dtype="float64")
     NANOS_PER_DAY = 86_400_000_000_000.0
 
     close = fills_module.convert_prices(
@@ -385,6 +390,14 @@ def run_execution(signal_frame, analysis_frame, config):
             )
             new_held = np.where(blocked, 0, new_held)
 
+        if time_stop is not None:
+            # Stamp new entries and clear closed ones, so age is measured
+            # from when the position was actually taken.
+            opened_at = np.where(
+                (held == 0) & (new_held != 0), bar_stamps[bar], opened_at
+            )
+            opened_at = np.where(new_held == 0, np.nan, opened_at)
+
         if cooldown:
             # Stamp the close so the next bar can measure the gap. Done
             # after the suppression above, so an entry the cooldown just
@@ -392,6 +405,27 @@ def run_execution(signal_frame, analysis_frame, config):
             closed_at = np.where(
                 (held != 0) & (new_held == 0), bar_stamps[bar], closed_at,
             )
+
+        if time_stop is not None:
+            # A position that has had long enough to work and has not is
+            # closed, however small the loss. Financing is deducted first,
+            # because a position flat on price has still cost something to
+            # hold and "not working" includes not covering its own carry.
+            age = (bar_stamps[bar] - opened_at) / NANOS_PER_DAY
+            with np.errstate(invalid="ignore", divide="ignore"):
+                move = np.where(
+                    (entry_price > 0) & np.isfinite(entry_price),
+                    (price_now / entry_price - 1.0) * np.sign(held) * 100.0,
+                    np.nan,
+                )
+            rate = np.where(held > 0, long_rates, short_rates)
+            carry_pct = np.nan_to_num(rate) / config.day_count * np.nan_to_num(age) * 100.0
+            net_pct = move - carry_pct
+            stale = (
+                (held != 0) & np.isfinite(age) & (age >= time_stop)
+                & np.isfinite(net_pct) & (net_pct <= time_stop_threshold)
+            )
+            new_held = np.where(stale, 0, new_held)
 
         target_units = _target_units(
             new_held, size[bar], reference, equity, config, tradable
