@@ -25,6 +25,12 @@ fail() { echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') | FAILED: $*" | systemd-cat -t "
 deploy_steps() {
   cd "${REPO_DIR}" || { fail "no ${REPO_DIR}"; return 1; }
 
+  # The tree is owned by the service user and this runs as root, so git
+  # refuses it as "dubious ownership" unless told the directory is expected.
+  # Declared here rather than in a one-off command, so a rebuilt server does
+  # not need somebody to remember it.
+  git config --global --add safe.directory "${REPO_DIR}" 2>/dev/null || true
+
   log "Fetching origin/main"
   local before
   before="$(git rev-parse HEAD 2>/dev/null || echo none)"
