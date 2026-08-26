@@ -1,0 +1,19 @@
+# Runs after the pipeline has written the day's artefacts.
+
+[Unit]
+Description=Prune cfdinvest run artefacts daily
+
+[Timer]
+# 22:15 UTC: three quarters of an hour after the pipeline timer at 21:30,
+# which has a 30-minute start timeout and a 5-minute randomised delay. Late
+# enough that the newest run is complete before anything is counted, and the
+# policy keeps the five newest whole regardless -- so a pipeline still
+# running cannot lose its own output.
+OnCalendar=*-*-* 22:15 UTC
+# A box that was off at 22:15 still prunes, rather than skipping a day and
+# quietly falling further behind.
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

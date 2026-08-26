@@ -95,6 +95,7 @@ def test_the_units_exist():
         "cfdinvest.service",
         "cfdinvest-webhook.service",
         "cfdinvest-deploy.service",
+        "cfdinvest-prune.service",
     }
 
 
@@ -875,3 +876,61 @@ def test_the_listener_carries_no_secret_and_the_unit_names_its_own():
     # spawn their own deploy scripts. This one does not: the deploy runs in
     # its own unit, so restarting the listener cannot truncate it.
     assert "User=cfdinvest" in unit
+
+
+
+def test_every_timer_is_enabled_by_the_deploy():
+    """M137: a unit that exists but is never switched on.
+
+    This is not hypothetical. The retention module, the `prune-runs`
+    command and its tests were all written and correct, and no unit ever
+    called any of them -- so every pipeline run left a 30 MB analysis
+    frame behind and the box reached 17% free with a working prune sitting
+    unused. Shipping the capability is not the same as running it.
+
+    So the deploy enables timers rather than the README describing how to,
+    and this asserts the two lists agree in both directions: a timer file
+    the deploy does not enable is dead, and a name the deploy enables
+    without a file behind it fails at deploy time on the live box.
+    """
+    deploy = (DEPLOYMENT / "deploy.sh").read_text(encoding="utf-8")
+
+    declared = set()
+    for line in deploy.splitlines():
+        if line.startswith("TIMERS="):
+            declared = set(line.split("(", 1)[1].split(")", 1)[0].split())
+            break
+    assert declared, "deploy.sh declares no timers"
+
+    on_disk = {path.name for path in (DEPLOYMENT / "systemd").glob("*.timer")}
+    assert declared == on_disk, (
+        f"deploy enables {sorted(declared - on_disk)} with no unit file; "
+        f"ships {sorted(on_disk - declared)} that nothing enables"
+    )
+
+
+def test_the_disk_is_checked_on_every_deploy():
+    """The evidence that pruning is keeping up, rather than the hope.
+
+    A prune timer that silently stopped would look exactly like one that
+    was working until the disk filled. The deploy reads the free figure and
+    fails on it, so the next push is the thing that notices.
+    """
+    deploy = (DEPLOYMENT / "deploy.sh").read_text(encoding="utf-8")
+    assert "df " in deploy
+    assert "/var/lib/cfdinvest" in deploy
+
+    # And it must actually fail the deploy, not merely mention the number.
+    # Asserted on the guard itself rather than on nearby text: the first
+    # version of this test looked for "fail" within a few hundred
+    # characters and passed happily against a version that only logged.
+    lines = deploy.splitlines()
+    guard = next(
+        (i for i, line in enumerate(lines) if "free_pct" in line and ">=" in line),
+        None,
+    )
+    assert guard is not None, "no threshold guard on the disk figure"
+
+    body = "\n".join(lines[guard : guard + 4])
+    assert "fail" in body, "the disk guard reports but does not fail the deploy"
+    assert "ok=1" in body, "the disk guard does not set the failure code"

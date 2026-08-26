@@ -17,6 +17,10 @@ set -uo pipefail
 REPO_DIR="/opt/cfdinvest"
 VENV="${REPO_DIR}/.venv"
 SERVICES=(cfdinvest cfdinvest-dashboard)
+# Timers are enabled on every deploy, not just installed. cfdinvest-prune is
+# the one that keeps the disk bounded: without it each pipeline run leaves a
+# 30 MB analysis frame behind forever.
+TIMERS=(cfdinvest.timer cfdinvest-monitor.timer cfdinvest-pipeline.timer cfdinvest-prune.timer)
 LOG_TAG="cfdinvest-deploy"
 
 log() { echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') | $*" | systemd-cat -t "${LOG_TAG}" -p info; echo "$*"; }
@@ -60,6 +64,37 @@ deploy_steps() {
     fi
   fi
 
+  # The systemd units. Installed from the repository for the same reason the
+  # rules table is: a unit edited by hand on the box is a change nobody can
+  # review and nobody can reproduce. Timers are enabled here rather than
+  # documented, because a unit that exists but was never enabled does
+  # nothing at all -- which is precisely how the artefact store grew until
+  # the box reached 17% free with a working prune command sitting unused.
+  local reload=0
+  for unit_src in "${REPO_DIR}"/deployment/systemd/*.{service,timer,path}; do
+    [[ -f "${unit_src}" ]] || continue
+    local unit_name unit_dst
+    unit_name="$(basename "${unit_src}")"
+    unit_dst="/etc/systemd/system/${unit_name}"
+    if ! cmp -s "${unit_src}" "${unit_dst}" 2>/dev/null; then
+      log "Installing ${unit_name}"
+      install -m 644 -D "${unit_src}" "${unit_dst}" || fail "install ${unit_name}"
+      reload=1
+    fi
+  done
+  if [[ "${reload}" == "1" ]]; then
+    systemctl daemon-reload || fail "daemon-reload"
+  fi
+
+  # Enabling is idempotent, so this runs every time and a timer that was
+  # never switched on gets switched on rather than waiting to be noticed.
+  for timer in "${TIMERS[@]}"; do
+    if ! systemctl is-enabled --quiet "${timer}" 2>/dev/null; then
+      log "Enabling ${timer}"
+      systemctl enable --now "${timer}" || fail "enable ${timer}"
+    fi
+  done
+
   # Restart every resident process. Both hold imported modules in memory and
   # neither notices a file changing underneath it.
   for service in "${SERVICES[@]}"; do
@@ -78,6 +113,28 @@ deploy_steps() {
       fail "  ${service}: NOT active"; ok=1
     fi
   done
+
+  for timer in "${TIMERS[@]}"; do
+    if systemctl is-active --quiet "${timer}"; then
+      log "  ${timer}: active"
+    else
+      fail "  ${timer}: NOT active"; ok=1
+    fi
+  done
+
+  # Disk. The pipeline writes a 30 MB analysis frame per run and pruning is
+  # what keeps that bounded, so the free figure is the direct evidence that
+  # the timer above is doing its job. Reported every deploy rather than
+  # waited for: the dashboard showed 17% free before anyone looked.
+  local free_pct
+  free_pct="$(df --output=pcent /var/lib/cfdinvest | tail -1 | tr -dc '0-9')"
+  if [[ -n "${free_pct}" ]]; then
+    log "  disk: ${free_pct}% used on /var/lib/cfdinvest"
+    if (( free_pct >= 85 )); then
+      fail "  disk above 85% used -- pruning is not keeping up"
+      ok=1
+    fi
+  fi
 
   local code
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 http://127.0.0.1:8502/ || echo 000)"
