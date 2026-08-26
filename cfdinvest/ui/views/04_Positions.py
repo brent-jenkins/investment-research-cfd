@@ -107,13 +107,29 @@ if isinstance(trades, pd.DataFrame) and not trades.empty and "asset" in trades:
     ]
     context = ordered.groupby("asset")[wanted].last()
 
-    accrued = {}
-    for name in ("financing", "fx_conversion_fee", "fx_spread", "fx_slippage",
-                 "spread_cost", "slippage"):
-        if name in ordered.columns:
-            accrued[name] = ordered.groupby("asset")[name].sum()
-    if accrued:
-        context = context.join(pd.DataFrame(accrued), how="left")
+    # Costs since the position *currently* open was opened -- not since the
+    # run began. Summing the whole history charged one Apple position with
+    # every penny of financing the backtest ever paid on Apple: £326 of
+    # accrued cost on a position a few days old, against £2.55 of real
+    # accrual. It read as a plausible number, which is why it survived.
+    def _since_open(frame: pd.DataFrame) -> pd.Series:
+        opens = frame.index[frame["action"].str.startswith("open")]
+        if len(opens):
+            frame = frame.loc[opens[-1]:]
+        return frame[[c for c in COST_COLUMNS if c in frame.columns]].sum()
+
+    COST_COLUMNS = (
+        "financing", "fx_conversion_fee", "fx_spread", "fx_slippage",
+        "spread_cost", "slippage",
+    )
+    present = [c for c in COST_COLUMNS if c in ordered.columns]
+    if present:
+        accrued = (
+            ordered.reset_index(drop=True)
+            .groupby("asset", group_keys=False)
+            .apply(_since_open, include_groups=False)
+        )
+        context = context.join(accrued, how="left")
 
 last_price = pd.Series(dtype="float64")
 if isinstance(trades, pd.DataFrame) and "price" in trades.columns:
@@ -201,7 +217,7 @@ for ticker, row in book.iterrows():
                     ),
                     "Exposure": components.money(row["notional"] * factor),
                     "Leverage": components.number(row["leverage"], 2),
-                    "Financing and currency": components.money(
+                    "Financing and FX since opened": components.money(
                         (row["financing_accrued"] + row["fx_costs"]) * factor
                     ),
                 },

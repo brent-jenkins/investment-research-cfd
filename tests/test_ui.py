@@ -2360,3 +2360,49 @@ def test_the_suggestion_table_marks_direction_without_relying_on_colour():
 
     assert "📉" in overview and "📈" in overview
     assert "ProgressColumn" in overview, "confidence should be scannable"
+
+
+def test_position_costs_count_only_the_position_currently_open(tmp_path):
+    """M84: accrued costs summed over the whole run, not since the open.
+
+    The positions page charged one open position with every cost the run
+    had ever booked on that instrument. On the deployed book that showed
+    £326 of accrued financing against £2.55 of real accrual on a position a
+    few days old -- a 128x overstatement that read as a plausible number,
+    which is exactly why it survived being looked at.
+    """
+    import pandas as pd
+
+    # Two Apple positions in the run's history: one long closed, one open.
+    trades = pd.DataFrame(
+        [
+            {"asset": "AAPL", "timestamp": pd.Timestamp("2024-01-02", tz="UTC"),
+             "action": "open_long", "financing": 100.0, "spread_cost": 1.0},
+            {"asset": "AAPL", "timestamp": pd.Timestamp("2024-02-01", tz="UTC"),
+             "action": "close", "financing": 200.0, "spread_cost": 1.0},
+            {"asset": "AAPL", "timestamp": pd.Timestamp("2024-06-03", tz="UTC"),
+             "action": "open_short", "financing": 3.0, "spread_cost": 0.5},
+            {"asset": "AAPL", "timestamp": pd.Timestamp("2024-06-05", tz="UTC"),
+             "action": "resize", "financing": 4.0, "spread_cost": 0.5},
+        ]
+    )
+
+    COST_COLUMNS = ("financing", "spread_cost")
+
+    def since_open(frame):
+        opens = frame.index[frame["action"].str.startswith("open")]
+        if len(opens):
+            frame = frame.loc[opens[-1]:]
+        return frame[[c for c in COST_COLUMNS if c in frame.columns]].sum()
+
+    accrued = (
+        trades.sort_values("timestamp").reset_index(drop=True)
+        .groupby("asset", group_keys=False)
+        .apply(since_open, include_groups=False)
+    )
+
+    # Only the 3.0 + 4.0 booked since the still-open short was taken.
+    assert float(accrued.loc["AAPL", "financing"]) == pytest.approx(7.0)
+    assert float(accrued.loc["AAPL", "spread_cost"]) == pytest.approx(1.0)
+    # The whole history would have been 307.0, which is the bug.
+    assert float(trades["financing"].sum()) == pytest.approx(307.0)
