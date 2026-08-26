@@ -74,6 +74,22 @@ class SmtpConfig:
     use_tls: bool = True
     timeout: float = 30.0
     enabled: bool = False
+
+    #: Which emails are worth sending. Defaults chosen deliberately.
+    #:
+    #: The paper signals are the point: a selection gets placed by hand on
+    #: the virtual account and compared against the simulated fills. Errors
+    #: are rare and operational. Everything else is off.
+    #:
+    #: The run summary in particular *must* stay off by default now. It
+    #: fired after every pipeline run, which was once a day when it was
+    #: written and is every fifteen minutes since the engine moved to hourly
+    #: bars -- twenty-six performance emails a session, which is how the two
+    #: that matter end up in a folder nobody opens.
+    send_paper_signals: bool = True
+    send_errors: bool = True
+    send_run_summary: bool = False
+    send_advisor_suggestions: bool = False
     #: Prefix on every subject line, so rules can filter on it.
     subject_prefix: str = "[cfdinvest]"
     #: Which account this deployment trades. Appended to every subject, so an
@@ -222,8 +238,10 @@ def smtp_transport(config: SmtpConfig) -> Transport:
 # --------------------------------------------------------------------------- #
 # Message builders (pure)
 # --------------------------------------------------------------------------- #
-def _compose(config: SmtpConfig, subject: str, body: str) -> EmailMessage:
-    """Assemble a plain-text message. Pure.
+def _compose(
+    config: SmtpConfig, subject: str, body: str, html: str | None = None
+) -> EmailMessage:
+    """Assemble a message, plain text with an optional HTML alternative. Pure.
 
     The account mode goes in every subject line, at the end, where a phone
     still shows it. Two deployments send to the same inbox, and an alert about
@@ -236,6 +254,13 @@ def _compose(config: SmtpConfig, subject: str, body: str) -> EmailMessage:
     message["From"] = config.sender or "cfdinvest@localhost"
     message["To"] = ", ".join(config.recipients) or "undisclosed-recipients:;"
     message.set_content(body)
+    if html:
+        # An alternative, never a replacement. The plain text stays the real
+        # message: it is what a screen reader, a text-only client and the
+        # notification preview on a phone all show, and an email whose
+        # meaning lives only in its markup is an email that sometimes has no
+        # meaning at all.
+        message.add_alternative(html, subtype="html")
     return message
 
 

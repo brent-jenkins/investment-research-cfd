@@ -709,3 +709,133 @@ def test_the_entry_evidence_is_not_overwritten_by_the_exit_reason():
     assert closed.volume_ratio == pytest.approx(1.8)
     assert closed.sentiment == pytest.approx(-0.4)
     assert closed.sentiment_n == 31
+
+
+def test_the_alert_describes_what_the_book_recorded_not_a_separate_suggestion():
+    """M167: an email about a decision the book never made.
+
+    The point of these emails is that a selection gets placed by hand on the
+    virtual account and compared against the simulated fills. Built from the
+    advisor's own suggestion logic they would describe a different decision
+    -- different threshold, different sizing, different moment -- and the
+    comparison would be between two things that were never the same.
+    """
+    import inspect
+
+    from cfdinvest.schedule import app, paper_alert
+
+    source = inspect.getsource(app._command_paper_book)
+    assert "papertrade.load_book" in source, (
+        "the alert is not built from the recorded book"
+    )
+    assert "suggested_trades" not in source, (
+        "the alert is built from the advisor's suggestions, not the book"
+    )
+    # And it must read back what persisted, not what the pass returned.
+    assert "before" in source and "[before:]" in source
+
+    built = inspect.getsource(paper_alert.build_paper_alert)
+    assert "advisor" not in built
+
+
+def test_nothing_is_emailed_when_the_book_did_nothing():
+    """Most passes open and close nothing.
+
+    An email every five minutes saying so is how the ones that matter end up
+    filtered into a folder nobody opens.
+    """
+    from cfdinvest.schedule.notify import SmtpConfig
+    from cfdinvest.schedule.paper_alert import build_paper_alert
+
+    config = SmtpConfig(sender="a@b.c", recipients=("d@e.f",))
+    assert build_paper_alert([], config) is None
+    assert build_paper_alert(None, config) is None
+    # A pass that only marked positions is also silence.
+    assert build_paper_alert([{"event": "mark", "ticker": "AAPL"}], config) is None
+
+
+def test_the_alert_carries_a_plain_text_body_as_well_as_html():
+    """M168: meaning that lives only in the markup.
+
+    The plain part is the real message -- it is what a screen reader, a
+    text-only client and a phone's notification preview all show. HTML is a
+    nicer rendering of it, never a replacement.
+    """
+    from cfdinvest.schedule.notify import SmtpConfig
+    from cfdinvest.schedule.paper_alert import build_paper_alert
+
+    events = [{
+        "event": "open", "cohort": "c50", "ticker": "NKE", "direction": "short",
+        "quantity": 25.93, "price": 38.642, "notional_gbp": 1000.0,
+        "margin_gbp": 200.0, "confidence": 0.513,
+    }]
+    message = build_paper_alert(events, SmtpConfig(sender="a@b.c", recipients=("d@e.f",)))
+
+    plain = message.get_body(("plain",)).get_content()
+    rich = message.get_body(("html",)).get_content()
+
+    # Everything needed to place the trade is in the text, not just the HTML.
+    for needed in ("NKE", "SHORT", "25.9", "38.64"):
+        assert needed in plain, f"{needed!r} appears only in the HTML"
+    assert "simulated" in plain.lower(), "the text does not say it is simulated"
+    assert "<" not in plain, "markup leaked into the plain part"
+
+    # And the HTML must be inline-styled: every mail client strips <style>.
+    assert "<style" not in rich
+    assert "style=" in rich
+
+
+def test_the_alert_says_it_is_simulated_in_both_parts():
+    """It describes trades nobody placed, on an account that is not real.
+
+    This system has never placed an order and has no broker connection. An
+    email that reads like a broker confirmation is the one way that could
+    stop being obvious.
+    """
+    from cfdinvest.schedule.notify import SmtpConfig
+    from cfdinvest.schedule.paper_alert import build_paper_alert
+
+    events = [{
+        "event": "close", "cohort": "c70", "ticker": "AAPL", "direction": "long",
+        "net_pnl_gbp": -4.21, "days_held": 0.29, "reason": "time stop",
+    }]
+    message = build_paper_alert(events, SmtpConfig(sender="a@b.c", recipients=("d@e.f",)))
+
+    for part in ("plain", "html"):
+        body = message.get_body((part,)).get_content()
+        assert "simulated" in body.lower(), f"the {part} part does not say so"
+
+
+def test_only_signals_and_errors_are_emailed_by_default():
+    """M169: twenty-six performance emails a session.
+
+    send_daily_summary fired after every pipeline run. That was once a day
+    when it was written; since the engine moved to hourly bars the pipeline
+    runs every fifteen minutes, so it became a performance email every
+    quarter hour of every session -- which is precisely how the two emails
+    that matter get filtered into a folder nobody opens.
+
+    The defaults now say what is wanted: the paper signals, because a
+    selection gets placed by hand and compared, and errors, because they are
+    rare and operational. Nothing else.
+    """
+    import inspect
+
+    from cfdinvest.schedule import app
+    from cfdinvest.schedule.notify import SmtpConfig
+
+    config = SmtpConfig()
+    assert config.send_paper_signals is True
+    assert config.send_errors is True
+    assert config.send_run_summary is False, "a summary after every 15-minute run"
+    assert config.send_advisor_suggestions is False, "duplicates the paper signals"
+
+    # And the gates are actually consulted, not merely declared.
+    source = inspect.getsource(app)
+    for call, gate in (
+        ("send_daily_summary(summary, smtp, transport)", "send_run_summary"),
+        ("send_advisor_alert(fresh, smtp, transport)", "send_advisor_suggestions"),
+    ):
+        assert call in source, f"{call} vanished; update this test"
+        before = source[: source.index(call)]
+        assert gate in before[-400:], f"{call} is not gated by {gate}"

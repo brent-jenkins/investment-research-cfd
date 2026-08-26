@@ -450,7 +450,8 @@ def _command_run_once(args, app_config, smtp, transport) -> int:
 
     if not args.no_email:
         if summary.ok:
-            send_daily_summary(summary, smtp, transport)
+            if getattr(smtp, "send_run_summary", False):
+                send_daily_summary(summary, smtp, transport)
             if args.trade_alerts and not summary.latest_trades.empty:
                 for _, trade in summary.latest_trades.iterrows():
                     send_trade_alert(trade, smtp, transport)
@@ -486,7 +487,7 @@ def _command_run_continuous(args, app_config, smtp, transport) -> int:
             universe, run_config, repository=repository, app_config=app_config
         )
         if not args.no_email:
-            if summary.ok:
+            if summary.ok and getattr(smtp, "send_run_summary", False):
                 send_daily_summary(summary, smtp, transport)
             else:
                 send_error_alert(
@@ -563,7 +564,8 @@ def _command_advisor_alert(args, app_config, smtp, transport) -> int:
     for alert in fresh:
         logger.info("Advisor: %s", alert.headline)
     if not args.no_email:
-        notify_module.send_advisor_alert(fresh, smtp, transport)
+        if getattr(smtp, "send_advisor_suggestions", False):
+            notify_module.send_advisor_alert(fresh, smtp, transport)
     print(f"{len(fresh)} new alert(s).")
     return EXIT_OK
 
@@ -690,12 +692,17 @@ def _command_poll_live_quotes(args, app_config) -> int:
     return EXIT_OK
 
 
-def _command_paper_book(args, app_config) -> int:
-    """One pass of the simulated book. Writes a file and nothing else.
+def _command_paper_book(args, app_config, smtp=None, transport=None) -> int:
+    """One pass of the simulated book, and an email if it did anything.
 
-    Runs unattended and sends nothing: the point is a record to score in a
-    few weeks, not a notification. Every cost is the real one, from the
-    recorded Trading 212 table.
+    The email exists so a selection can be placed by hand on the virtual
+    account and compared against the simulated fills. It is built from the
+    book's own events rather than from the advisor's separate suggestion
+    logic: an email describing a different decision from the one the book
+    recorded would compare two things that were never the same.
+
+    Silence when nothing happened, which is most passes. Every cost is the
+    real one, from the recorded Trading 212 table.
     """
     from cfdinvest.advisor.papertrade_run import run_all_cohorts
     from cfdinvest.livequotes.poller import poll_live_quotes
@@ -737,9 +744,23 @@ def _command_paper_book(args, app_config) -> int:
         if value is not None
     }
 
+    before = len(papertrade.load_book(app_config, account))
     summaries = run_all_cohorts(
         latest, prices, config=app_config, account=account,
     )
+
+    # The events this pass appended, read back from the book rather than
+    # returned by the pass: the book is what was actually recorded, and an
+    # alert about something that failed to persist would be a lie about the
+    # experiment.
+    if not getattr(args, "no_email", False):
+        fresh = papertrade.load_book(app_config, account)[before:]
+        if fresh:
+            from cfdinvest.schedule.paper_alert import send_paper_alert
+
+            if getattr(smtp, "send_paper_signals", True):
+                send_paper_alert(fresh, config=smtp, transport=transport)
+
     for summary in summaries:
         print(
             f"Paper book [{summary['cohort']}]: opened {summary['opened']}, "
@@ -817,7 +838,9 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
                 _job_args(args, "advisor-alert"), app_config, smtp, transport
             )
         elif name == "paper-book":
-            _command_paper_book(_job_args(args, "poll-live-quotes"), app_config)
+            _command_paper_book(
+                _job_args(args, "poll-live-quotes"), app_config, smtp, transport
+            )
         elif name == "prune-runs":
             _command_prune_runs(_job_args(args, "prune-runs"), app_config)
 
@@ -1082,7 +1105,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "poll-live-quotes":
             return _command_poll_live_quotes(args, app_config)
         if args.command == "paper-book":
-            return _command_paper_book(args, app_config)
+            return _command_paper_book(args, app_config, smtp, transport)
         if args.command == "daemon":
             return _command_daemon(args, app_config, smtp, transport)
     except KeyboardInterrupt:
