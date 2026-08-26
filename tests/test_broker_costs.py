@@ -71,6 +71,12 @@ M82  the blackout blocks entry but carries an open position through
      -> test_the_blackout_closes_an_open_position_not_only_new_ones
 M83  a failed earnings fetch recorded as "has no earnings"
      -> test_fetching_omits_rather_than_blanks_a_ticker_it_cannot_read
+M85  the strategy section is read and then ignored
+     -> test_the_strategy_section_reaches_the_execution_config
+M86  a strategy default silently changes recorded behaviour
+     -> test_the_defaults_reproduce_the_behaviour_recorded_before_the_section
+M87  a strategy field exists that config.toml never mentions
+     -> test_every_strategy_field_is_present_in_the_shipped_config
 """
 
 from __future__ import annotations
@@ -1121,3 +1127,88 @@ def test_the_blackout_closes_an_open_position_not_only_new_ones():
         "every bar in the window must be flat, including ones whose "
         "position was opened before it"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Strategy settings belong in a file the process reads, not in code
+# --------------------------------------------------------------------------- #
+def test_the_strategy_section_reaches_the_execution_config():
+    """M85: the section is read and then ignored.
+
+    The reason this matters is not tidiness. On 2026-08-25 a long-running
+    daemon went on executing the modules it had imported at start-up while
+    the files on disk said something else, so FX conversion was switched on
+    in code and stayed off in production for eleven hours. A value read
+    from a file on each run cannot fail that way.
+    """
+    import dataclasses
+
+    import cfdinvest.schedule.app as app
+    from cfdinvest.config import StrategyConfig
+
+    tuned = StrategyConfig(
+        regime_mode="tilt",
+        exit_on_flat=False,
+        exit_on_opposing_signal=False,
+        time_stop_days=1,
+        reentry_cooldown_days=14,
+        rebalance_threshold=3.0,
+        exposure_per_unit_size=4.0,
+        earnings_blackout_days=2,
+        fx_enabled=False,
+        fx_conversion_fee_pct=0.004,
+    )
+    config = app._execution_config(["^GSPC"], tuned)
+
+    assert config.time_stop_days == 1
+    assert config.reentry_cooldown_days == 14
+    assert config.rebalance_threshold == pytest.approx(3.0)
+    assert config.exposure_per_unit_size == pytest.approx(4.0)
+    assert config.earnings_blackout_days == 2
+    assert config.thresholds.exit_on_flat is False
+    assert config.thresholds.exit_on_opposing_signal is False
+    assert config.fx.enabled is False
+    assert config.fx.fx_conversion_fee_pct == pytest.approx(0.004)
+
+
+def test_the_defaults_reproduce_the_behaviour_recorded_before_the_section():
+    """Adopting the section must not silently change a recorded number."""
+    import cfdinvest.schedule.app as app
+    from cfdinvest.config import StrategyConfig
+    from cfdinvest.execution import ExecutionConfig
+
+    stock = ExecutionConfig()
+    built = app._execution_config(["^GSPC"], StrategyConfig())
+
+    for field in (
+        "rebalance_threshold", "exposure_per_unit_size",
+        "reentry_cooldown_days", "time_stop_days", "earnings_blackout_days",
+    ):
+        assert getattr(built, field) == getattr(stock, field), field
+    assert built.thresholds.exit_on_flat == stock.thresholds.exit_on_flat
+    assert (
+        built.thresholds.exit_on_opposing_signal
+        == stock.thresholds.exit_on_opposing_signal
+    )
+
+
+def test_every_strategy_field_is_present_in_the_shipped_config():
+    """A setting the file does not mention is one nobody knows they have.
+
+    The section exists so the behaviour is visible in one place. A field
+    added to StrategyConfig and not to config.toml defeats that, quietly.
+    """
+    import tomllib
+    from pathlib import Path
+
+    from cfdinvest.config import StrategyConfig
+
+    text = Path("config/config.toml").read_text(encoding="utf-8")
+    document = tomllib.loads(text)
+    section = document.get("strategy") or {}
+
+    for field in StrategyConfig.__dataclass_fields__:
+        mentioned = field in section or f"# {field} =" in text
+        assert mentioned, (
+            f"{field} is a strategy setting that config.toml never mentions"
+        )

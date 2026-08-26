@@ -192,6 +192,67 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class StrategyConfig:
+    """What the system does, as opposed to how it fetches and stores data.
+
+    Every other section here describes plumbing -- where the lake lives, how
+    often to call FRED, which compression to use. None of it changes a
+    trading decision. This section is the opposite: every field alters what
+    the engine does, and until it existed all of them lived as dataclass
+    defaults across three modules and a hardcoded block in the scheduler.
+
+    That distinction matters more than tidiness. Changing a default in
+    Python means editing code and restarting a service, and on 2026-08-25 a
+    long-running daemon went on executing the modules it had imported at
+    start-up while the files on disk said something else -- so FX conversion
+    was switched on, and stayed off in production, for eleven hours. A
+    setting that lives in a file the process reads on each run cannot fail
+    that way, and a run's metadata can record what it actually used.
+
+    The defaults reproduce the behaviour recorded before this existed, so
+    adopting the section changes nothing until a value is changed.
+    """
+
+    # -- the regime filter -------------------------------------------------- #
+    #: ``"gate"`` permits or forbids a direction; ``"tilt"`` scales size by
+    #: how favourable the regime is. Measured across ten two-year windows,
+    #: tilting returned -40.9% against the gate's -54.7%.
+    regime_mode: str = "gate"
+
+    # -- holding and exits -------------------------------------------------- #
+    #: Whether a flat signal closes an open position. ``False`` reads flat
+    #: as "no view", which quadrupled gross P&L in testing.
+    exit_on_flat: bool = True
+    #: Whether a signal turning against a position closes it.
+    exit_on_opposing_signal: bool = True
+    #: Close a position still behind after this many days. ``None`` disables.
+    #: On indices it took the win rate from 39.5% to 69.5%.
+    time_stop_days: int | None = None
+    #: Days an instrument is left alone after a position in it closes.
+    reentry_cooldown_days: int = 0
+    #: Relative drift before an open position is resized.
+    rebalance_threshold: float = 0.25
+    #: Notional per unit of signal size, as a multiple of equity.
+    exposure_per_unit_size: float = 1.0
+    #: Days either side of a reporting date to hold no position. ``0`` off.
+    earnings_blackout_days: int = 0
+
+    # -- currency ----------------------------------------------------------- #
+    #: Whether foreign instruments are converted at all. Off, every rate
+    #: resolves to 1.0 and a $150 share is marked at £150.
+    fx_enabled: bool = True
+    account_currency: str = "GBP"
+    fx_conversion_fee_pct: float = 0.005
+
+    # -- what the advisor will suggest -------------------------------------- #
+    #: Confidence a signal must reach to be offered as a trade. Note that
+    #: the environment multiplier is folded into confidence, so a bar above
+    #: 0.5 is unreachable whenever volatility is high -- roughly one day in
+    #: three.
+    suggestion_confidence: float = 0.60
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     """Root configuration object threaded through the engine."""
 
@@ -201,6 +262,7 @@ class AppConfig:
     network: NetworkConfig = field(default_factory=NetworkConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    strategy: StrategyConfig = field(default_factory=StrategyConfig)
 
 
 # --------------------------------------------------------------------------- #
@@ -325,6 +387,11 @@ ENV_OVERRIDE_MAP: dict[str, tuple[str, str]] = {
     "CFD_LOG_LEVEL": ("logging", "level"),
     "CFD_LOG_FILE": ("logging", "log_file"),
     "CFD_PARQUET_COMPRESSION": ("storage", "compression"),
+    "CFD_REGIME_MODE": ("strategy", "regime_mode"),
+    "CFD_TIME_STOP_DAYS": ("strategy", "time_stop_days"),
+    "CFD_REENTRY_COOLDOWN_DAYS": ("strategy", "reentry_cooldown_days"),
+    "CFD_EXPOSURE_PER_UNIT_SIZE": ("strategy", "exposure_per_unit_size"),
+    "CFD_SUGGESTION_CONFIDENCE": ("strategy", "suggestion_confidence"),
 }
 
 

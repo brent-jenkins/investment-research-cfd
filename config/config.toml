@@ -146,3 +146,70 @@ row_group_size = 100000
 [logging]
 level = "INFO"
 # log_file = "logs/cfdinvest.log"
+
+# --------------------------------------------------------------------------- #
+# What the system does
+#
+# Everything above this line is plumbing: where the lake lives, how to talk to
+# the vendors, how to store what comes back. None of it changes a trading
+# decision. Everything below does.
+#
+# These lived as dataclass defaults across three modules until 2026-08-26. The
+# problem with that is not untidiness: changing one means editing Python and
+# restarting a service, and a long-running daemon goes on executing the modules
+# it imported at start-up. FX conversion was switched on in the code and stayed
+# off in production for eleven hours because of exactly that. A value read from
+# this file on each run cannot fail that way, and the run records what it used.
+#
+# The values here reproduce the behaviour recorded before the section existed.
+# The commented figures are what testing preferred; they are not enabled,
+# because a strategy change should be a decision rather than a default.
+# --------------------------------------------------------------------------- #
+[strategy]
+
+# "gate" permits or forbids a direction; "tilt" scales size by how favourable
+# the regime is. Tilting returned -40.9% against the gate's -54.7% over the
+# full history, and the ordering carries real information -- flattening the
+# tilts entirely gave -82.5%.
+regime_mode = "gate"          # tested better: "tilt"
+
+# Whether a flat signal closes an open position. Reading flat as "no view"
+# rather than "get out" quadrupled gross P&L.
+exit_on_flat = true           # tested better: false
+exit_on_opposing_signal = true
+
+# Close a position that is still behind after this many days, financing
+# deducted. 73% of eventual losers are already behind on day one against 29%
+# of eventual winners. On indices this took the win rate from 39.5% to 69.5%.
+# Leave unset to disable.
+# time_stop_days = 1
+
+# Days an instrument is left alone after a position in it closes. Trips
+# reopened within 21 days lost £1,489 across 145 of them; those opened after a
+# longer gap made £19,954 across 512.
+reentry_cooldown_days = 0     # tested better: 14
+
+# Relative drift before an open position is resized. At 3.0 and above, drift
+# rebalancing is off entirely and only opens and closes remain.
+rebalance_threshold = 0.25    # tested better: 3.0
+
+# Notional per unit of signal size, as a multiple of equity. Raising this is
+# gearing rather than edge -- efficiency peaks around 4 and degrades after.
+exposure_per_unit_size = 1.0  # tested better: 4.0
+
+# Days either side of a reporting date to hold no position. Correct but rarely
+# binding: only 0.5% of share position-days fall inside a window, because the
+# mean hold is 2.5 days against a quarterly event.
+earnings_blackout_days = 0
+
+# Currency. With this off every rate resolves to 1.0 and a $150 share is
+# marked at £150.
+fx_enabled = true
+account_currency = "GBP"
+fx_conversion_fee_pct = 0.005
+
+# Confidence a signal must reach to be offered as a trade. Note that the
+# environment multiplier is folded into the confidence score and is 0.5 in
+# high volatility, so any bar above 0.5 is unreachable on roughly one day in
+# three. The dashboard says so when it happens rather than reporting silence.
+suggestion_confidence = 0.60

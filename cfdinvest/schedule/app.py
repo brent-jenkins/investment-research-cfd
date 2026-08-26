@@ -23,6 +23,7 @@ monitor can alert on it:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import sys
 from dataclasses import replace
@@ -30,6 +31,7 @@ from dataclasses import replace
 import pandas as pd
 
 from cfdinvest.backtest import BacktestConfig
+from cfdinvest.signals.frame import SignalConfig
 from cfdinvest.config import load_config
 from cfdinvest.logging_utils import configure_logging
 from cfdinvest.repository import DataRepository
@@ -292,7 +294,7 @@ LAKE_FX_PAIRS: dict[str, object] = {
 }
 
 
-def _execution_config(tickers):
+def _execution_config(tickers, strategy=None):
     """The cost model, built from what the broker actually charges.
 
     The engine has always been able to take per-asset financing rates and a
@@ -308,10 +310,14 @@ def _execution_config(tickers):
     run financed partly at broker rates and partly at a default has a total
     that is neither and looks like neither.
     """
+    from cfdinvest.config import StrategyConfig
     from cfdinvest.execution import ExecutionConfig
     from cfdinvest.execution.fx import FXConfig
+    from cfdinvest.execution.state import HysteresisThresholds
+    from cfdinvest.ingestion.earnings import load_earnings_dates
     from cfdinvest.livehelper import broker_costs
 
+    strategy = strategy or StrategyConfig()
     universe = list(tickers or ())
     try:
         rates = broker_costs.financing_overrides(universe)
@@ -337,15 +343,31 @@ def _execution_config(tickers):
         len(rates), sum(fee_flags.values()), len(fee_flags),
     )
 
+    try:
+        earnings = load_earnings_dates()
+    except Exception as error:  # noqa: BLE001 - no dates is not an outage
+        logger.warning("Could not read earnings dates: %s", error)
+        earnings = {}
+
     return ExecutionConfig(
         financing_rates=rates or None,
+        rebalance_threshold=strategy.rebalance_threshold,
+        exposure_per_unit_size=strategy.exposure_per_unit_size,
+        reentry_cooldown_days=strategy.reentry_cooldown_days,
+        time_stop_days=strategy.time_stop_days,
+        earnings_dates=earnings or None,
+        earnings_blackout_days=strategy.earnings_blackout_days,
+        thresholds=HysteresisThresholds(
+            exit_on_flat=strategy.exit_on_flat,
+            exit_on_opposing_signal=strategy.exit_on_opposing_signal,
+        ),
         fx=FXConfig(
-            enabled=True,
-            account_currency="GBP",
+            enabled=strategy.fx_enabled,
+            account_currency=strategy.account_currency,
             instrument_currencies=currencies or None,
             fx_pair_tickers=dict(LAKE_FX_PAIRS),
             fx_fee_applies=fee_flags or None,
-            fx_conversion_fee_pct=0.005,
+            fx_conversion_fee_pct=strategy.fx_conversion_fee_pct,
             fx_rate_source="lake",
         ),
     )
@@ -360,7 +382,10 @@ def _backtest_config(args, app_config) -> BacktestConfig:
         interval=args.interval,
         start=args.start,
         end=args.end,
-        execution=_execution_config(tickers),
+        execution=_execution_config(tickers, app_config.strategy),
+        signal=dataclasses.replace(
+            SignalConfig(), regime_mode=app_config.strategy.regime_mode
+        ),
     )
 
 
