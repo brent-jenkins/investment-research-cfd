@@ -92,60 +92,83 @@ for level, label in (("stop_level", "stop_distance"), ("take_profit_level", "tp_
 # --------------------------------------------------------------------------- #
 # Per instrument
 # --------------------------------------------------------------------------- #
+# The state of play, in a sentence, before any table.
+#
+# The page used to open with fifteen bordered cards two hundred pixels tall,
+# in ticker order, so the one signal that cleared the bar was as prominent
+# as the fourteen that did not and you had to scroll to find out whether
+# anything was actionable at all.
+bar = getattr(data["config"].strategy, "suggestion_confidence", 0.60)
+confidences = pd.to_numeric(latest.get("confidence"), errors="coerce")     if "confidence" in latest else pd.Series(dtype=float)
+clearing = int((confidences >= bar).sum())
+longs = int((latest.get("direction", pd.Series(dtype=str)) == "long").sum())
+shorts = int((latest.get("direction", pd.Series(dtype=str)) == "short").sum())
+
+if latest.empty:
+    headline = "**Nothing is signalling.** The model wants no position on this bar."
+elif clearing:
+    headline = (
+        f"**{clearing} of {len(latest)} signals clear the {bar:.0%} bar** and "
+        f"would be taken. {longs} long, {shorts} short."
+    )
+else:
+    best = confidences.max() if len(confidences) else float("nan")
+    headline = (
+        f"**Nothing clears the {bar:.0%} bar.** {len(latest)} instruments are "
+        f"signalling — {longs} long, {shorts} short — but the strongest is "
+        f"{best:.0%}, so nothing would be taken."
+    )
+components.render_note(st, headline)
+
 st.subheader("Current signals")
 
 if latest.empty:
     components.render_note(st, "No active signal on the most recent bar.")
 else:
-    for _, row in latest.sort_values(TICKER if TICKER in latest else latest.columns[0]).iterrows():
+    # Highest conviction first. Ticker order treats a 90% signal and a 9%
+    # one as equally worth reading, which is the opposite of true.
+    ordered = latest.copy()
+    ordered["_confidence"] = confidences
+    ordered = ordered.sort_values("_confidence", ascending=False, na_position="last")
+
+    header = st.columns([1.1, 0.9, 1.5, 0.7, 3.2])
+    for cell, label in zip(header, ("", "", "Confidence", "Size", "Why")):
+        cell.caption(f"**{label}**" if label else "")
+
+    for _, row in ordered.iterrows():
         ticker = row.get(TICKER, "?")
-        with st.container(border=True):
-            name, strength, levels = st.columns([1.5, 1, 1.2])
-            with name:
-                st.markdown(
-                    f"#### {ticker} &nbsp; "
-                    f"{components.direction_badge(row.get('direction'), mode)}",
-                    unsafe_allow_html=True,
-                )
-                st.caption(explain.reason(row.get("reason")))
-                st.caption(components.short_moment(row.get(TIMESTAMP)))
-                # What to search for in Trading 212. Eleven of the configured
-                # instruments have no CFD at all, and a recommendation you
-                # cannot act on should say so here rather than after you have
-                # gone looking for it.
-                held = t212_instruments.mapping_for(str(ticker))
-                if held.tradable:
-                    st.caption(
-                        f"**Trading 212:** {held.name}"
-                        + ("" if held.exact else f" ({held.relationship})")
-                        + ("" if held.confirmed else " · unconfirmed")
-                    )
-                elif held.relationship == "none":
-                    st.caption(":orange[Not tradable on Trading 212.]")
-                else:
-                    st.caption(":orange[No Trading 212 instrument recorded.]")
-            with strength:
-                components.render_kv(
-                    st,
-                    {
-                        "Size": components.number(row.get("size"), 3),
-                        "Confidence": components.percent(
-                            row.get("confidence"), 0
-                        ),
-                    },
-                )
-            with levels:
-                components.render_kv(
-                    st,
-                    {
-                        "Stop-loss distance": components.percent(
-                            row.get("stop_distance_pct")
-                        ),
-                        "Take-profit distance": components.percent(
-                            row.get("tp_distance_pct")
-                        ),
-                    },
-                )
+        confidence = row.get("_confidence")
+        takeable = pd.notna(confidence) and confidence >= bar
+
+        name, side, conf, size, why = st.columns([1.1, 0.9, 1.5, 0.7, 3.2])
+
+        name.markdown(f"**{ticker}**")
+        side.markdown(
+            components.direction_badge(row.get("direction"), mode),
+            unsafe_allow_html=True,
+        )
+
+        # The bar is the point of the column: a number you have to compare
+        # against a threshold in your head is a number you will misread.
+        if pd.notna(confidence):
+            conf.progress(
+                min(max(float(confidence), 0.0), 1.0),
+                text=f"{confidence:.0%}" + (" ✓" if takeable else ""),
+            )
+        else:
+            conf.markdown("—")
+
+        size.markdown(components.number(row.get("size"), 3))
+        why.caption(explain.reason(row.get("reason")))
+
+        # Only where it would stop you acting. Eleven of the configured
+        # instruments have no CFD at all, and that is worth a line; "Apple,
+        # confirmed" on every row is noise.
+        held = t212_instruments.mapping_for(str(ticker))
+        if not held.tradable:
+            why.caption(":orange[Not tradable on Trading 212.]")
+        elif not held.exact:
+            why.caption(f"Trading 212: {held.name} ({held.relationship})")
 
 st.divider()
 

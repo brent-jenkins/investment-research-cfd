@@ -24,6 +24,7 @@ __all__ = [
     "PALETTE",
     "SEMANTIC",
     "MODES",
+    "MODE_KEY",
     "active_mode",
     "palette_for",
     "stylesheet",
@@ -34,6 +35,11 @@ __all__ = [
 ]
 
 MODES: tuple[str, ...] = ("light", "dark")
+
+#: Session key holding an explicit choice. Absent means "follow the
+#: browser", which is the right default: a dashboard should match the rest
+#: of someone's screen unless they say otherwise.
+MODE_KEY = "cfd_theme_mode"
 
 #: What the browser tab says. Distinct from :data:`BRAND` on purpose: the
 #: wordmark in the logo slot is the company's, while the tab has to say which
@@ -130,6 +136,21 @@ def active_mode(st=None) -> str:
     """
     if st is None:
         return "light"
+
+    # The viewer's own choice, made in this app's sidebar, wins over
+    # everything else.
+    #
+    # It has to exist because config.toml specifies a complete custom theme,
+    # and Streamlit drops its own light/dark switch as soon as one is given
+    # -- the Settings menu offers "Custom" and nothing else. The palette
+    # here has always supported both modes; what went missing was any way
+    # for a reader to ask for the other one.
+    try:
+        chosen = st.session_state.get(MODE_KEY)
+        if chosen in MODES:
+            return chosen
+    except Exception:  # noqa: BLE001 - never fail to draw over a preference
+        pass
 
     try:
         reported = getattr(getattr(st, "context", None), "theme", None)

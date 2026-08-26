@@ -2606,3 +2606,53 @@ def test_the_daily_run_row_is_dated_by_the_daemon_not_the_run_directory(monkeypa
         "not the daily job"
     )
     assert pd.Timestamp(evidence["run-intraday"]).hour == 17
+
+
+def test_the_signals_page_leads_with_what_is_actionable(populated):
+    """M162: fifteen equal cards and no answer to "should I do anything".
+
+    The page opened with one bordered card per instrument, two hundred
+    pixels tall, in ticker order -- so the single signal clearing the bar
+    was as prominent as the fourteen that did not, and whether anything was
+    actionable required scrolling the lot.
+    """
+    page = (UI / "views" / "02_Signals.py").read_text(encoding="utf-8")
+
+    # A summary before the list.
+    assert "clear the" in page and "bar" in page
+    assert page.index("headline") < page.index('st.subheader("Current signals")')
+
+    result = render("views/02_Signals.py")
+    assert not result.exception, f"signals page raised: {result.exception}"
+
+
+def test_signals_are_ordered_by_confidence_not_by_ticker(populated):
+    """Highest conviction first.
+
+    Ticker order treats a 90% signal and a 9% one as equally worth reading,
+    which is the opposite of true.
+    """
+    page = (UI / "views" / "02_Signals.py").read_text(encoding="utf-8")
+
+    assert 'sort_values("_confidence", ascending=False' in page, (
+        "the signal list is not ordered by confidence"
+    )
+    # And not by ticker, which is what it did before.
+    assert "sort_values(TICKER" not in page
+
+
+def test_the_signal_list_stays_compact(populated):
+    """M163: the tall cards coming back.
+
+    Each signal is one row of columns. A bordered container per instrument
+    is what made the page unreadable at fifteen signals, and the universe
+    has twenty-two.
+    """
+    page = (UI / "views" / "02_Signals.py").read_text(encoding="utf-8")
+
+    body = page[page.index('st.subheader("Current signals")'):]
+    body = body[:body.index("st.divider()")]
+    assert "container(border=True)" not in body, (
+        "a bordered card per signal is back"
+    )
+    assert "#### " not in body, "a heading per signal is back"
