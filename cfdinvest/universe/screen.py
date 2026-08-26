@@ -1,0 +1,401 @@
+"""Choosing which instruments to trade, mechanically and point-in-time.
+
+The universe was assembled by hand. The stated basis -- liquidity,
+volatility and sector spread -- was recorded in a commit message rather than
+executed as a rule, so it cannot be re-run, cannot be audited, and cannot be
+checked for drift. That was tolerable for a list set once. It is not
+tolerable for a list refreshed every month or quarter, because every refresh
+would carry the same gap, and unconscious selection bias is precisely the
+thing you cannot detect without a rule to compare against.
+
+So this is the rule.
+
+**Returns are not an input, deliberately.** Ranking on recent performance is
+a momentum overlay: legitimate, possibly good, and a strategy decision that
+needs measuring rather than smuggling in through the universe. Keeping it
+out means a rebalance cannot quietly become "hold whatever went up", and a
+test asserts no return series reaches the score.
+
+**Point-in-time by construction.** Every metric is computed from bars at or
+before ``as_of`` and nothing later. A screen that peeks is worse than no
+screen, because it produces an audit trail that looks rigorous.
+
+**The candidate pool is the remaining judgement call, and it is not hidden.**
+Selecting mechanically from a hand-drawn pool moves the bias rather than
+removing it: a pool of names that are large today is still a pool chosen
+with hindsight. What this does buy is that the *selection within* the pool is
+reproducible, and that the pool is one visible list somebody can argue with
+rather than nineteen decisions nobody wrote down.
+
+**Absence is named.** An instrument without enough history is ``unranked``
+with a reason, never scored zero -- a zero would sort it last as though it
+had been measured and found wanting.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Sequence
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "ScreenConfig",
+    "Candidate",
+    "ScreenResult",
+    "rank_candidates",
+    "select_universe",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenConfig:
+    """What the screen measures and how much each part counts."""
+
+    #: How many instruments to hold. Deliberately small: a tight universe is
+    #: what makes it possible to hold detailed data on each name, watch its
+    #: filings and read its news. A wider one is monitored more thinly.
+    target: int = 19
+
+    #: Trading days of history required before an instrument is ranked at
+    #: all. Below this the metrics are noise wearing a number's clothes.
+    min_history: int = 120
+
+    #: The window each metric is measured over.
+    lookback: int = 120
+
+    #: Most instruments from any one sector. ``None`` disables the cap, and
+    #: it is disabled when no sector map is supplied rather than silently
+    #: doing nothing -- the result says which happened.
+    max_per_sector: int | None = 5
+
+    #: Weights. Liquidity first: an instrument you cannot get out of at a
+    #: sane price is not tradable whatever else is true of it. Volatility
+    #: second, because a trend system needs something that moves. Continuity
+    #: last and small -- it is a disqualifier more than a preference.
+    weight_liquidity: float = 0.5
+    weight_volatility: float = 0.35
+    weight_continuity: float = 0.15
+
+
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    """One instrument's measurements, and its score if it earned one."""
+
+    ticker: str
+    liquidity: float | None = None
+    volatility: float | None = None
+    continuity: float | None = None
+    score: float | None = None
+    sector: str = ""
+    bars: int = 0
+    #: Why it is not ranked, empty when it is.
+    unranked: str = ""
+
+    def as_row(self) -> dict[str, Any]:
+        from dataclasses import asdict
+
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenResult:
+    """What the screen chose, what it rejected, and why."""
+
+    as_of: str
+    selected: tuple[str, ...] = ()
+    candidates: tuple[Candidate, ...] = ()
+    sector_capped: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+    @property
+    def ranked(self) -> tuple[Candidate, ...]:
+        return tuple(c for c in self.candidates if c.unranked == "")
+
+    @property
+    def unranked(self) -> tuple[Candidate, ...]:
+        return tuple(c for c in self.candidates if c.unranked != "")
+
+
+def _measure(closes, volumes, config: ScreenConfig) -> tuple[Any, Any, Any, int]:
+    """Liquidity, volatility and continuity for one instrument. Pure."""
+    import numpy as np
+
+    bars = int(closes.notna().sum())
+    if bars < config.min_history:
+        return None, None, None, bars
+
+    window_close = closes.dropna().tail(config.lookback)
+    window_volume = (
+        volumes.reindex(window_close.index) if volumes is not None else None
+    )
+
+    # Liquidity: turnover at the decision date, logged.
+    #
+    # Median *share* volume times the price on the last bar, rather than the
+    # median of the daily turnover series. Those differ in a way that
+    # matters: a stock that doubled through the window has doubling turnover
+    # through it, so the path-median rewards having risen during the
+    # measurement period. The first version of this did that, and the test
+    # for "returns are not an input" caught it -- a stock that tripled
+    # scored 0.92 against 0.07 for one that halved, with identical share
+    # volume and volatility.
+    #
+    # Priced at as_of instead, the score depends on where the instrument is,
+    # not on how it travelled there.
+    #
+    # Logged because the spread between the largest and smallest is orders
+    # of magnitude, and an unlogged mean would make the ranking a referendum
+    # on Apple.
+    liquidity = None
+    if window_volume is not None:
+        shares = window_volume.dropna()
+        last_price = float(window_close.iloc[-1])
+        if len(shares) and last_price > 0:
+            turnover = float(shares.median()) * last_price
+            liquidity = float(np.log10(turnover)) if turnover > 0 else None
+
+    # Volatility: annualised standard deviation of daily returns. A trend
+    # system needs something that moves; this is not a risk penalty.
+    returns = window_close.pct_change().dropna()
+    volatility = (
+        float(returns.std() * np.sqrt(252)) if len(returns) > 2 else None
+    )
+
+    # Continuity: how much of the window actually traded. A name with gaps
+    # is one you cannot rely on being able to exit.
+    continuity = float(len(window_close) / config.lookback) if config.lookback else None
+
+    return liquidity, volatility, continuity, bars
+
+
+def _z(values: Sequence[float]) -> list[float]:
+    """Rank-based standard scores, so one outlier cannot own the ranking."""
+    import numpy as np
+    import pandas as pd
+
+    if not len(values):
+        return []
+    ranks = pd.Series(values).rank(pct=True)
+    # Centred on zero and roughly unit-scaled, which keeps the weights
+    # meaning what they say.
+    return list((ranks - 0.5) * 2.0)
+
+
+def rank_candidates(
+    prices: Mapping[str, Any],
+    as_of=None,
+    config: ScreenConfig | None = None,
+    sectors: Mapping[str, str] | None = None,
+) -> ScreenResult:
+    """Score every candidate. Pure, and never looks past ``as_of``.
+
+    ``prices`` maps a ticker to a frame carrying ``close`` and ``volume``,
+    indexed by timestamp.
+    """
+    import pandas as pd
+
+    settings = config or ScreenConfig()
+    cutoff = pd.Timestamp(as_of) if as_of is not None else None
+    if cutoff is not None and cutoff.tzinfo is None:
+        cutoff = cutoff.tz_localize("UTC")
+
+    measured: list[Candidate] = []
+    for ticker, frame in sorted((prices or {}).items()):
+        sector = str((sectors or {}).get(ticker, "") or "")
+        if frame is None or getattr(frame, "empty", True):
+            measured.append(Candidate(ticker, sector=sector, unranked="no price data"))
+            continue
+
+        working = frame
+        if cutoff is not None:
+            index = pd.DatetimeIndex(working.index)
+            if index.tz is None:
+                index = index.tz_localize("UTC")
+            # The whole point: nothing after the decision date.
+            working = working[index <= cutoff]
+
+        closes = working["close"] if "close" in working else None
+        volumes = working["volume"] if "volume" in working else None
+        if closes is None or closes.dropna().empty:
+            measured.append(Candidate(ticker, sector=sector, unranked="no closes"))
+            continue
+
+        liquidity, volatility, continuity, bars = _measure(closes, volumes, settings)
+        if liquidity is None or volatility is None:
+            measured.append(Candidate(
+                ticker, sector=sector, bars=bars,
+                unranked=(
+                    f"only {bars} bars, needs {settings.min_history}"
+                    if bars < settings.min_history else "no usable volume"
+                ),
+            ))
+            continue
+
+        measured.append(Candidate(
+            ticker, liquidity=liquidity, volatility=volatility,
+            continuity=continuity, sector=sector, bars=bars,
+        ))
+
+    rankable = [c for c in measured if c.unranked == ""]
+    if rankable:
+        zl = _z([c.liquidity for c in rankable])
+        zv = _z([c.volatility for c in rankable])
+        zc = _z([c.continuity or 0.0 for c in rankable])
+        scored = []
+        for candidate, a, b, c_ in zip(rankable, zl, zv, zc):
+            score = (
+                settings.weight_liquidity * a
+                + settings.weight_volatility * b
+                + settings.weight_continuity * c_
+            )
+            scored.append(Candidate(
+                candidate.ticker, candidate.liquidity, candidate.volatility,
+                candidate.continuity, float(score), candidate.sector,
+                candidate.bars, "",
+            ))
+        by_ticker = {c.ticker: c for c in scored}
+        measured = [by_ticker.get(c.ticker, c) for c in measured]
+
+    ordered = sorted(
+        (c for c in measured if c.unranked == ""),
+        key=lambda c: (-(c.score or 0.0), c.ticker),
+    )
+
+    notes: list[str] = []
+    selected: list[str] = []
+    capped: list[str] = []
+    per_sector: dict[str, int] = {}
+
+    cap = settings.max_per_sector
+    if cap is not None and not (sectors or {}):
+        cap = None
+        notes.append(
+            "no sector map supplied, so the sector cap was not applied"
+        )
+
+    for candidate in ordered:
+        if len(selected) >= settings.target:
+            break
+        if cap is not None and candidate.sector:
+            if per_sector.get(candidate.sector, 0) >= cap:
+                capped.append(candidate.ticker)
+                continue
+            per_sector[candidate.sector] = per_sector.get(candidate.sector, 0) + 1
+        selected.append(candidate.ticker)
+
+    if len(selected) < settings.target:
+        notes.append(
+            f"only {len(selected)} of {settings.target} could be filled from "
+            f"{len(ordered)} ranked candidates"
+        )
+
+    return ScreenResult(
+        as_of=str(cutoff or ""), selected=tuple(selected),
+        candidates=tuple(measured), sector_capped=tuple(capped),
+        notes=tuple(notes),
+    )
+
+
+def select_universe(
+    repository,
+    candidates: Sequence[str],
+    as_of=None,
+    config: ScreenConfig | None = None,
+    sectors: Mapping[str, str] | None = None,
+    interval: str = "1d",
+) -> ScreenResult:
+    """Read the lake and rank. Daily bars regardless of what the engine trades.
+
+    Liquidity and volatility are properties of an instrument, not of the bar
+    size somebody happens to be trading it on, and daily bars have years of
+    history where hourly has two. Measuring the screen on the trading
+    interval would tie the universe to a decision it has nothing to do with.
+    """
+    frames: dict[str, Any] = {}
+    try:
+        market = repository.load_market(tickers=list(candidates), interval=interval)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not read the lake for screening: %s", error)
+        return ScreenResult(as_of=str(as_of or ""), notes=(f"lake unreadable: {error}",))
+
+    if market is None or getattr(market, "empty", True):
+        return ScreenResult(as_of=str(as_of or ""), notes=("the lake returned nothing",))
+
+    working = market.reset_index()
+    ticker_column = "ticker" if "ticker" in working.columns else working.columns[1]
+    stamp_column = "timestamp" if "timestamp" in working.columns else working.columns[0]
+    for ticker, group in working.groupby(ticker_column):
+        frames[str(ticker)] = group.set_index(stamp_column).sort_index()
+
+    for ticker in candidates:
+        frames.setdefault(str(ticker), None)
+
+    return rank_candidates(frames, as_of=as_of, config=config, sectors=sectors)
+
+
+#: Where selection snapshots live, under the account root.
+SCREEN_DIR = "universe"
+
+
+def record_screen(result: ScreenResult, config=None, account: str | None = None) -> int:
+    """Append this selection and everything it rejected. Never raises.
+
+    Append-only, like every other observation here. A selection is a
+    decision taken at a moment on evidence that will have moved by the time
+    anybody asks about it, and one that can be edited afterwards is not
+    evidence of anything.
+
+    The rejected candidates travel with the chosen ones deliberately. Being
+    able to re-run the rule is not the same as being able to see what it saw
+    -- recomputing the ranking later reads a lake that has changed, and
+    would quietly justify whatever was chosen.
+    """
+    import json
+    from pathlib import Path
+
+    if result is None:
+        return 0
+    try:
+        from cfdinvest.persist.storage import account_root
+
+        path = Path(account_root(config, account)) / SCREEN_DIR / "selections.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "as_of": result.as_of,
+            "selected": list(result.selected),
+            "sector_capped": list(result.sector_capped),
+            "notes": list(result.notes),
+            "candidates": [c.as_row() for c in result.candidates],
+        }
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+        return 1
+    except Exception as error:  # noqa: BLE001 - recording must not fail a screen
+        logger.warning("Could not record the selection: %s", error)
+        return 0
+
+
+def load_screens(config=None, account: str | None = None) -> list[dict]:
+    """Every selection ever made, oldest first. Never raises."""
+    import json
+    from pathlib import Path
+
+    try:
+        from cfdinvest.persist.storage import account_root
+
+        path = Path(account_root(config, account)) / SCREEN_DIR / "selections.jsonl"
+        if not path.is_file():
+            return []
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    logger.warning("Skipping a malformed selection in %s", path)
+        return rows
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Selections unreadable: %s", error)
+        return []
