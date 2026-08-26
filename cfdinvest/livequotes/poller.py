@@ -104,6 +104,22 @@ def instruments_to_price(
     except Exception as error:  # noqa: BLE001 - no signals is not a failure
         logger.warning("Could not read signals for pricing: %s", error)
 
+    # The paper book holds things too, and until now nothing priced them.
+    # The dashboard marks those positions against this quote file, so
+    # leaving them out meant the forward record -- the whole point of the
+    # exercise -- showed as unpriceable on the one page that reports it.
+    #
+    # Their prices are polled inside the paper pass as well, but in memory
+    # and thrown away. Asked for here so there is one answer to "what is
+    # worth a quote" rather than two that can disagree.
+    try:
+        from cfdinvest.advisor import papertrade
+
+        book = papertrade.load_book(config, account)
+        wanted.extend(papertrade.open_positions(book))
+    except Exception as error:  # noqa: BLE001 - no paper book is not a failure
+        logger.warning("Could not read the paper book for pricing: %s", error)
+
     return list(dict.fromkeys(wanted))
 
 
