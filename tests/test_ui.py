@@ -928,24 +928,15 @@ def test_every_page_file_appears_in_the_navigation():
 
 
 def test_the_pages_directory_matches_the_specified_layout():
-    expected = {
-        "00_Overview.py", "01_Status.py", "02_Signals.py", "03_Execution.py",
-        "04_Positions.py", "05_Profit_and_Loss.py", "06_Logs.py",
-        "07_Configuration.py", "08_Analytics.py", "09_Live_Helper.py",
-        "10_Risk.py",
-        "11_Confirm_Trades.py",
-        "12_Monitoring.py",
-        "13_Journal.py",
-        "14_Insights.py",
-        "15_Behaviour.py",
-        "16_Simulation.py",
-        "17_Accounts.py",
-        "18_Routing.py",
-        "19_T212_Rules.py",
-        "20_Meta_Strategy.py",
-        "21_Account.py",
-        "22_Data.py",
-    }
+    """Three pages, deliberately.
+
+    The dashboard carried twenty-three during development and almost none
+    of them were read. This is a research period: the questions that matter
+    are what the paper book has done, whether the machine is healthy, and
+    what the model wants today. Everything else was removed rather than
+    left to rot behind a nav item, and git holds it if it is wanted back.
+    """
+    expected = {"00_Dashboard.py", "01_Status.py", "02_Signals.py"}
     assert {p.name for p in (UI / "views").glob("*.py")} == expected
 
 
@@ -1003,209 +994,7 @@ def test_the_status_page_expands_every_failing_check(populated, monkeypatch):
 # --------------------------------------------------------------------------- #
 # The monitoring page reports rather than breaks
 # --------------------------------------------------------------------------- #
-def test_the_monitoring_page_reports_a_stale_lake(populated):
-    """The fixture lake is stale, so the page should say so, loudly.
-
-    This is the page whose st.error means it is working. If it ever renders
-    green against this fixture, the checks have stopped checking.
-    """
-    app = render("views/12_Monitoring.py")
-
-    assert not app.exception
-    drawn = " ".join(element.value for element in app.error)
-    assert "lake" in drawn.lower()
-    assert "RED" in " ".join(element.value for element in app.markdown)
-
-
-def test_the_monitoring_page_shows_every_check_not_only_the_failures(populated):
-    """A summary of only what broke cannot tell you what was looked at."""
-    from cfdinvest.monitoring.aggregate import TYPE_LABELS
-
-    app = render("views/12_Monitoring.py")
-    labels = {metric.label for metric in app.metric}
-
-    assert set(TYPE_LABELS.values()) <= labels
-
-
-def test_the_monitoring_page_survives_an_empty_lake(empty_lake):
-    """The state a fresh install is in, and the one most likely to crash."""
-    app = render("views/12_Monitoring.py")
-    assert not app.exception
-    assert app.markdown
-
-
-def test_opening_the_monitoring_page_records_nothing(populated):
-    """A dashboard left open would otherwise bury the scheduler's passes."""
-    from cfdinvest.persist import monitoring as monitoring_store
-
-    render("views/12_Monitoring.py")
-    assert monitoring_store.list_monitoring_snapshots(config_for(populated)) == []
-
-
 # --------------------------------------------------------------------------- #
-# The simulation page says what it is before it says anything else
-# --------------------------------------------------------------------------- #
-def test_the_simulation_page_warns_before_it_shows_a_number(populated):
-    """A banner underneath is one people scroll past on the way to the figure
-    they came for."""
-    app = render("views/16_Simulation.py")
-
-    assert not app.exception
-    drawn = " ".join(element.value for element in app.error)
-    assert "rehearsal" in drawn.lower()
-    assert "not your results" in drawn.lower()
-
-
-def test_the_simulation_page_rehearses_nothing_until_asked(populated):
-    """Replaying a run is expensive, and doing it on page load would make the
-    dashboard slow for everyone who was not asking for it."""
-    app = render("views/16_Simulation.py")
-    drawn = " ".join(element.value for element in app.markdown)
-
-    assert "Nothing has been rehearsed yet" in drawn
-
-
-def test_the_simulation_page_records_nothing_by_opening_it(populated):
-    from cfdinvest.persist import simulation as simulation_store
-
-    render("views/16_Simulation.py")
-    assert simulation_store.list_simulations(config_for(populated)) == []
-
-
-# --------------------------------------------------------------------------- #
-# The risk page shows what the snapshot says
-# --------------------------------------------------------------------------- #
-def risk_snapshot(**changes):
-    """A snapshot with a valued book, for pinning what the page renders."""
-    import pandas as pd
-
-    from cfdinvest.risk import RiskLimits, build_risk_snapshot
-
-    index = pd.bdate_range("2026-01-01", periods=2, tz="UTC", name="timestamp")
-    arguments = dict(
-        positions_frame=pd.DataFrame({"SPY": [0.0, 10.0], "GLD": [0.0, -5.0]}, index=index),
-        analysis_frame=pd.DataFrame(
-            {
-                "timestamp": pd.to_datetime(["2026-01-02"] * 2, utc=True),
-                "panel": ["prices.close"] * 2,
-                "series": ["SPY", "GLD"],
-                "value": [100.0, 80.0],
-            }
-        ),
-        limits=RiskLimits(
-            account_balance_gbp=2_000.0,
-            # Two positions are 71% concentrated by construction. This fixture
-            # is the inside-every-limit case, so the bound has to allow it.
-            max_instrument_concentration_pct=0.90,
-        ),
-        scheduler_status={"run_status": "OK", "message": "Last run completed."},
-        run_id="20260102-090000",
-    )
-    arguments.update(changes)
-    return build_risk_snapshot(**arguments)
-
-
-def render_risk(monkeypatch, snapshot):
-    """Render the risk page against one known snapshot.
-
-    The page reads the artefacts itself, so the fixture goes in at the read:
-    what is under test is what the page *does* with a snapshot, not whether
-    the snapshot is right -- tests/test_risk.py covers that.
-    """
-    import cfdinvest.risk as risk_package
-
-    monkeypatch.setattr(
-        risk_package, "snapshot_from_disk", lambda *a, **k: snapshot
-    )
-    return render("views/10_Risk.py")
-
-
-def test_the_risk_page_shows_the_exposure_it_was_given(populated, monkeypatch):
-    app = render_risk(monkeypatch, risk_snapshot())
-    assert_clean(app, "views/10_Risk.py")
-
-    shown = {metric.label: metric.value for metric in app.metric}
-    # 10 x 100 long and 5 x 80 short: 1,400 gross, 600 net, two positions.
-    assert shown["Gross exposure"] == "£1,400.00"
-    assert shown["Net exposure"] == "£600.00"
-    assert shown["Open positions"] == "2"
-
-
-def test_the_risk_page_lists_every_breach(populated, monkeypatch):
-    from cfdinvest.risk import RiskLimits
-
-    app = render_risk(
-        monkeypatch,
-        risk_snapshot(
-            limits=RiskLimits(
-                account_balance_gbp=2_000.0, max_total_exposure_gbp=500.0
-            )
-        ),
-    )
-    drawn = " ".join(element.value for element in app.error)
-
-    assert "limit" in drawn and "breached" in drawn
-    assert "Gross exposure" in drawn
-
-
-def test_a_flat_book_is_not_reported_as_a_breach(populated, monkeypatch):
-    import pandas as pd
-
-    index = pd.bdate_range("2026-01-01", periods=2, tz="UTC", name="timestamp")
-    app = render_risk(
-        monkeypatch,
-        risk_snapshot(
-            positions_frame=pd.DataFrame({"SPY": [0.0, 0.0]}, index=index),
-            analysis_frame=None,
-        ),
-    )
-    assert not app.error
-    assert "flat" in " ".join(element.value for element in app.info).lower()
-
-
-def test_the_risk_page_shows_a_dead_run_as_failed(populated, monkeypatch):
-    """The state the scheduler ordering exists to expose."""
-    app = render_risk(
-        monkeypatch,
-        risk_snapshot(
-            scheduler_status={
-                "run_status": "FAILED",
-                "message": "Last run started but did not complete.",
-                "failures": 1,
-            }
-        ),
-    )
-    drawn = " ".join(element.value for element in app.markdown)
-
-    assert "FAILED" in drawn
-    assert "did not complete" in drawn
-
-
-def test_the_risk_page_offers_no_control_that_changes_anything(
-    populated, monkeypatch
-):
-    """It is a dashboard. Nothing on it may close, size or place a trade.
-
-    The shared sidebar's "Refresh data" re-reads the lake, so the assertion
-    is not "no buttons" but "no button that acts on the book". Sign out is
-    drawn by the entry script rather than by a page, so it does not appear
-    when a page is rendered on its own. Listing the chrome explicitly rather
-    than loosening the check: a new button here should fail this test until
-    someone has looked at it.
-    """
-    app = render_risk(monkeypatch, risk_snapshot())
-    labels = [button.label for button in app.button]
-
-    assert labels == ["Refresh data"]
-    forbidden = ("close", "sell", "buy", "place", "reduce", "hedge", "size")
-    assert not [
-        label for label in labels
-        if any(word in label.lower() for word in forbidden)
-    ]
-
-
-# --------------------------------------------------------------------------- #
-# Plain English
 # --------------------------------------------------------------------------- #
 def test_a_reason_becomes_a_sentence():
     """The format the signal layer actually emits: rule|flag @regime."""
@@ -1549,23 +1338,6 @@ def test_the_application_title_has_one_owner():
         assert "APP_TITLE" in text, f"{name} should read the shared title"
 
 
-def test_the_overview_and_status_pages_agree_on_what_the_lake_facts_are_called():
-    """The same number under two names is a papercut, and one name was wrong.
-
-    ``series_count`` is market *plus* macro, so labelling it "Instruments
-    stored" reported 37 instruments for a lake holding 25 of them.
-    """
-    overview = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
-    # The lake facts moved off Status when it became vitals-only, so the
-    # page that must agree with the Overview summary is now Data.
-    detail = (UI / "views" / "22_Data.py").read_text(encoding="utf-8")
-
-    assert "Instruments stored" not in overview
-    for label in ("Newest bar", "Instruments", "Macro series",
-                  "Data quality flags"):
-        assert label in detail, label
-
-
 def test_a_clock_reading_is_one_fixed_width():
     """The cards need every timestamp the same shape, and in local time."""
     text = components.clock("2026-08-25T16:42:03+00:00")
@@ -1813,7 +1585,7 @@ def test_no_account_is_created_without_a_password_in_the_environment(
 def _anonymous_overview(monkeypatch, populated):
     from streamlit.testing.v1 import AppTest
 
-    app = AppTest.from_file(str(UI / "views" / "00_Overview.py"), default_timeout=60)
+    app = AppTest.from_file(str(UI / "views" / "00_Dashboard.py"), default_timeout=60)
     app.run()
     return app
 
@@ -2011,17 +1783,12 @@ def test_every_directory_the_dashboard_writes_is_permitted_by_its_unit():
     from cfdinvest.persist import confirm, journal
     from cfdinvest.ui import auth
 
-    required = {
-        "confirmations": confirm.CONFIRMATIONS_DIR,
-        "journal": journal.JOURNAL_DIR,
-        "auth": auth.AUTH_DIR,
-    }
-
-    writers = {
-        "confirmations": "write_confirmation",
-        "journal": "append_entry",
-        "auth": "save_credentials",
-    }
+    # Only what the three remaining pages actually write. Confirm Trades and
+    # the Journal are gone, and their write permissions went with them: a
+    # path left writable for a page that no longer exists is a permission
+    # nothing justifies.
+    required = {"auth": auth.AUTH_DIR}
+    writers = {"auth": "save_credentials"}
     # auth.py counts: the Account page writes through it rather than
     # calling the store itself.
     pages = " ".join(
@@ -2234,45 +2001,6 @@ def test_a_closed_position_is_not_watched():
     assert actions.positions_to_watch({"OUT": {"quantity": 0.0, "price": 1.0}}) == []
 
 
-def test_the_confidence_bar_is_sixty_percent_by_default():
-    """Asked for explicitly, and it is not a probability of profit -- the
-    page has to say so, because the number invites that reading."""
-    from cfdinvest.advisor import actions
-
-    assert actions.DEFAULT_CONFIDENCE == 0.60
-
-    page = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
-    assert "NOT a probability of profit" in page
-
-
-def test_the_overview_says_which_clock_each_half_runs_on():
-    """A suggestion list that looks live but refreshes daily is worse than
-    one labelled daily: a stale absence would read as an all-clear."""
-    page = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
-
-    assert "change once a day" in page
-    assert "five minutes" in page
-
-
-def test_the_confidence_slider_shows_a_real_percentage():
-    """It read "1%" for every value from 0.5 upward.
-
-    A slider spanning 0.0-1.0 with a "%.0f%%" format renders the raw
-    fraction rounded to no decimals and appends a literal percent sign, so
-    0.6 displayed as "1%" -- a label that was meaningless and implied a bar
-    a hundredth of the real one. It runs on whole percent now.
-    """
-    page = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
-
-    assert 'format="%d%%"' in page
-    assert "min_value=0, max_value=100" in page
-    # The old spelling must not come back.
-    assert 'format="%.0f%%"' not in page
-    assert "min_value=0.0, max_value=1.0" not in page
-    # And the fraction the filter uses is derived from it, not held twice.
-    assert "threshold = percent / 100.0" in page
-
-
 def test_the_default_bar_survives_the_percent_round_trip():
     """60% must still mean 0.60 after going through the slider's scale."""
     from cfdinvest.advisor import actions
@@ -2280,28 +2008,6 @@ def test_the_default_bar_survives_the_percent_round_trip():
     percent = round(actions.DEFAULT_CONFIDENCE * 100)
     assert percent == 60
     assert percent / 100.0 == pytest.approx(actions.DEFAULT_CONFIDENCE)
-
-
-def test_suggestions_are_a_table_and_the_regime_is_above_them():
-    """A table because these are compared against each other; the regime on
-    top because it is the context the whole list is read in."""
-    page = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
-
-    # st.dataframe directly rather than render_frame, because the row
-    # selection that hands a trade to the Confirm page needs on_select.
-    assert "st.dataframe(" in page, "the suggestions should be a table"
-    # Compare the rendered sections, not the docstring, which names them
-    # both in its own order.
-    assert page.index("render_regime_summary") < page.index(
-        'st.subheader("Trades to consider")'
-    )
-    for column in ("Instrument", "Confidence", "Stake",
-                   "Quantity", "Priced from"):
-        assert f'"{column}"' in page, column
-    # The Trading 212 name leads and the lake symbol follows in brackets.
-    # The table is read with the app open, and the lake symbol is not
-    # searchable there.
-    assert "display_name" in page
 
 
 def test_the_poller_prices_what_is_offered_as_well_as_what_is_held():
@@ -2321,45 +2027,6 @@ def test_the_poller_prices_what_is_offered_as_well_as_what_is_held():
         __import__("cfdinvest.schedule.app", fromlist=["x"])._command_poll_live_quotes
     )
     assert "instruments_to_price" in command
-
-
-def test_a_suggestion_can_be_handed_to_the_confirm_page():
-    """Picked on the Overview, pre-filled on Confirm Trades.
-
-    A hand-off, not a decision: it carries the numbers so they need not be
-    retyped at the moment you are committing, which is exactly when a typo
-    is expensive. Nothing about it places an order.
-    """
-    overview = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
-    confirm = (UI / "views" / "11_Confirm_Trades.py").read_text(encoding="utf-8")
-
-    assert 'selection_mode="single-row"' in overview
-    assert "components.PREFILL_KEY" in overview
-    assert "st.switch_page" in overview
-    # And the other end reads it.
-    assert "components.PREFILL_KEY" in confirm
-    for field in ("ticker", "direction", "quantity", "price"):
-        assert f'prefill.get("{field}")' in confirm or f'"{field}":' in overview
-
-
-def test_the_prefill_is_cleared_once_it_has_been_used():
-    """Left in place it would offer yesterday's numbers for today's fill."""
-    confirm = (UI / "views" / "11_Confirm_Trades.py").read_text(encoding="utf-8")
-
-    assert "st.session_state.pop(components.PREFILL_KEY, None)" in confirm
-    # Cleared on a successful record, not on a failed one -- a refused entry
-    # should keep what you had typed.
-    recorded = confirm.index("st.session_state.pop(components.PREFILL_KEY")
-    refused = confirm.index("**Not recorded.**")
-    assert recorded > refused
-
-
-def test_the_suggestion_table_marks_direction_without_relying_on_colour():
-    """An arrow survives a colourblind reader and a phone screen."""
-    overview = (UI / "views" / "00_Overview.py").read_text(encoding="utf-8")
-
-    assert "📉" in overview and "📈" in overview
-    assert "ProgressColumn" in overview, "confidence should be scannable"
 
 
 def test_position_costs_count_only_the_position_currently_open(tmp_path):
@@ -2406,3 +2073,98 @@ def test_position_costs_count_only_the_position_currently_open(tmp_path):
     assert float(accrued.loc["AAPL", "spread_cost"]) == pytest.approx(1.0)
     # The whole history would have been 307.0, which is the bug.
     assert float(trades["financing"].sum()) == pytest.approx(307.0)
+
+
+# --------------------------------------------------------------------------- #
+# The dashboard reports the paper book
+# --------------------------------------------------------------------------- #
+def test_the_dashboard_never_pools_the_arms_into_a_verdict(populated):
+    """M141: three thresholds averaged into one number.
+
+    The arms exist to be compared. A single pooled win rate would answer
+    the question they were built to ask by erasing it -- and it would drift
+    with whichever arm happened to trade most, not with which threshold was
+    right. The headline may pool counts; the comparison must stay per arm.
+    """
+    page = (UI / "views" / "00_Dashboard.py").read_text(encoding="utf-8")
+
+    assert "cohorts" in page
+    # Each arm rendered on its own, not summed into a verdict.
+    assert "for cell, arm in zip" in page or "for arm in cohorts" in page
+    assert "0.50" in page and "0.60" in page and "0.70" in page
+
+
+def test_the_dashboard_withholds_a_win_rate_below_the_floor(populated):
+    """A rate on a handful of trades is a number that gets quoted.
+
+    The figures stay available -- `rate_so_far` is shown, greyed, with how
+    far there is to go -- but the claim is withheld until the sample
+    supports it. That is the same rule the forward record runs on, and the
+    reason for it is that a -5.53% which looked like a finding on fifteen
+    ticker-months inverted to +2.37% on four hundred and fifty-six.
+    """
+    from cfdinvest.advisor import papertrade
+
+    book = []
+    for index in range(3):
+        book.append({"event": "open", "cohort": "c50", "ticker": f"T{index}",
+                     "at": f"2026-08-0{index + 1}"})
+        book.append({"event": "close", "cohort": "c50", "ticker": f"T{index}",
+                     "at": f"2026-08-0{index + 2}", "net_pnl_gbp": 5.0})
+
+    summary = papertrade.summarise(book, "c50")
+    assert summary["closed"] == 3
+    assert summary["win_rate"] is None, "a rate on three trades is not a claim"
+    assert summary["rate_so_far"] == pytest.approx(100.0)
+    assert summary["needed"] == papertrade.MIN_CLOSED_FOR_RATE - 3
+
+    # And above the floor it becomes one.
+    book = []
+    for index in range(papertrade.MIN_CLOSED_FOR_RATE):
+        book.append({"event": "open", "cohort": "c50", "ticker": f"T{index}",
+                     "at": "2026-08-01"})
+        book.append({"event": "close", "cohort": "c50", "ticker": f"T{index}",
+                     "at": "2026-08-02", "net_pnl_gbp": 5.0})
+    assert papertrade.summarise(book, "c50")["win_rate"] == pytest.approx(100.0)
+
+
+def test_the_paper_book_components_sum_to_the_total():
+    """The accounting identity, asserted rather than assumed.
+
+    Gross less financing, spread and the conversion fee equals net. The
+    dashboard shows all five side by side, so if they ever disagreed the
+    page would be presenting two numbers that do not reconcile and calling
+    both facts.
+    """
+    from cfdinvest.advisor import papertrade
+
+    book = [
+        {"event": "open", "cohort": "c60", "ticker": "AAA", "at": "2026-08-01"},
+        {"event": "close", "cohort": "c60", "ticker": "AAA", "at": "2026-08-02",
+         "gross_pnl_gbp": 18.0, "financing_gbp": 5.0, "spread_cost_gbp": 0.4,
+         "fx_fee_gbp": 0.6, "net_pnl_gbp": 12.0, "days_held": 1.0},
+    ]
+    s = papertrade.summarise(book, "c60")
+    residual = (
+        s["gross_gbp"] - s["financing_gbp"] - s["spread_gbp"] - s["fx_fee_gbp"]
+    )
+    assert residual == pytest.approx(s["net_gbp"])
+
+
+def test_an_unpriced_close_is_excluded_rather_than_counted_as_zero():
+    """Absence is named. A trade that could not be valued is not a scratch."""
+    from cfdinvest.advisor import papertrade
+
+    book = [
+        {"event": "open", "cohort": "c50", "ticker": "AAA", "at": "2026-08-01"},
+        {"event": "close", "cohort": "c50", "ticker": "AAA", "at": "2026-08-02",
+         "net_pnl_gbp": None},
+        {"event": "open", "cohort": "c50", "ticker": "BBB", "at": "2026-08-01"},
+        {"event": "close", "cohort": "c50", "ticker": "BBB", "at": "2026-08-02",
+         "net_pnl_gbp": 4.0},
+    ]
+    s = papertrade.summarise(book, "c50")
+    assert s["closed"] == 1, "the unpriced trade must not be counted"
+    assert s["unpriced"] == 1, "and it must not be silently dropped either"
+    assert s["net_gbp"] == pytest.approx(4.0)
+    assert s["losses"] == 0, "unpriced is not a loss"

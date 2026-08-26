@@ -55,6 +55,7 @@ __all__ = [
     "load_execution_frame",
     "load_regime_frame",
     "load_analysis_frame",
+    "load_paper_book",
     "load_error_log",
     "load_scheduler_log",
     "load_log_files",
@@ -1009,3 +1010,42 @@ def disk_usage(path: str | os.PathLike[str]) -> Source:
         )
     except Exception as error:  # noqa: BLE001
         return Source.broken(f"disk usage unavailable: {error}", path=str(target))
+
+
+def load_paper_book(config: AppConfig, account: str | None = None) -> Source:
+    """The forward paper record: every arm, opened and closed.
+
+    Returns the raw events alongside one summary per cohort, because the
+    arms only mean anything next to each other -- three thresholds run on
+    the same signals is a comparison, and a pooled figure would hide the
+    thing it was built to show.
+
+    Absent rather than empty when the file does not exist yet. A book with
+    no trades and a book that was never written are different states, and
+    only one of them is worth waiting on.
+    """
+    try:
+        from cfdinvest.advisor import papertrade
+
+        path = papertrade._path(config, account)
+        if not path.is_file():
+            return Source.missing(
+                "the paper book has not been written yet — the daemon writes "
+                "it on the same cadence as the live quotes, so this fills in "
+                "once a signal clears one of the confidence bars",
+                value={},
+            )
+
+        book = papertrade.load_book(config, account)
+        return Source(
+            value={
+                "book": book,
+                "cohorts": papertrade.summarise_all(book),
+                "pooled": papertrade.summarise(book),
+                "min_closed": papertrade.MIN_CLOSED_FOR_RATE,
+                "stake": papertrade.STAKE_GBP,
+            }
+        )
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not read the paper book: %s", error)
+        return Source.missing(f"the paper book could not be read: {error}", value={})

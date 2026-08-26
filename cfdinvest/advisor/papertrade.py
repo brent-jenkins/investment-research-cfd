@@ -520,3 +520,87 @@ def _path(config=None, account: str | None = None) -> Path:
     from cfdinvest.persist.storage import account_root
 
     return account_root(config, account) / PAPER_DIR / "book.jsonl"
+
+
+#: Closed trades needed before a win rate is stated as a fact.
+#:
+#: Twenty, the same floor the forward record uses. A rate on five trades is
+#: a number that will be quoted and should not exist -- the -5.53% that
+#: looked like a finding on fifteen ticker-months inverted to +2.37% on four
+#: hundred and fifty-six. Below the floor the arithmetic is still shown, as
+#: ``rate_so_far``, because hiding it entirely invites the same sum done
+#: worse by hand; what is withheld is the claim, not the figure.
+MIN_CLOSED_FOR_RATE = 20
+
+
+def summarise(
+    book: Iterable[Mapping[str, Any]], cohort: str | None = None
+) -> dict[str, Any]:
+    """What the paper book has done so far. Never raises.
+
+    One arm when ``cohort`` is given, everything pooled when it is not.
+    Pooling three thresholds answers nothing on its own -- the arms exist to
+    be compared -- so the dashboard asks per cohort and this is only pooled
+    for the headline.
+
+    The accounting identity is asserted rather than assumed, as everywhere
+    else here: gross less financing, spread and the conversion fee equals
+    net. A row whose net could not be computed is counted in ``unpriced``
+    and excluded from every total, never treated as a zero.
+    """
+    rows = [
+        dict(row) for row in (book or ())
+        if cohort is None or str(row.get("cohort") or "") == cohort
+    ]
+    closed = [row for row in rows if row.get("event") == "close"]
+    live = open_positions(rows, cohort)
+
+    priced = [row for row in closed if _number(row.get("net_pnl_gbp")) is not None]
+    unpriced = len(closed) - len(priced)
+
+    nets = [float(row["net_pnl_gbp"]) for row in priced]
+    wins = sum(1 for value in nets if value > 0)
+    losses = sum(1 for value in nets if value < 0)
+
+    def total(name: str) -> float:
+        return sum(
+            float(row[name]) for row in priced
+            if _number(row.get(name)) is not None
+        )
+
+    held = [
+        float(row["days_held"]) for row in priced
+        if _number(row.get("days_held")) is not None
+    ]
+
+    return {
+        "cohort": cohort,
+        "open": len(live),
+        "open_tickers": sorted(live),
+        "closed": len(priced),
+        "unpriced": unpriced,
+        "wins": wins,
+        "losses": losses,
+        # The claim, withheld below the floor.
+        "win_rate": (
+            wins / len(priced) * 100.0 if len(priced) >= MIN_CLOSED_FOR_RATE else None
+        ),
+        # The arithmetic, always available and never presented as settled.
+        "rate_so_far": wins / len(priced) * 100.0 if priced else None,
+        "needed": max(MIN_CLOSED_FOR_RATE - len(priced), 0),
+        "net_gbp": sum(nets) if nets else None,
+        "gross_gbp": total("gross_pnl_gbp") if priced else None,
+        "financing_gbp": total("financing_gbp") if priced else None,
+        "spread_gbp": total("spread_cost_gbp") if priced else None,
+        "fx_fee_gbp": total("fx_fee_gbp") if priced else None,
+        "best_gbp": max(nets) if nets else None,
+        "worst_gbp": min(nets) if nets else None,
+        "avg_days_held": sum(held) / len(held) if held else None,
+    }
+
+
+def summarise_all(book: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Every arm, in threshold order, plus the pooled total last."""
+    rows = list(book or ())
+    cohorts = sorted({str(row.get("cohort") or "") for row in rows if row.get("cohort")})
+    return [summarise(rows, name) for name in cohorts] + [summarise(rows)]

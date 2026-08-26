@@ -51,7 +51,16 @@ def test_the_caddyfile_requires_basic_auth():
 
 
 def test_the_caddyfile_proxies_to_streamlit_on_localhost():
-    assert "reverse_proxy 127.0.0.1:8501" in text(CADDYFILE)
+    """Localhost, and the port the unit actually serves.
+
+    The number is read from the unit rather than repeated here. A test that
+    restates a value is a second copy of it, and the day the two drift the
+    test defends the wrong one -- which is how the deploy's health check
+    came to probe a port this project did not serve.
+    """
+    unit = text(DEPLOYMENT / "systemd" / "cfdinvest-dashboard.service")
+    port = re.search(r"--server\.port\s+(\d+)", unit).group(1)
+    assert f"reverse_proxy 127.0.0.1:{port}" in text(CADDYFILE)
 
 
 def test_the_caddyfile_reads_the_credential_from_the_environment():
@@ -226,13 +235,20 @@ def test_the_readme_only_promises_commands_that_exist():
 def test_the_dashboard_binds_localhost_only():
     """The load-bearing argument.
 
-    Without it Streamlit binds every interface and answers on 8501 directly,
-    going round Caddy and therefore round the basic auth. The proxy is only a
-    boundary because the app is unreachable any other way.
+    Without it Streamlit binds every interface and answers on its port
+    directly, going round Caddy and therefore round the basic auth. The
+    proxy is only a boundary because the app is unreachable any other way.
+
+    The other Streamlit app on this box does bind 0.0.0.0, which is what
+    makes this more than theoretical.
     """
     body = text(DEPLOYMENT / "systemd" / "cfdinvest-dashboard.service")
     assert "--server.address 127.0.0.1" in body
-    assert "0.0.0.0" not in body
+    # In the ExecStart, not in the prose explaining why it must not appear.
+    execstart = "\n".join(
+        line for line in body.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "0.0.0.0" not in execstart
 
 
 def test_the_dashboard_cannot_write_to_the_lake():
@@ -975,3 +991,41 @@ def test_the_disk_is_checked_on_every_deploy():
     body = "\n".join(lines[guard : guard + 4])
     assert "fail" in body, "the disk guard reports but does not fail the deploy"
     assert "ok=1" in body, "the disk guard does not set the failure code"
+
+
+def test_the_dashboard_port_has_one_owner():
+    """M140: three files naming the port, and two of them disagreeing.
+
+    They did. The unit and the Caddy upstream said 8501 while the deploy's
+    health check probed 8502, so the check was reporting on a port this
+    project did not serve -- it returned HTTP 200 while the dashboard was
+    dead, because something else was answering.
+
+    The number matters beyond tidiness. Another Streamlit app on this box
+    holds 8501 and binds 0.0.0.0, so Streamlit's default is not ours to
+    take: after a VM rescale it claimed the port first and the dashboard
+    entered a restart loop on "Port 8501 is not available". Pointing Caddy
+    at the default would be worse than a collision -- it would serve the
+    other app's pages through this site's basic auth.
+    """
+    unit = text(DEPLOYMENT / "systemd" / "cfdinvest-dashboard.service")
+    caddy = text(CADDYFILE)
+    deploy = text(DEPLOYMENT / "deploy.sh")
+
+    in_unit = re.search(r"--server\.port\s+(\d+)", unit)
+    in_caddy = re.search(r"reverse_proxy\s+127\.0\.0\.1:(\d+)", caddy)
+    in_deploy = re.search(r"127\.0\.0\.1:(\d+)/", deploy)
+
+    assert in_unit and in_caddy and in_deploy, "the port must be findable in all three"
+
+    ports = {
+        "unit": in_unit.group(1),
+        "caddy": in_caddy.group(1),
+        "deploy health check": in_deploy.group(1),
+    }
+    assert len(set(ports.values())) == 1, f"the port disagrees: {ports}"
+
+    # And not Streamlit's default, which belongs to the other tenant.
+    assert set(ports.values()) != {"8501"}, (
+        "8501 is held by another app on this box, bound to every interface"
+    )

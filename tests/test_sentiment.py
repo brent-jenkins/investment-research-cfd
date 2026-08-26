@@ -200,23 +200,6 @@ def test_sentiment_reaches_no_calculation():
     )
 
 
-def test_the_overview_shows_it_beside_a_suggestion_not_inside_one():
-    """It is a column and an expander, never an input to the numbers."""
-    from pathlib import Path
-
-    page = Path("cfdinvest/ui/views/00_Overview.py").read_text(encoding="utf-8")
-
-    assert "sentiment_readings" in page
-    assert "sentiment_badge" in page
-    # The stake, quantity and confidence must come from the suggestion.
-    for computed in ("suggestion.cash", "suggestion.quantity",
-                     "suggestion.confidence"):
-        assert computed in page
-    # And nothing may multiply a number by a sentiment score.
-    assert "* reading.score" not in page
-    assert "reading.score *" not in page
-
-
 # --------------------------------------------------------------------------- #
 # Heat, which is a different question from direction
 # --------------------------------------------------------------------------- #

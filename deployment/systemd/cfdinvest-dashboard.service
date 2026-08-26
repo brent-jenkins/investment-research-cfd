@@ -25,10 +25,19 @@ EnvironmentFile=/etc/cfdinvest/env
 
 # --server.address 127.0.0.1 is the load-bearing argument. Without it
 # Streamlit binds every interface and the dashboard is reachable directly on
-# port 8501, going round Caddy and therefore round the basic auth.
+# its port, going round Caddy and therefore round the basic auth.
+#
+# 8502, not Streamlit's default 8501. This box hosts another Streamlit app
+# which takes 8501 and binds 0.0.0.0, so the default is not ours to use:
+# after a VM rescale it claimed the port first and this service then failed
+# its restart loop with "Port 8501 is not available" until someone looked.
+# The number appears in exactly three places -- here, the Caddy upstream and
+# the deploy's health check -- and a test asserts all three agree, because
+# two of them already disagreed and the health check was probing a port
+# nothing served.
 ExecStart=/opt/cfdinvest/.venv/bin/streamlit run cfdinvest/ui/app.py \
     --server.address 127.0.0.1 \
-    --server.port 8501 \
+    --server.port 8502 \
     --server.headless true \
     --browser.gatherUsageStats false
 
@@ -79,11 +88,13 @@ ReadWritePaths=/var/lib/cfdinvest/cache
 #   auth          the credential store; without it the session-cookie
 #                 secret cannot be persisted, so it is regenerated on every
 #                 call and a token signed at login never verifies
-#   confirmations what you actually placed, from Confirm Trades
-#   journal       what you were thinking, from the Journal page
+#
+# confirmations/ and journal/ were writable here for the Confirm Trades and
+# Journal pages. Both pages are gone -- the dashboard was cut to three during
+# the research period -- so the permission goes with them. A write path kept
+# "in case" is a permission nothing justifies, and the test that pairs each
+# one with the code that writes it is what noticed.
 ReadWritePaths=/var/lib/cfdinvest/auth
-ReadWritePaths=/var/lib/cfdinvest/confirmations
-ReadWritePaths=/var/lib/cfdinvest/journal
 
 # NOT writable, deliberately: accounts.json sits at the data root itself, so
 # permitting it would mean making the whole root writable and losing the

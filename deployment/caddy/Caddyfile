@@ -23,9 +23,13 @@ cfd.example.com {
 
 	# Streamlit binds to localhost only (see the systemd unit), so the app is
 	# unreachable except through this proxy. That is what makes the basic auth
-	# above a boundary rather than a suggestion: without it, port 8501 would
+	# above a boundary rather than a suggestion: without it, the port would
 	# still answer to anyone who found the host.
-	reverse_proxy 127.0.0.1:8501 {
+	#
+	# 8502 rather than Streamlit's default: another app on this box holds
+	# 8501 and binds every interface, so pointing here at the default would
+	# proxy that app's pages through this site's basic auth.
+	reverse_proxy 127.0.0.1:8502 {
 		# Streamlit's live updates run over a websocket. Without these the
 		# page loads and then silently stops updating, which looks like a
 		# broken app rather than a broken proxy.

@@ -1094,18 +1094,6 @@ def test_a_confirmation_written_before_the_terms_existed_still_loads():
     assert old.leverage is None and old.financing_rate is None
 
 
-def test_the_confirm_page_records_a_correction_rather_than_editing():
-    page = (
-        Path("cfdinvest/ui/views/11_Confirm_Trades.py").read_text(encoding="utf-8")
-    )
-
-    assert "Correct" in page
-    assert "components.PREFILL_KEY" in page
-    # It must not delete or rewrite anything.
-    for destructive in ("unlink(", "rmtree", "os.remove", "truncate"):
-        assert destructive not in page, destructive
-
-
 # --------------------------------------------------------------------------- #
 # What your recorded trades actually returned
 # --------------------------------------------------------------------------- #

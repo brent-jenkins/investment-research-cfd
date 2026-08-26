@@ -45,29 +45,9 @@ mode = theme.apply(st)
 #: not need the magic name -- and without the name there is nothing to
 #: discover and nothing to suppress.
 PAGES: tuple[tuple[str, str, str], ...] = (
-    ("views/00_Overview.py", "Overview", "📈"),
+    ("views/00_Dashboard.py", "Dashboard", "📈"),
     ("views/01_Status.py", "System status", "🩺"),
     ("views/02_Signals.py", "Signals", "🧭"),
-    ("views/03_Execution.py", "Execution", "🎯"),
-    ("views/04_Positions.py", "Positions", "📦"),
-    ("views/05_Profit_and_Loss.py", "Profit & Loss", "💷"),
-    ("views/06_Logs.py", "Logs", "📜"),
-    ("views/07_Configuration.py", "Configuration", "⚙"),
-    ("views/08_Analytics.py", "Analytics", "🔬"),
-    ("views/09_Live_Helper.py", "Live-Execution Helper", "🧮"),
-    ("views/10_Risk.py", "Risk", "⚖"),
-    ("views/11_Confirm_Trades.py", "Confirm Trades", "✍"),
-    ("views/12_Monitoring.py", "Operational Monitoring", "🚨"),
-    ("views/13_Journal.py", "Journal", "📓"),
-    ("views/14_Insights.py", "Insights", "🔎"),
-    ("views/15_Behaviour.py", "Behaviour", "🧠"),
-    ("views/16_Simulation.py", "Simulation", "🎬"),
-    ("views/17_Accounts.py", "Accounts", "🗂"),
-    ("views/18_Routing.py", "Routing", "🔀"),
-    ("views/19_T212_Rules.py", "T212 Rules", "📐"),
-    ("views/20_Meta_Strategy.py", "Meta-Strategy", "🎚"),
-    ("views/21_Account.py", "Account", "🔑"),
-    ("views/22_Data.py", "Data", "🗃"),
 )
 
 def _sign_in() -> None:
