@@ -1471,3 +1471,56 @@ def direction_badge(direction: Any, mode: str = "dark") -> str:
     """A coloured dot and label for long, short or flat."""
     label = str(direction or "flat").lower()
     return theme.swatch(theme.colour_for(label, mode), label.capitalize(), mode)
+
+
+def sentiment_readings(st, tickers) -> dict:
+    """``{ticker: Sentiment}`` for the instruments shown. Never raises.
+
+    ``st`` is passed in rather than imported, like everything else here:
+    this module is imported by tests that have no Streamlit runtime, and a
+    module-level ``import streamlit`` would take them all down.
+
+    Cached for fifteen minutes because it is one network call per ticker
+    and a page reruns on every click. What is cached is the dataclass and
+    nothing else -- st.cache_data pickles what it stores, and a callable
+    anywhere in a cached value takes the whole bundle down with it, with
+    the symptom appearing on some other page entirely.
+
+    A ticker whose feed fails is absent from the result rather than present
+    and empty, so the caller can tell "not read" from "read, and quiet".
+    """
+    @st.cache_data(ttl=900, show_spinner=False)
+    def _read(ticker: str):
+        from cfdinvest.advisor.sentiment import sentiment_for
+
+        return sentiment_for(ticker)
+
+    readings = {}
+    for ticker in dict.fromkeys(str(t) for t in (tickers or ()) if t):
+        try:
+            readings[ticker] = _read(ticker)
+        except Exception:  # noqa: BLE001 - a news feed is not worth a blank page
+            continue
+    return readings
+
+
+def sentiment_badge(reading) -> str:
+    """A short, colourless label for a table cell.
+
+    Colourless on purpose. Every other state column here earns its colour
+    by meaning something measured against history; this one has no track
+    record at all, and painting it green would lend it an authority it has
+    not got.
+    """
+    if reading is None or getattr(reading, "score", None) is None:
+        return "—"
+    score = reading.score
+    if score <= -0.5:
+        return f"▼▼ {score:+.2f}"
+    if score < -0.15:
+        return f"▼ {score:+.2f}"
+    if score <= 0.15:
+        return f"• {score:+.2f}"
+    if score < 0.5:
+        return f"▲ {score:+.2f}"
+    return f"▲▲ {score:+.2f}"

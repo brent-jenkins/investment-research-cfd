@@ -221,6 +221,18 @@ else:
     # Direction carries an arrow as well as a colour: an arrow survives a
     # colourblind reader and a phone screen, and the colour is doing the
     # scanning work for everyone else.
+    # Sentiment sits beside each suggestion and decides nothing. It cannot
+    # be backtested -- the feed carries days, not years -- so it never
+    # reaches sizing or the confidence gate. What it is for is the moment
+    # before you place the trade: the engine has read the price and has no
+    # way to know the company cut guidance last night.
+    #
+    # Read once per instrument and cached, because it is a network call per
+    # ticker and this page reruns on every interaction.
+    readings = components.sentiment_readings(
+        st, [s.ticker for s in suggestions]
+    )
+
     table = pd.DataFrame([
         {
             "": "📉" if suggestion.direction == "short" else "📈",
@@ -233,6 +245,7 @@ else:
             # raw value, so 0.80 with "%.0f%%" renders "1%" -- the same
             # trap the slider had.
             "Confidence": suggestion.confidence * 100.0,
+            "News": components.sentiment_badge(readings.get(suggestion.ticker)),
             "Stake": suggestion.cash,
             "Quantity": suggestion.quantity,
             "Price": suggestion.price,
@@ -257,6 +270,17 @@ else:
                 "Confidence", min_value=0, max_value=100, format="%d%%",
                 help="How sure the engine is. NOT a probability of profit.",
             ),
+            "News": st.column_config.TextColumn(
+                "News",
+                width="small",
+                help=(
+                    "Recent headlines, scored by keyword. Headlines that "
+                    "merely report the price move are excluded — they "
+                    "describe the past and predict nothing. This has no "
+                    "history to be tested against, so it decides nothing "
+                    "and sizes nothing. It is here for you to read."
+                ),
+            ),
             "Stake": st.column_config.NumberColumn(
                 "Stake", format=f"{components.CURRENCY}%.2f"
             ),
@@ -273,6 +297,22 @@ else:
             f"{suggestion.direction} {components.number(suggestion.quantity, 4)} "
             f"at about {components.price(suggestion.price)}"
         )
+
+        reading = readings.get(suggestion.ticker)
+        if reading is not None and reading.score is not None:
+            with st.expander(f"What is being said — {reading.describe()}"):
+                components.render_note(
+                    st,
+                    "Scored by keyword, not judgement. It has no track "
+                    "record here and is not part of any calculation — the "
+                    "call is yours.",
+                )
+                for headline in reading.headlines:
+                    if headline.price_report:
+                        st.caption(f"↷ {headline.title}  *(reports the price)*")
+                    else:
+                        mark = {1: "▲", -1: "▼"}.get(headline.score, "·")
+                        st.markdown(f"{mark} {headline.title}")
         if st.button("Log this trade", type="primary", key="cfd_log_pick"):
             # Hand the numbers over rather than making them be retyped. This
             # records what you did; it does not place anything.
