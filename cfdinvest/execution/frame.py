@@ -104,6 +104,22 @@ class ExecutionConfig:
     #: a trend that genuinely reverses is a different trade.
     reentry_cooldown_days: int = 0
 
+    #: ``{ticker: [ISO date, ...]}`` of reporting dates, from
+    #: :mod:`cfdinvest.ingestion.earnings`. Instruments absent from the
+    #: mapping are never blacked out -- an index has no earnings, and a
+    #: share whose dates could not be fetched must not be silently treated
+    #: as though it had none.
+    earnings_dates: dict[str, list] | None = None
+    #: Days before a reporting date on which no new position is opened, and
+    #: an open one is closed. ``0`` disables it.
+    #:
+    #: Across the nineteen shares here, an earnings session moves 3.8x as
+    #: far as an ordinary one, and those sessions sum to -282% of log
+    #: return while every other day sums to +7,161%. The move is real, it
+    #: is large, and its direction is not knowable in advance -- which is
+    #: an argument for not having a position rather than for guessing.
+    earnings_blackout_days: int = 0
+
     #: Days after which a position still under water is closed. ``None``
     #: disables it, which is what every recorded run used.
     #:

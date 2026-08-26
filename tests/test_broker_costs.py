@@ -63,6 +63,14 @@ M78  the time stop cuts winners as well as losers
      -> test_the_time_stop_leaves_a_working_position_alone
 M79  the time stop measures the price move, ignoring financing
      -> test_the_time_stop_counts_financing_against_the_position
+M80  the blackout window stops on the reporting date, missing the reaction
+     -> test_the_blackout_covers_the_session_after_the_announcement
+M81  an instrument with no recorded dates is blacked out anyway
+     -> test_an_instrument_with_no_recorded_dates_is_not_blacked_out
+M82  the blackout blocks entry but carries an open position through
+     -> test_the_blackout_closes_an_open_position_not_only_new_ones
+M83  a failed earnings fetch recorded as "has no earnings"
+     -> test_fetching_omits_rather_than_blanks_a_ticker_it_cannot_read
 """
 
 from __future__ import annotations
@@ -943,4 +951,173 @@ def test_the_time_stop_counts_financing_against_the_position():
     assert held < unstopped, (
         "a position up on price but behind on carry is not working, and the "
         "time stop must measure the result rather than the price move"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# The earnings blackout
+# --------------------------------------------------------------------------- #
+def test_the_blackout_covers_the_session_after_the_announcement():
+    """M80: the window stops on the reporting date itself.
+
+    Most companies report after the close, so the reaction lands on the
+    *following* session -- every one of the ten worst days in Lululemon's
+    decline was the day after a print. A window that reopened on the
+    morning of the reaction would take the gap it exists to avoid.
+    """
+    from cfdinvest.execution.engine import _earnings_blackout
+    from cfdinvest.execution import ExecutionConfig
+    import dataclasses
+
+    index = pd.date_range("2024-03-18", periods=8, tz="UTC")
+    columns = pd.Index(["LULU", "^GSPC"])
+    config = dataclasses.replace(
+        ExecutionConfig(),
+        earnings_dates={"LULU": ["2024-03-21"]},
+        earnings_blackout_days=2,
+    )
+    mask = _earnings_blackout(index, columns, config)
+
+    by_day = dict(zip([str(d.date()) for d in index], mask[:, 0]))
+    assert by_day["2024-03-19"], "two days before is inside the window"
+    assert by_day["2024-03-21"], "the reporting date itself is inside"
+    assert by_day["2024-03-22"], "the session after carries the reaction"
+    assert not by_day["2024-03-23"], "and then it reopens"
+    assert not by_day["2024-03-18"], "three days before is outside"
+
+    # An instrument with no recorded dates is never blacked out.
+    assert not mask[:, 1].any(), "an index has no earnings and must be untouched"
+
+
+def test_an_instrument_with_no_recorded_dates_is_not_blacked_out():
+    """M81: a missing entry treated as "unknown, so block everything".
+
+    Indices, commodities and FX pairs have no earnings, and a share whose
+    fetch failed is a different case from one that genuinely has none --
+    but neither may be blocked on a date nobody recorded.
+    """
+    from cfdinvest.execution.engine import _earnings_blackout
+    from cfdinvest.execution import ExecutionConfig
+    import dataclasses
+
+    index = pd.date_range("2024-03-18", periods=5, tz="UTC")
+    columns = pd.Index(["GC=F", "EURUSD=X"])
+    config = dataclasses.replace(
+        ExecutionConfig(),
+        earnings_dates={"LULU": ["2024-03-21"]},
+        earnings_blackout_days=3,
+    )
+    assert not _earnings_blackout(index, columns, config).any()
+
+
+def test_the_blackout_is_skipped_entirely_when_off():
+    """None rather than an all-false array, so the engine can skip it."""
+    from cfdinvest.execution.engine import _earnings_blackout
+    from cfdinvest.execution import ExecutionConfig
+    import dataclasses
+
+    index = pd.date_range("2024-03-18", periods=5, tz="UTC")
+    columns = pd.Index(["LULU"])
+    dates = {"LULU": ["2024-03-21"]}
+
+    off = dataclasses.replace(
+        ExecutionConfig(), earnings_dates=dates, earnings_blackout_days=0
+    )
+    nothing_recorded = dataclasses.replace(
+        ExecutionConfig(), earnings_dates=None, earnings_blackout_days=3
+    )
+    assert _earnings_blackout(index, columns, off) is None
+    assert _earnings_blackout(index, columns, nothing_recorded) is None
+
+
+def test_fetching_omits_rather_than_blanks_a_ticker_it_cannot_read():
+    """A failed lookup and a genuine absence must stay distinguishable.
+
+    An index has no earnings; a share whose fetch failed might. Recording
+    the second as an empty list would make it permanently untradeable by a
+    rule that reads emptiness as "nothing scheduled".
+    """
+    from cfdinvest.ingestion import earnings as module
+
+    class Boom:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+        @property
+        def earnings_dates(self):
+            raise RuntimeError("no such symbol")
+
+    import sys
+    import types
+
+    stub = types.ModuleType("yfinance")
+    stub.Ticker = Boom
+    saved = sys.modules.get("yfinance")
+    sys.modules["yfinance"] = stub
+    try:
+        assert module.fetch_earnings_dates(["LULU", "NVDA"]) == {}
+    finally:
+        if saved is None:
+            sys.modules.pop("yfinance", None)
+        else:
+            sys.modules["yfinance"] = saved
+
+
+def test_the_blackout_closes_an_open_position_not_only_new_ones():
+    """M82: the blackout blocks entry but carries an existing position in.
+
+    A position opened a fortnight before a print is in exactly the same
+    danger as one opened the day before, and only one of those is prevented
+    by refusing new entries. Demonstrated on the real book -- Apple was held
+    at 194.10 units on 28, 29 and 30 October 2025 without the rule and flat
+    with it, having been opened before the window began -- and pinned here.
+    """
+    import dataclasses
+
+    import numpy as np
+
+    from cfdinvest.execution import ExecutionConfig, run_backtest
+    from cfdinvest.signals.frame import SignalFrame
+
+    analysis = _two_bar_market(periods=60)
+    columns = analysis.close.columns
+    calendar = analysis.calendar
+    signals = SignalFrame(
+        direction=pd.DataFrame("long", index=calendar, columns=columns),
+        size=pd.DataFrame(0.5, index=calendar, columns=columns),
+        confidence=pd.DataFrame(0.9, index=calendar, columns=columns),
+        reason=pd.DataFrame("test", index=calendar, columns=columns),
+    )
+
+    # A print in the middle of a stretch the signal wants held throughout,
+    # so any position in the window must have been opened before it.
+    reporting = calendar[40].date().isoformat()
+    config = dataclasses.replace(
+        ExecutionConfig(),
+        earnings_dates={str(columns[0]): [reporting]},
+        earnings_blackout_days=3,
+    )
+
+    without = run_backtest(signals, analysis, ExecutionConfig()).positions
+    with_rule = run_backtest(signals, analysis, config).positions
+
+    # Only the bars the window actually spans -- three *calendar* days
+    # before a Monday reaches back over a weekend, so the bar count varies.
+    stamp = pd.Timestamp(reporting, tz="UTC")
+    covered = calendar[
+        (calendar >= stamp - pd.Timedelta(days=3))
+        & (calendar <= stamp + pd.Timedelta(days=1))
+    ]
+    earlier = calendar[calendar < stamp - pd.Timedelta(days=3)]
+
+    assert (without.loc[covered, columns[0]] != 0).any(), (
+        "the fixture must hold through the window when the rule is off"
+    )
+    assert (with_rule.loc[earlier[-3:], columns[0]] != 0).any(), (
+        "the position must already be open before the window opens, or "
+        "this proves nothing about closing"
+    )
+    assert (with_rule.loc[covered, columns[0]] == 0).all(), (
+        "every bar in the window must be flat, including ones whose "
+        "position was opened before it"
     )

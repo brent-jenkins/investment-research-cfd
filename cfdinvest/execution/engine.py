@@ -247,6 +247,7 @@ def run_execution(signal_frame, analysis_frame, config):
     # its cooldown and quietly cuts the book from 3,383 trades to 171.
     bar_stamps = pd.DatetimeIndex(index).as_unit("ns").asi8.astype("float64")
     cooldown = max(int(getattr(config, "reentry_cooldown_days", 0) or 0), 0)
+    blackout = _earnings_blackout(index, columns, config)
     time_stop = getattr(config, "time_stop_days", None)
     time_stop = None if time_stop is None else max(int(time_stop), 0)
     time_stop_threshold = float(getattr(config, "time_stop_threshold", 0.0) or 0.0)
@@ -405,6 +406,13 @@ def run_execution(signal_frame, analysis_frame, config):
             closed_at = np.where(
                 (held != 0) & (new_held == 0), bar_stamps[bar], closed_at,
             )
+
+        if blackout is not None:
+            # No position may be open into a print. The rule closes as well
+            # as blocks: a position taken a fortnight ago is in exactly the
+            # same danger as one opened today, and only one of those is
+            # prevented by refusing new entries.
+            new_held = np.where(blackout[bar], 0, new_held)
 
         if time_stop is not None:
             # A position that has had long enough to work and has not is
@@ -656,6 +664,45 @@ def run_execution(signal_frame, analysis_frame, config):
         fx_open_series, fx_close_series, fx_rates[-1] if bars else None,
         financing_by_asset=financing_by_asset,
     )
+
+
+def _earnings_blackout(index, columns, config) -> np.ndarray | None:
+    """A ``bars x assets`` mask of sessions too close to a reporting date.
+
+    Pure. ``None`` when the rule is off or nothing is recorded, so the
+    engine skips the check entirely rather than carrying an all-false
+    array through every bar.
+
+    The window runs from ``earnings_blackout_days`` before the date up to
+    and including the session after it, because the reaction lands on the
+    session *following* the announcement -- most companies report after the
+    close, and a rule that reopened on the morning of the reaction would
+    take the gap it exists to avoid.
+    """
+    days = int(getattr(config, "earnings_blackout_days", 0) or 0)
+    recorded = getattr(config, "earnings_dates", None) or {}
+    if days <= 0 or not recorded:
+        return None
+
+    stamps = pd.DatetimeIndex(index)
+    mask = np.zeros((len(stamps), len(columns)), dtype=bool)
+    for position, ticker in enumerate(columns):
+        dates = recorded.get(str(ticker))
+        if not dates:
+            continue
+        for value in dates:
+            try:
+                when = pd.Timestamp(value)
+            except (TypeError, ValueError):
+                continue
+            if when.tzinfo is None:
+                when = when.tz_localize("UTC")
+            else:
+                when = when.tz_convert("UTC")
+            start = when - pd.Timedelta(days=days)
+            end = when + pd.Timedelta(days=1)
+            mask[:, position] |= (stamps >= start) & (stamps <= end)
+    return mask
 
 
 def _target_units(held, size_row, reference, equity, config, tradable):
