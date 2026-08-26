@@ -2168,3 +2168,142 @@ def test_an_unpriced_close_is_excluded_rather_than_counted_as_zero():
     assert s["unpriced"] == 1, "and it must not be silently dropped either"
     assert s["net_gbp"] == pytest.approx(4.0)
     assert s["losses"] == 0, "unpriced is not a loss"
+
+
+def test_a_frame_too_large_to_style_is_trimmed_rather_than_fatal():
+    """M143: a table that grows until it takes the page down.
+
+    The signal history reached 295,734 cells against a Styler ceiling of
+    262,144, and Streamlit does not degrade at that ceiling -- it raises,
+    inside st.dataframe, which took out the whole Signals page rather than
+    the one table. The history grows with every pipeline run, so any fixed
+    ceiling is reached eventually and raising the limit only postpones it.
+
+    Trimmed, and the trim is stated. A table silently showing 40% of the
+    rows reads as the whole of them, which is a worse failure than the
+    crash it replaces.
+    """
+    import numpy as np
+
+    from cfdinvest.ui import components as ui
+
+    columns = 6
+    rows = ui.STYLER_CELL_LIMIT // columns + 5_000
+    frame = pd.DataFrame(
+        np.zeros((rows, columns)), columns=[f"c{i}" for i in range(columns)]
+    )
+    assert frame.size > ui.STYLER_CELL_LIMIT, "the fixture must exceed the ceiling"
+
+    drawn: dict = {"frames": [], "notes": []}
+
+    class _Stub:
+        def dataframe(self, data, **kwargs):
+            # Styler or frame -- either way, count what it would render.
+            underlying = getattr(data, "data", data)
+            drawn["frames"].append(underlying)
+
+        def markdown(self, body, **kwargs):
+            drawn["notes"].append(str(body))
+
+        caption = markdown
+        info = markdown
+
+    ui.render_frame(_Stub(), frame)
+
+    assert drawn["frames"], "nothing was drawn at all"
+    rendered = drawn["frames"][-1]
+    assert rendered.size <= ui.STYLER_CELL_LIMIT, "still too large to style"
+    assert len(rendered) < rows, "nothing was trimmed"
+
+    # And it must say so.
+    said = " ".join(drawn["notes"])
+    assert f"{rows:,}" in said, "the true row count is not stated"
+    assert f"{len(rendered):,}" in said, "the shown row count is not stated"
+
+
+def test_a_frame_that_fits_is_not_trimmed_or_annotated():
+    """The guard must not narrate on every ordinary table."""
+    from cfdinvest.ui import components as ui
+
+    frame = pd.DataFrame({"a": range(50), "b": range(50)})
+    drawn: dict = {"frames": [], "notes": []}
+
+    class _Stub:
+        def dataframe(self, data, **kwargs):
+            drawn["frames"].append(getattr(data, "data", data))
+
+        def markdown(self, body, **kwargs):
+            drawn["notes"].append(str(body))
+
+        caption = markdown
+        info = markdown
+
+    ui.render_frame(_Stub(), frame)
+    assert len(drawn["frames"][-1]) == 50
+    assert not any("Showing the first" in note for note in drawn["notes"])
+
+
+def test_the_status_table_lists_every_job_the_daemon_runs():
+    """M144: a job running with nobody watching it.
+
+    Two statements of one fact. paper-book and advisor-alert ran on the box
+    every five minutes and appeared on no status page, so the forward record
+    looked stopped while it was working -- and the only way to find out
+    otherwise was to read the journal over SSH.
+
+    Asserted both ways: a job the daemon runs and the table omits is
+    unwatched, and a row for a job the daemon does not run is a promise the
+    system never keeps.
+    """
+    from cfdinvest.schedule import daemon
+    from cfdinvest.ui import vitals
+
+    listed = {name for name, _, _ in vitals.SCHEDULES}
+    assert listed == set(daemon.JOBS), (
+        f"unwatched: {sorted(set(daemon.JOBS) - listed)}; "
+        f"promised but never run: {sorted(listed - set(daemon.JOBS))}"
+    )
+
+
+def test_a_restart_does_not_make_every_job_due_at_once(tmp_path, monkeypatch):
+    """M145: the daemon forgetting what it ran.
+
+    ``last_run`` lived in a local variable, so a restart presented an empty
+    map to ``jobs_due`` and every daily job came due immediately. With a
+    deploy restarting the daemon, the pipeline fired on every push -- 62 runs
+    in two days, each writing a 69 MB analysis frame over a lake that had
+    not changed.
+    """
+    from cfdinvest.persist import scheduler_state
+    from cfdinvest.schedule import daemon
+
+    # Both seams, because reads and writes go through different names --
+    # load_scheduler_state resolves the path one way and write_scheduler_state
+    # another. Patching only the read seam sent writes to the real store and
+    # the test then passed on its own leftovers from an earlier run.
+    state_file = tmp_path / "state.json"
+    for name in ("get_scheduler_state_path", "ensure_scheduler_state"):
+        assert hasattr(scheduler_state, name), f"{name} is not the seam any more"
+        monkeypatch.setattr(
+            scheduler_state, name, lambda config=None, account=None: state_file
+        )
+
+    now = pd.Timestamp("2026-08-26T14:00:00Z")
+    # Nothing remembered: the daily jobs are due, which is right on a cold
+    # start and wrong on a restart twenty minutes after they ran.
+    assert "run-daily" in daemon.jobs_due(now, {})
+
+    scheduler_state.record_job("run-daily", pd.Timestamp("2026-08-26T03:05:00Z"))
+    scheduler_state.record_job("ingest-daily", pd.Timestamp("2026-08-26T03:00:00Z"))
+
+    remembered = scheduler_state.last_job_runs()
+    assert "run-daily" in remembered, "the job was not persisted"
+
+    # Seeded from disk, today's run is not owed again.
+    assert "run-daily" not in daemon.jobs_due(now, remembered)
+    assert "ingest-daily" not in daemon.jobs_due(now, remembered)
+
+    # And tomorrow it is owed once more -- this must not become a job that
+    # never runs again.
+    tomorrow = pd.Timestamp("2026-08-27T14:00:00Z")
+    assert "run-daily" in daemon.jobs_due(tomorrow, remembered)

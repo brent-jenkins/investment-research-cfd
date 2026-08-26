@@ -1215,6 +1215,17 @@ def style_states(frame: pd.DataFrame, mode: str = "dark"):
         return frame
 
 
+#: Cells a pandas Styler will render before Streamlit refuses.
+#:
+#: Streamlit's own default, restated here because the guard has to know it.
+#: Exceeding it does not degrade -- it raises, and the raise happens inside
+#: st.dataframe, so it takes down the whole page rather than the one table.
+#: The signal history reached 295,734 cells and crashed the Signals page
+#: entirely; a history that grows with every run will reach any fixed
+#: ceiling eventually, so the ceiling has to be handled rather than raised.
+STYLER_CELL_LIMIT = 262_144
+
+
 def render_frame(
     st,
     frame: pd.DataFrame,
@@ -1227,12 +1238,26 @@ def render_frame(
     ``height`` is omitted rather than passed as ``None``: Streamlit rejects a
     null height, and every caller that does not care would otherwise have to
     say so.
+
+    A frame too large for the Styler is trimmed to its leading rows and the
+    trim is stated. Callers already sort newest-first where recency is what
+    matters, so the leading rows are the ones worth keeping. Saying so is
+    the point: a table silently showing 40% of the data reads as the whole
+    of it, which is worse than the crash it replaces.
     """
     if frame is None or frame.empty:
         render_note(st, empty)
         return
 
     shown = for_display(frame)
+
+    trimmed = 0
+    columns = max(len(shown.columns), 1)
+    if len(shown) * columns > STYLER_CELL_LIMIT:
+        keep = max(STYLER_CELL_LIMIT // columns, 1)
+        trimmed = len(shown) - keep
+        shown = shown.head(keep)
+
     options: dict[str, Any] = {"width": "stretch"}
     if height is not None:
         options["height"] = height
@@ -1240,7 +1265,22 @@ def render_frame(
         options["column_config"] = column_config_for(st, shown)
     except Exception:  # noqa: BLE001 - formatting must never stop the table
         pass
-    st.dataframe(style_states(shown, theme.active_mode(st)), **options)
+
+    try:
+        st.dataframe(style_states(shown, theme.active_mode(st)), **options)
+    except Exception:  # noqa: BLE001 - a table must never take down a page
+        # Unstyled rather than absent. The state colours are a convenience;
+        # the numbers are the point, and losing the page loses both.
+        st.dataframe(shown, **options)
+
+    if trimmed:
+        render_note(
+            st,
+            f"Showing the first **{len(shown):,}** rows of "
+            f"**{len(shown) + trimmed:,}**. The rest are in the artefact "
+            "store — this table is capped so one large frame cannot take "
+            "the page down with it.",
+        )
 
 
 # --------------------------------------------------------------------------- #

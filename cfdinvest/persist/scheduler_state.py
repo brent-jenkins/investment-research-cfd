@@ -150,6 +150,33 @@ def update_last_run(
     )
 
 
+def record_job(
+    name: str, timestamp=None, *, config=None, account: str | None = None
+) -> dict[str, Any]:
+    """Record that one daemon job finished. Never raises.
+
+    Kept beside the pipeline's own timestamps rather than in a second file,
+    because "when did each job last run" is one question.
+
+    Persisted rather than held in memory, for two reasons. The dashboard
+    cannot see a daemon's local variable, so paper-book and advisor-alert
+    ran every five minutes and appeared on no status page -- the forward
+    record looked stopped while it was working. And a daemon that forgets on
+    restart re-runs everything the moment it comes back: the daily pipeline
+    fired on every deploy, 62 times in two days, each one writing a 69 MB
+    analysis frame for a lake that had not changed.
+    """
+    state = load_scheduler_state(config, account)
+    jobs = dict(state.get("jobs") or {})
+    jobs[str(name)] = _timestamp(timestamp or pd.Timestamp.now(tz="UTC"))
+    return _update({"jobs": jobs}, config, account)
+
+
+def last_job_runs(config=None, account: str | None = None) -> dict[str, Any]:
+    """When each job last ran, as ``jobs_due`` wants it. Never raises."""
+    return dict(load_scheduler_state(config, account).get("jobs") or {})
+
+
 def update_last_success(
     timestamp=None, *, run_id: str | None = None, duration: float | None = None,
     config=None, account: str | None = None,

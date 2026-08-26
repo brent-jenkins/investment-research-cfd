@@ -44,12 +44,22 @@ class JobRow:
 #: What each job is for, and how often it should happen. The cadences are
 #: read from the daemon rather than restated, so a schedule changed there
 #: cannot leave this page describing the old one.
+#: Every job, in the order the daemon runs them.
+#:
+#: This list and ``daemon.JOBS`` are two statements of the same fact, and a
+#: test fails the build when they disagree. They already had: paper-book and
+#: advisor-alert ran on the box every five minutes and appeared on no status
+#: page, so the forward record looked stopped while it was working. A job
+#: absent from this table is a job nobody is watching.
 SCHEDULES: tuple[tuple[str, str, str], ...] = (
     ("poll-live-quotes", "quotes", "Current price for every open position"),
+    ("advisor-alert", "cadence", "Compare the book against the newest prices"),
+    ("paper-book", "cadence", "Open and close the three forward arms"),
     ("ingest-daily", "daily", "Top up the lake from the vendors"),
     ("run-daily", "daily", "Signals, execution and P&L over the lake"),
     ("monitoring-snapshot", "after-run", "Operational health, recorded"),
     ("risk-snapshot", "after-run", "The book's risk, recorded"),
+    ("prune-runs", "after-run", "Bound the artefact store"),
 )
 
 
@@ -116,6 +126,25 @@ def job_report(
                 status = "pass" if age <= limit else "warning"
                 detail = (
                     f"Last quote {age:.0f} minutes ago."
+                    + ("" if status == "pass" else f" Expected within {limit:.0f}.")
+                )
+
+        elif kind == "cadence":
+            # Same cadence as the quotes, because the daemon queues them off
+            # the same tick -- but no "nothing is open" excuse. The paper
+            # book has work to do whether or not anything is currently held:
+            # deciding not to open is a decision, and its absence from this
+            # table is what made the forward record look stopped.
+            schedule = f"Every {interval} minutes"
+            next_due = None if last is None else last + pd.Timedelta(minutes=interval)
+            if last is None:
+                status, detail = "unchecked", "Has not run yet."
+            else:
+                age = (moment - last).total_seconds() / 60.0
+                limit = interval * 3
+                status = "pass" if age <= limit else "warning"
+                detail = (
+                    f"Last ran {age:.0f} minutes ago."
                     + ("" if status == "pass" else f" Expected within {limit:.0f}.")
                 )
 
@@ -219,4 +248,23 @@ def gather_evidence(config=None, account: str | None = None) -> dict[str, Any]:
     guarded("run-daily", newest_run)
     guarded("monitoring-snapshot", newest_monitoring)
     guarded("risk-snapshot", newest_risk)
+
+    # The rest have no artefact of their own to date. The paper book writes a
+    # file only when it opens something, and "decided not to open" is a run
+    # that happened -- dating it by its output would report the job as never
+    # having run for as long as it correctly declined to trade.
+    #
+    # So the daemon's own record is the evidence, which is why it is now
+    # persisted rather than held in a local variable.
+    def recorded(job: str):
+        def read():
+            from cfdinvest.persist import scheduler_state
+
+            return (scheduler_state.last_job_runs(config, account) or {}).get(job)
+
+        return read
+
+    for job in evidence:
+        if evidence.get(job) is None:
+            guarded(job, recorded(job))
     return evidence

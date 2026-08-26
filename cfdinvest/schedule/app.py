@@ -756,8 +756,20 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
 
     from cfdinvest.schedule import daemon as daemon_module
 
-    last_run: dict[str, object] = {}
+    from cfdinvest.persist import scheduler_state
+
     account = getattr(args, "account", None)
+
+    # Seeded from disk, not empty. An empty map makes every job due at once,
+    # so a restart re-ran the daily pipeline immediately -- and with a deploy
+    # restarting the daemon, that happened on every push.
+    try:
+        last_run: dict[str, object] = scheduler_state.last_job_runs(
+            app_config, account
+        )
+    except Exception as error:  # noqa: BLE001 - a daemon must still start
+        logger.warning("Could not read what ran last: %s", error)
+        last_run = {}
     ticks = 0
 
     def run_job(name: str) -> None:
@@ -815,7 +827,14 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
                 # time must not be retried every tick -- that is a hot loop
                 # against someone else's server, and the failure is already
                 # in the log and the monitoring snapshot.
-                last_run[name] = pd.Timestamp.now(tz="UTC")
+                stamp = pd.Timestamp.now(tz="UTC")
+                last_run[name] = stamp
+                try:
+                    scheduler_state.record_job(
+                        name, stamp, config=app_config, account=account
+                    )
+                except Exception as error:  # noqa: BLE001 - bookkeeping only
+                    logger.warning("Could not record %s: %s", name, error)
             ticks += 1
             if args.max_ticks is not None and ticks >= args.max_ticks:
                 break
