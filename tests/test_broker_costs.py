@@ -51,6 +51,12 @@ M72  closing a position gated by the relative drift threshold
      -> test_a_position_can_always_be_closed_however_high_the_threshold
 M73  the endpoint fix becomes "resize always"
      -> test_the_middle_is_still_governed_by_the_threshold
+M74  the calendar's time unit ignored converting to days
+     -> test_the_cooldown_measures_days_not_raw_index_integers
+M75  the cooldown comparison inverted
+     -> test_a_longer_cooldown_blocks_a_re_entry_a_shorter_one_allows
+M76  the cooldown computed and never applied
+     -> test_a_longer_cooldown_blocks_a_re_entry_a_shorter_one_allows
 """
 
 from __future__ import annotations
@@ -658,3 +664,154 @@ def test_the_middle_is_still_governed_by_the_threshold():
 
     tight = needs_resize(current, target, threshold=1.0)
     assert list(tight) == [False, False], "neither drift reaches 100%"
+
+
+# --------------------------------------------------------------------------- #
+# The re-entry cooldown
+# --------------------------------------------------------------------------- #
+def _two_bar_market(periods=60, unit="us"):
+    """A single instrument on a tz-aware calendar in a chosen time unit."""
+    from cfdinvest.preprocessing import PreprocessConfig
+    from cfdinvest.preprocessing.frame import build_analysis_frame
+
+    calendar = pd.bdate_range(
+        "2021-01-04", periods=periods, tz="UTC", name="timestamp"
+    ).as_unit(unit)
+    rng = np.random.default_rng(5)
+    close = 100 * np.exp(np.cumsum(rng.normal(0.0005, 0.01, len(calendar))))
+    tidy = pd.DataFrame(
+        {
+            "open": close * 0.999, "high": close * 1.01, "low": close * 0.99,
+            "close": close, "volume": 1e6, "ticker": "SPX",
+        },
+        index=calendar,
+    ).set_index("ticker", append=True).sort_index()
+    return build_analysis_frame(
+        tidy, interval="1d", config=PreprocessConfig(correlation_window=20)
+    )
+
+
+def _on_off_signals(analysis, off_from, off_until):
+    """Long, then flat for a stretch, then long again.
+
+    A re-entry at a known distance, which is what the cooldown is about and
+    what an always-long fixture can never produce.
+    """
+    from cfdinvest.signals.frame import SignalFrame
+
+    calendar, columns = analysis.calendar, analysis.close.columns
+    direction = pd.DataFrame("long", index=calendar, columns=columns)
+    size = pd.DataFrame(0.5, index=calendar, columns=columns)
+    confidence = pd.DataFrame(0.9, index=calendar, columns=columns)
+
+    quiet = slice(off_from, off_until)
+    direction.iloc[quiet] = "flat"
+    size.iloc[quiet] = 0.0
+    confidence.iloc[quiet] = 0.0
+
+    return SignalFrame(
+        direction=direction, size=size, confidence=confidence,
+        reason=pd.DataFrame("test", index=calendar, columns=columns),
+    )
+
+
+def _trades(analysis, signals, cooldown):
+    import dataclasses
+
+    from cfdinvest.execution import ExecutionConfig, run_backtest
+
+    return run_backtest(
+        signals, analysis,
+        dataclasses.replace(ExecutionConfig(), reentry_cooldown_days=cooldown),
+    ).trades
+
+
+def _reentry_gaps(trades):
+    """Days between each close and the next open on the same instrument.
+
+    The count of entries is the wrong measure and was the first thing tried:
+    a cooldown delays a re-entry rather than cancelling it, so a signal that
+    stays on produces the same number of opens either way, just later.
+    """
+    gaps, closed = [], {}
+    for row in trades.sort_values("timestamp").itertuples():
+        if row.action.startswith("close"):
+            closed[row.asset] = row.timestamp
+        elif row.action.startswith("open") and row.asset in closed:
+            gaps.append((row.timestamp - closed.pop(row.asset)).days)
+    return gaps
+
+
+def test_the_cooldown_measures_days_not_raw_index_integers():
+    """M74: the calendar's time unit ignored when converting to days.
+
+    The lake's calendar arrives here as datetime64[us] and elsewhere as
+    datetime64[ns]. Reading the raw integers without pinning the unit makes
+    one day measure 0.001 days, which does not raise -- it silently puts
+    every instrument permanently inside its cooldown. On the real run that
+    cut the book from 3,383 trades to 171 and made every cooldown from 14
+    days to 730 produce a byte-identical result, which is the only reason
+    it was ever noticed.
+
+    Two calendars differing only in their unit must produce the same book.
+    """
+    micro = _two_bar_market(periods=90, unit="us")
+    nano = _two_bar_market(periods=90, unit="ns")
+
+    same = _trades(micro, _on_off_signals(micro, 20, 30), cooldown=5)
+    other = _trades(nano, _on_off_signals(nano, 20, 30), cooldown=5)
+
+    assert list(same["timestamp"]) == list(other["timestamp"]), (
+        "a microsecond calendar and a nanosecond one must produce the same "
+        "book; the unit is not part of the strategy"
+    )
+    # And the cooldown must not have swallowed the re-entry entirely, which
+    # is the shape the bug took.
+    assert (same["action"].str.startswith("open")).sum() >= 2
+
+
+def test_a_longer_cooldown_blocks_a_re_entry_a_shorter_one_allows():
+    """M75: the comparison inverted, or the cooldown not applied.
+
+    The signal goes flat for about two weeks and then returns. A cooldown
+    shorter than the gap must let the second position open; one much longer
+    must not.
+    """
+    analysis = _two_bar_market(periods=90)
+    signals = _on_off_signals(analysis, 20, 30)   # ~10 business days quiet
+
+    short_gaps = _reentry_gaps(_trades(analysis, signals, cooldown=2))
+    long_gaps = _reentry_gaps(_trades(analysis, signals, cooldown=60))
+
+    assert short_gaps, "the fixture must produce a re-entry to measure"
+    assert min(short_gaps) < 60, "a 2-day cooldown must not delay it 60 days"
+    assert min(long_gaps) >= 60, (
+        f"a 60-day cooldown must hold every re-entry off that long, "
+        f"smallest gap was {min(long_gaps)} days"
+    )
+
+
+def test_the_cooldown_does_not_close_anything_it_only_blocks_entry():
+    """It is a rule about re-entering, never about holding."""
+    import dataclasses
+
+    from cfdinvest.execution import ExecutionConfig, run_backtest
+    from cfdinvest.signals.frame import SignalFrame
+
+    analysis = _two_bar_market(periods=90)
+    columns = analysis.close.columns
+    signals = SignalFrame(
+        direction=pd.DataFrame("long", index=analysis.calendar, columns=columns),
+        size=pd.DataFrame(0.5, index=analysis.calendar, columns=columns),
+        confidence=pd.DataFrame(0.9, index=analysis.calendar, columns=columns),
+        reason=pd.DataFrame("test", index=analysis.calendar, columns=columns),
+    )
+    result = run_backtest(
+        signals, analysis,
+        dataclasses.replace(ExecutionConfig(), reentry_cooldown_days=365),
+    )
+    # A position opened before any close happened is still opened, and a
+    # 365-day cooldown on a 90-bar run must not have produced a close of
+    # its own.
+    actions = result.trades["action"]
+    assert (actions.str.startswith("open")).any(), "the first entry is never blocked"

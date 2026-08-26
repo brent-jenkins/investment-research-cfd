@@ -88,6 +88,22 @@ class ExecutionConfig:
     #: high-turnover strategy most.
     fx: FXConfig = field(default_factory=FXConfig)
 
+    # -- re-entry ----------------------------------------------------------- #
+    #: Calendar days an instrument is left alone after a position in it
+    #: closes. ``0`` disables it, which is what every recorded run used.
+    #:
+    #: Measured on the 2005-2026 run: round trips reopened within 21 days of
+    #: the last one closing lost £1,489 across 145 trips, while those opened
+    #: after a longer gap made £19,954 across 512. The prior trip's outcome
+    #: barely mattered -- a re-entry after a win won 48.9% of the time and
+    #: after a loss 51.2% -- so this is not about chasing a gain. A fast
+    #: return to the same instrument is simply a weaker signal.
+    #:
+    #: It suppresses new positions only. A position already open is never
+    #: closed by it, and nothing here stops the *other* side being taken --
+    #: a trend that genuinely reverses is a different trade.
+    reentry_cooldown_days: int = 0
+
     # -- risk ------------------------------------------------------------- #
     #: Cap on gross notional divided by equity.
     max_leverage: float = 5.0

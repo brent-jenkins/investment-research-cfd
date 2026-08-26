@@ -232,6 +232,22 @@ def run_execution(signal_frame, analysis_frame, config):
     # a median of five days is most of them. Accumulated per asset here so
     # the per-instrument attribution can sum to the run's actual P&L.
     financing_by_asset = np.zeros(assets, dtype="float64")
+    # When each instrument was last closed out, for the re-entry cooldown.
+    # NaT until something has been closed, so nothing is suppressed before
+    # there is anything to be suppressed by.
+    # Held as integer nanoseconds rather than datetime64: the index is
+    # tz-aware and numpy has no representation for that, so converting each
+    # bar would warn on every iteration and silently drop the zone. NaN
+    # means nothing has closed yet.
+    closed_at = np.full(assets, np.nan, dtype="float64")
+    # Normalised to nanoseconds explicitly. The lake's calendar arrives as
+    # datetime64[us] here and datetime64[ns] elsewhere, and reading the raw
+    # integers without pinning the unit makes a day measure 0.001 days --
+    # which does not fail, it just puts every instrument permanently inside
+    # its cooldown and quietly cuts the book from 3,383 trades to 171.
+    bar_stamps = pd.DatetimeIndex(index).as_unit("ns").asi8.astype("float64")
+    cooldown = max(int(getattr(config, "reentry_cooldown_days", 0) or 0), 0)
+    NANOS_PER_DAY = 86_400_000_000_000.0
 
     close = fills_module.convert_prices(
         _as_matrix(close_panel, index, columns), fx_rates
@@ -357,6 +373,25 @@ def run_execution(signal_frame, analysis_frame, config):
         new_held = state_module.next_direction(
             held, desired, size[bar], confidence[bar], config.thresholds
         )
+
+        if cooldown:
+            # Suppress a *new* position taken too soon after the last one in
+            # the same instrument closed. Positions already open are left
+            # alone: this is a rule about re-entering, not about holding.
+            since = (bar_stamps[bar] - closed_at) / NANOS_PER_DAY
+            blocked = (
+                (held == 0) & (new_held != 0)
+                & np.isfinite(since) & (since < cooldown)
+            )
+            new_held = np.where(blocked, 0, new_held)
+
+        if cooldown:
+            # Stamp the close so the next bar can measure the gap. Done
+            # after the suppression above, so an entry the cooldown just
+            # blocked does not restart its own clock.
+            closed_at = np.where(
+                (held != 0) & (new_held == 0), bar_stamps[bar], closed_at,
+            )
 
         target_units = _target_units(
             new_held, size[bar], reference, equity, config, tradable
