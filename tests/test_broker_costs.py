@@ -1212,3 +1212,97 @@ def test_every_strategy_field_is_present_in_the_shipped_config():
         assert mentioned, (
             f"{field} is a strategy setting that config.toml never mentions"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Volume: conviction, which turns out to mean range rather than direction
+# --------------------------------------------------------------------------- #
+def test_heavy_volume_shrinks_a_position_and_never_grows_one():
+    """M108: the volume filter able to size up.
+
+    Volume against the next day's range measured r=+0.177 at t=+39.03 on
+    shares -- the strongest thing in this project. Against the next
+    *return* it measured r=-0.013. So a heavy session is a reason to hold
+    less, never a reason to hold more or to pick a side, and the module's
+    standing promise that no filter returns a multiplier above 1.0 is what
+    keeps that honest.
+    """
+    from cfdinvest.signals.filters import volume_filter
+
+    index = pd.date_range("2024-01-01", periods=30, tz="UTC")
+    columns = pd.Index(["AAA"])
+    # Twenty-five ordinary sessions, then one at three times normal.
+    volume = pd.DataFrame(
+        {"AAA": [1e6] * 25 + [3e6, 1e6, 1e6, 5e6, 1e6]}, index=index
+    )
+    outcome = volume_filter(volume, index, columns)
+    multiplier = outcome.long_multiplier["AAA"]
+
+    assert multiplier.iloc[24] == pytest.approx(1.0), "a quiet session is untouched"
+    assert multiplier.iloc[25] == pytest.approx(0.6), "three times normal shrinks"
+    assert multiplier.iloc[28] == pytest.approx(0.6), "so does five times"
+    assert outcome.long_multiplier.to_numpy().max() <= 1.0
+    assert outcome.short_multiplier.to_numpy().max() <= 1.0
+
+
+def test_it_shrinks_both_directions_equally():
+    """A wider range is a wider range whichever way the position points.
+
+    Every other filter here treats the two sides differently, and for good
+    reasons. This one must not: it is a statement about magnitude.
+    """
+    from cfdinvest.signals.filters import volume_filter
+
+    index = pd.date_range("2024-01-01", periods=30, tz="UTC")
+    columns = pd.Index(["AAA"])
+    volume = pd.DataFrame({"AAA": [1e6] * 28 + [4e6, 1e6]}, index=index)
+    outcome = volume_filter(volume, index, columns)
+
+    assert outcome.long_multiplier.equals(outcome.short_multiplier)
+    assert outcome.allow_long.to_numpy().all(), "it shrinks, it does not forbid"
+    assert outcome.allow_short.to_numpy().all()
+
+
+def test_missing_volume_is_not_read_as_a_quiet_market():
+    """M109: an instrument with no volume data sized as though calm.
+
+    Nine of the forty-one instruments report no volume -- index CFDs whose
+    vendor does not supply it. Treating a gap in the feed as evidence of
+    calm trading would size *up* into precisely the unknown.
+    """
+    from cfdinvest.signals.filters import volume_filter
+
+    index = pd.date_range("2024-01-01", periods=30, tz="UTC")
+    columns = pd.Index(["AAA"])
+
+    assert volume_filter(None, index, columns).long_multiplier.to_numpy().min() == 1.0
+    assert (
+        volume_filter(pd.DataFrame(), index, columns)
+        .long_multiplier.to_numpy().min() == 1.0
+    )
+
+    # And a column that is entirely NaN stays at full size rather than
+    # being penalised for the vendor's silence.
+    blank = pd.DataFrame({"AAA": [np.nan] * 30}, index=index)
+    assert volume_filter(blank, index, columns).long_multiplier.to_numpy().min() == 1.0
+
+
+def test_volume_is_measured_against_the_instrument_own_normal():
+    """A company whose turnover doubled compares with itself, not with Apple."""
+    from cfdinvest.signals.filters import volume_filter
+
+    index = pd.date_range("2024-01-01", periods=30, tz="UTC")
+    columns = pd.Index(["SMALL", "LARGE"])
+    volume = pd.DataFrame(
+        {
+            "SMALL": [1_000] * 25 + [3_000, 1_000, 1_000, 1_000, 1_000],
+            "LARGE": [50_000_000] * 30,
+        },
+        index=index,
+    )
+    outcome = volume_filter(volume, index, columns)
+
+    # The small one traded three times its own normal and is shrunk; the
+    # large one traded vastly more in absolute terms and is not.
+    assert outcome.long_multiplier["SMALL"].iloc[25] == pytest.approx(0.6)
+    assert outcome.long_multiplier["LARGE"].iloc[25] == pytest.approx(1.0)

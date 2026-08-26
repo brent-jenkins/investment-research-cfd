@@ -237,6 +237,18 @@ class StrategyConfig:
     #: Days either side of a reporting date to hold no position. ``0`` off.
     earnings_blackout_days: int = 0
 
+    # -- volume ------------------------------------------------------------- #
+    #: Shrink a position when volume is unusually heavy. Volume against the
+    #: next day's range measured r=+0.177 at t=+39.03 on shares and +24.06
+    #: on indices, monotone across every decile. It is the strongest signal
+    #: measured in this project and the only risk signal that works on
+    #: indices, which file nothing with any regulator.
+    use_volume: bool = False
+    #: Multiples of the instrument's own 20-day median that count as heavy.
+    volume_heavy_ratio: float = 1.5
+    #: What a heavy session shrinks the next position to.
+    volume_heavy_multiplier: float = 0.6
+
     # -- currency ----------------------------------------------------------- #
     #: Whether foreign instruments are converted at all. Off, every rate
     #: resolves to 1.0 and a $150 share is marked at £150.

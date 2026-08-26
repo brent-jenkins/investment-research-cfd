@@ -384,7 +384,11 @@ def _backtest_config(args, app_config) -> BacktestConfig:
         end=args.end,
         execution=_execution_config(tickers, app_config.strategy),
         signal=dataclasses.replace(
-            SignalConfig(), regime_mode=app_config.strategy.regime_mode
+            SignalConfig(),
+            regime_mode=app_config.strategy.regime_mode,
+            use_volume=app_config.strategy.use_volume,
+            volume_heavy_ratio=app_config.strategy.volume_heavy_ratio,
+            volume_heavy_multiplier=app_config.strategy.volume_heavy_multiplier,
         ),
     )
 

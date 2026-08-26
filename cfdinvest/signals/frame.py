@@ -85,6 +85,13 @@ class SignalConfig:
     #: regime is instead, keeping the engine's own ranking rather than
     #: discarding it at a boundary.
     regime_mode: str = "gate"
+    #: Shrink a position when volume is unusually heavy. Volume against the
+    #: next day's range measured r=+0.177 at t=+39.03 on shares and +24.06
+    #: on indices -- the strongest signal in this project by a distance, and
+    #: the only risk signal that works on indices, which file nothing.
+    use_volume: bool = False
+    volume_heavy_ratio: float = 1.5
+    volume_heavy_multiplier: float = 0.6
     long_tilts: dict[str, float] | None = None
     short_tilts: dict[str, float] | None = None
     long_regimes_by_class: dict[str, frozenset[str]] | None = None
@@ -491,4 +498,18 @@ def _build_filters(analysis_frame, regime_frame, settings, index, columns):
         block_equity_longs_in_contraction=settings.block_equity_longs_in_contraction,
     )
 
-    return filters_module.combine_outcomes(regime, correlation, macro)
+    composed = [regime, correlation, macro]
+    if settings.use_volume:
+        # Composed last and like any other filter: permissions AND, and
+        # multipliers multiply. It can only ever shrink, which is what the
+        # measurement supports -- heavy volume predicts a wider range at
+        # t=+39, and the next return at r=-0.013, which is nothing.
+        composed.append(filters_module.volume_filter(
+            (getattr(analysis_frame, "prices", {}) or {}).get("volume"),
+            index,
+            columns,
+            heavy_ratio=settings.volume_heavy_ratio,
+            heavy_multiplier=settings.volume_heavy_multiplier,
+        ))
+
+    return filters_module.combine_outcomes(*composed)

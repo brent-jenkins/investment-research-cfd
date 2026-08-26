@@ -202,6 +202,22 @@ exposure_per_unit_size = 1.0  # tested better: 4.0
 # mean hold is 2.5 days against a quarterly event.
 earnings_blackout_days = 0
 
+# Shrink a position when the instrument traded unusually heavily. Volume
+# against the next day's range measured r=+0.177 at t=+39.03 on shares and
+# +24.06 on indices, monotone across all ten deciles -- the quietest fifth of
+# share sessions is followed by a 2.28% range and the heaviest by 3.41%.
+#
+# It shrinks and never grows, because it says nothing about direction: volume
+# against the next return is r=-0.013, and a move up on heavy volume is
+# followed by *worse* returns than the same move on light volume, so the
+# intuition that conviction persists is backwards.
+#
+# The only risk signal here that works on indices, which file nothing with
+# any regulator.
+use_volume = false            # measured, not yet enabled
+volume_heavy_ratio = 1.5      # multiples of the 20-day median
+volume_heavy_multiplier = 0.6
+
 # Currency. With this off every rate resolves to 1.0 and a $150 share is
 # marked at £150.
 fx_enabled = true

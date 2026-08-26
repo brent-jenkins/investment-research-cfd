@@ -45,6 +45,7 @@ __all__ = [
     "classify_assets",
     "permissive_outcome",
     "regime_filter",
+    "volume_filter",
     "correlation_filter",
     "macro_filter",
     "diversification_multiplier",
@@ -289,6 +290,77 @@ def regime_filter(
             "regime_blocks_short": ~allow_short,
             "high_volatility": high_volatility,
         },
+    )
+
+
+def volume_filter(
+    volume: pd.DataFrame | None,
+    index: pd.Index,
+    columns: pd.Index,
+    *,
+    window: int = 20,
+    heavy_ratio: float = 1.5,
+    heavy_multiplier: float = 0.6,
+    quiet_ratio: float = 0.8,
+) -> FilterOutcome:
+    """Shrink a position when trading is unusually heavy. Pure.
+
+    Volume is the conviction behind a price -- how much money was willing to
+    take the other side -- and it is the best predictor of the next day's
+    range this project has measured, by a distance:
+
+        shares    volume ratio -> next day's range   r=+0.177  t=+39.03
+        indices   volume ratio -> next day's range   r=+0.168  t=+24.06
+
+    Monotone across every decile: the quietest fifth of share sessions is
+    followed by a 2.28% range and the heaviest by 3.41%. For comparison the
+    filing-rate signal, the next best thing here, measured t=+5.13.
+
+    What it does **not** do is say which way. Volume against the next
+    return is r=-0.013 -- detectable on 47,000 observations and worth
+    nothing. And a move up on heavy volume is followed by *worse* returns
+    than the same move on light volume (-0.133%, t=-2.58), so the intuition
+    that conviction persists is not merely unsupported, it is backwards.
+
+    So this shrinks and never grows. Heavy volume means a wider range is
+    coming, which is a reason to hold less of something, not a reason to
+    hold more of it or to pick a side.
+
+    Measured against each instrument's own recent median, so a company
+    whose turnover has doubled over a decade compares with itself rather
+    than with Apple.
+
+    Unlike the other filters here it applies equally to both directions:
+    a wider range is a wider range whichever way the position points.
+    """
+    if not 0.0 <= heavy_multiplier <= 1.0:
+        raise ValueError(
+            f"heavy_multiplier must be in [0, 1], got {heavy_multiplier}"
+        )
+
+    ones = pd.DataFrame(1.0, index=index, columns=columns)
+    if volume is None or getattr(volume, "empty", True):
+        # No volume is not quiet trading. An index CFD whose vendor reports
+        # nothing must not be sized as though it were calm.
+        return permissive_outcome(index, columns)
+
+    aligned = volume.reindex(index=index, columns=columns)
+    typical = aligned.rolling(window, min_periods=max(window // 2, 2)).median()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = aligned / typical.replace(0.0, np.nan)
+
+    heavy = ratio > heavy_ratio
+    multiplier = ones.mask(heavy, heavy_multiplier)
+    # Anything unmeasurable stays at full size rather than being penalised
+    # for a gap in the data.
+    multiplier = multiplier.where(ratio.notna(), 1.0)
+
+    return FilterOutcome(
+        allow_long=pd.DataFrame(True, index=index, columns=columns),
+        allow_short=pd.DataFrame(True, index=index, columns=columns),
+        long_multiplier=multiplier,
+        short_multiplier=multiplier,
+        flags={"heavy_volume": heavy.fillna(False)},
     )
 
 
