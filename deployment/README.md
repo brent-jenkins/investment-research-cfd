@@ -215,3 +215,74 @@ Mutation-checked: putting a real password in the env example, inlining the
 bcrypt hash in the Caddyfile, binding `0.0.0.0`, ignoring the resolved account
 in `account_root`, dropping the account from the run readers or from the cache
 key, and dropping the account from email subjects each make the suite fail.
+
+---
+
+## Deploying
+
+A push to `main` deploys. GitHub posts to `https://cfd.example.com/webhook/`,
+Caddy proxies it to a loopback listener, the listener checks the HMAC and
+writes a request file, and a separate root unit does the work.
+
+This exists because of a specific failure. On 2026-08-25 the code was copied
+to the server and the services were not restarted. A resident daemon went on
+executing the modules it had imported at start-up, so a change made at 21:47
+was still not running at 08:00 the next morning — and the run recorded
+`fx_enabled=false` in its own metadata, where nobody looked. **Copying files
+is not deploying.** The deploy always restarts, and then checks what it
+produced.
+
+### The pieces
+
+| | |
+| --- | --- |
+| `cfdinvest-webhook.service` | Unprivileged, confined, loopback 8602. Verifies the signature, writes `/run/cfdinvest/deploy.request`, and nothing else. |
+| `cfdinvest-deploy.path` | Watches that file. |
+| `cfdinvest-deploy.service` | Root, oneshot. Runs `deploy.sh`. Started by the watcher and by nothing else. |
+
+The split is the point. The other two apps on this machine run their listeners
+as root because each spawns its own deploy script; a process reachable from
+the internet that runs a shell as root is one signature-check bug away from
+being a shell on the box. Here the reachable half holds no privilege, and the
+privileged half is unreachable — it takes no input and reads nothing from the
+request but the fact that it changed.
+
+It also means `deploy.sh` can restart the listener as its final step without
+killing itself, so `KillMode=process` is not needed. The other two need it,
+and that bug was found the hard way.
+
+### What deploy.sh does
+
+Fetches and hard-resets to `origin/main`; reinstalls only if `pyproject.toml`
+moved; installs `config/t212_rules.toml` to `~/.config/cfdinvest/` if it
+differs; restarts `cfdinvest` and `cfdinvest-dashboard`; then verifies both
+units are active, the dashboard answers 200, and — the check that would have
+caught the incident above — reads the strategy settings back **out of the
+running process** rather than off the disk.
+
+### One-time setup
+
+1. **Deploy key.** `/root/.ssh/id_ed25519_cfdinvest`, with a `github-cfdinvest`
+   alias in `/root/.ssh/config` so the remote URL names that key and no other.
+   The public half goes in the repository's *Deploy keys*, read-only. Per
+   repository, never shared with the other apps.
+2. **Webhook secret.** `CFD_GITHUB_WEBHOOK_SECRET` in `/etc/cfdinvest/env`.
+   This repository's own — deliberately not the `GITHUB_WEBHOOK_SECRET` the
+   other two share, because one compromise reaching all three services is a
+   bad trade for saving a line.
+3. **The webhook.** Repository settings → Webhooks → payload URL
+   `https://cfd.example.com/webhook/`, content type `application/json`, secret
+   as above, "Just the push event".
+
+### Checking it
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://cfd.example.com/webhook/    # 200
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -d '{}' \
+  https://cfd.example.com/webhook/                                           # 401
+journalctl -u cfdinvest-webhook -n 50
+journalctl -t cfdinvest-deploy -n 100
+```
+
+An unsigned POST must return 401. If it returns anything else, stop and fix
+that before pushing anything.
