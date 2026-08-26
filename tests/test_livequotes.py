@@ -420,15 +420,32 @@ def test_every_configured_instrument_is_classified():
     assert not t212_instruments.unmapped(universe)
 
 
-def test_the_only_untradable_instrument_is_the_one_we_keep_on_purpose():
-    """The VIX earns its place as a regime input, not as a trade."""
+def test_every_instrument_in_the_universe_can_actually_be_traded():
+    """M148: an untradable name in a universe that is now all tradable.
+
+    ^VIX used to sit here on purpose, as a regime input rather than a
+    trade. It left when the engine moved to hourly bars: Yahoo serves only
+    about sixty days of hourly VIX against two years for everything else,
+    so it would have been a column of holes in a panel whose density is the
+    whole reason the universe was narrowed.
+
+    Nothing was lost with it. The volatility regime is computed from the
+    instruments' own realised volatility and ATR -- see
+    ``regimes.volatility.classify_volatility``, which takes price panels and
+    never reads the VIX -- and FRED's VIXCLS remains available to the macro
+    classifier. Measured after the change: 26,268 signal reasons still name
+    a volatility regime.
+
+    So the universe is now entirely tradable, and this asserts that rather
+    than carrying an exception nobody needs.
+    """
     from cfdinvest.config import load_config
 
     universe = list(load_config().market.tickers)
     untradable = [
         t for t in universe if not t212_instruments.mapping_for(t).tradable
     ]
-    assert untradable == ["^VIX"]
+    assert untradable == [], f"cannot be traded on Trading 212: {untradable}"
 
 
 def test_an_untradable_instrument_is_never_given_a_position():

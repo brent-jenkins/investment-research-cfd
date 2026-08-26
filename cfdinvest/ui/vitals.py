@@ -54,6 +54,8 @@ class JobRow:
 SCHEDULES: tuple[tuple[str, str, str], ...] = (
     ("poll-live-quotes", "quotes", "Current price for every open position"),
     ("advisor-alert", "cadence", "Compare the book against the newest prices"),
+    ("ingest-intraday", "session", "Keep the hourly bars current while open"),
+    ("run-intraday", "session", "Fresh signals every quarter hour while open"),
     ("paper-book", "cadence", "Open and close the three forward arms"),
     ("ingest-daily", "daily", "Top up the lake from the vendors"),
     ("run-daily", "daily", "Signals, execution and P&L over the lake"),
@@ -86,6 +88,7 @@ def job_report(
     *,
     now=None,
     quotes_expected: bool = True,
+    session_open: bool = True,
 ) -> list[JobRow]:
     """One row per scheduled job. Pure.
 
@@ -96,6 +99,11 @@ def job_report(
     ``quotes_expected`` is ``False`` when no position is confirmed open. The
     poller has nothing to price then, so silence is correct and reporting it
     overdue would train you to ignore this table.
+
+    ``session_open`` is ``False`` outside market hours. The intraday jobs run
+    only while a market is open, so an overnight gap is the system working
+    and calling it a warning would cry wolf every morning. Passed in rather
+    than looked up, so this function stays pure.
     """
     from cfdinvest.schedule import daemon
 
@@ -128,6 +136,31 @@ def job_report(
                     f"Last quote {age:.0f} minutes ago."
                     + ("" if status == "pass" else f" Expected within {limit:.0f}.")
                 )
+
+        elif kind == "session":
+            # Only while a market is open, so silence overnight is correct
+            # rather than a fault. Saying so matters: a row reading "last ran
+            # 14 hours ago" at 06:00 is a working system, and a status page
+            # that called that a warning would be crying wolf every morning.
+            from cfdinvest.schedule import daemon as daemon_module
+
+            every = daemon_module.INTRADAY_MINUTES
+            schedule = f"Every {every} minutes while open"
+            next_due = None
+            if last is None:
+                status, detail = "unchecked", "Has not run yet."
+            else:
+                age = (moment - last).total_seconds() / 60.0
+                if not session_open:
+                    status = "pass"
+                    detail = f"Markets closed. Last ran {components_age(moment, last)}."
+                else:
+                    limit = every * 3
+                    status = "pass" if age <= limit else "warning"
+                    detail = (
+                        f"Last ran {age:.0f} minutes ago."
+                        + ("" if status == "pass" else f" Expected within {limit:.0f}.")
+                    )
 
         elif kind == "cadence":
             # Same cadence as the quotes, because the daemon queues them off

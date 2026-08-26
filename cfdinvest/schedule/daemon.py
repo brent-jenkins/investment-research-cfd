@@ -41,14 +41,35 @@ QUOTE_INTERVAL_MINUTES = 5
 
 #: Daily, in UTC, and in this order. The gap is deliberate: the pipeline must
 #: read a lake that ingestion has finished writing.
+#:
+#: These remain even though the engine now runs on hourly bars, because they
+#: do something the intraday pass does not: top up the full history and
+#: refresh the macro series. They are the once-a-day baseline, not the
+#: trading cadence.
 INGEST_AT_UTC = (3, 0)
 RUN_AT_UTC = (3, 5)
+
+#: How often the lake and the signals are refreshed while a market is open.
+#:
+#: A daily pipeline on daily bars gave one decision per instrument per
+#: session, which for a CFD is far too slow -- the position was chosen once
+#: and then only watched. Four runs across forty minutes produced the same
+#: two signals with confidence moving by 0.002, because re-reading an
+#: unchanged daily bar cannot produce a different answer.
+#:
+#: Fifteen minutes against an hourly bar is deliberate overlap: it means a
+#: bar that has just closed is acted on within a quarter of an hour rather
+#: than up to an hour later, at the cost of some repeated work. The repeated
+#: work is cheap; the missed move is not.
+INTRADAY_MINUTES = 15
 
 #: Every job this loop owns, in the order they are run when several are due.
 #: The snapshots come last because they describe the run.
 JOBS: tuple[str, ...] = (
     "poll-live-quotes",
     "advisor-alert",
+    "ingest-intraday",
+    "run-intraday",
     "paper-book",
     "ingest-daily",
     "run-daily",
@@ -84,7 +105,12 @@ def _due_daily(now: pd.Timestamp, last, at: tuple[int, int]) -> bool:
     return previous is None or previous < appointed
 
 
-def jobs_due(now, last_run: Mapping[str, object] | None = None) -> list[str]:
+def jobs_due(
+    now,
+    last_run: Mapping[str, object] | None = None,
+    *,
+    market_open: bool | None = None,
+) -> list[str]:
     """Which jobs are owed at ``now``, in the order they should be run.
 
     Pure. ``last_run`` maps a job name to when it last completed; a job
@@ -114,11 +140,30 @@ def jobs_due(now, last_run: Mapping[str, object] | None = None) -> list[str]:
         # down at a moment it could actually have been acted on.
         due.append("paper-book")
 
+    # The trading cadence: fresh bars, then fresh signals, while a market is
+    # open. Ordered so the pipeline reads a lake ingestion has finished
+    # writing -- the same reason the daily pair is ordered.
+    #
+    # ``market_open`` is passed in rather than looked up, so this stays pure
+    # and testable. None means "not known", which is treated as closed: a
+    # daemon that cannot tell the time should not be trading on the guess.
+    if market_open:
+        since = _utc(history.get("run-intraday"))
+        if since is None or (
+            (moment - since).total_seconds() >= INTRADAY_MINUTES * 60
+        ):
+            due.append("ingest-intraday")
+            due.append("run-intraday")
+
     if _due_daily(moment, history.get("ingest-daily"), INGEST_AT_UTC):
         due.append("ingest-daily")
     if _due_daily(moment, history.get("run-daily"), RUN_AT_UTC):
         due.append("run-daily")
 
+    # Deliberately the daily run only, not the intraday one. The snapshots
+    # and the prune describe a day: taken every fifteen minutes they would
+    # be ninety operational records a session saying the same thing, and a
+    # prune that runs before the run it would prune is worse than useless.
     if "run-daily" in due:
         due.append("monitoring-snapshot")
         due.append("risk-snapshot")

@@ -123,3 +123,46 @@ def test_ensure_creates_directory_tree(config):
     config.paths.ensure()
     for directory in config.paths.all_dirs():
         assert directory.is_dir()
+
+
+def test_a_part_session_time_stop_survives_being_read():
+    """M147: a fractional stop truncated to zero by its own annotation.
+
+    The config loader coerces each value to the type its dataclass field is
+    annotated with. ``time_stop_days`` was ``int``, so on hourly bars a stop
+    of 0.29 days -- seven hours, one US session -- came back as 0 and the
+    stop was silently disabled. Nothing raised; the strategy simply stopped
+    having a time stop, which is exactly the setting measured to take the
+    two-year return from 247% to 774%.
+    """
+    from cfdinvest.config import StrategyConfig, _coerce
+
+    for value in (0.29, 0.125, 1.5):
+        assert _coerce(value, StrategyConfig.__annotations__["time_stop_days"]) == value
+        assert _coerce(
+            value, StrategyConfig.__annotations__["reentry_cooldown_days"]
+        ) == value
+
+    # And a whole number still reads as one.
+    assert _coerce(1, StrategyConfig.__annotations__["time_stop_days"]) == 1
+
+
+def test_the_configured_stop_is_shorter_than_the_bar_interval_allows_to_be_useless():
+    """The shipped configuration is internally consistent.
+
+    A time stop measured in days only means something next to the bar it is
+    applied to. On hourly bars a one-day stop keeps the carry -- 169 hours of
+    it -- and gives up the extra decisions the smaller bar was adopted for.
+    """
+    from cfdinvest.config import load_config
+
+    config = load_config()
+    if config.market.interval != "1h":
+        pytest.skip("only meaningful while the engine runs on hourly bars")
+
+    assert config.strategy.time_stop_days is not None, "the stop must not be off"
+    assert 0 < config.strategy.time_stop_days <= 1.0, (
+        "a multi-day stop on hourly bars pays the carry it was meant to avoid"
+    )
+    # The cooldown must not lock out most of the universe most of the time.
+    assert config.strategy.reentry_cooldown_days <= 3.0

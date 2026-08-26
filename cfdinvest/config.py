@@ -227,9 +227,16 @@ class StrategyConfig:
     exit_on_opposing_signal: bool = True
     #: Close a position still behind after this many days. ``None`` disables.
     #: On indices it took the win rate from 39.5% to 69.5%.
-    time_stop_days: int | None = None
+    #:
+    #: Float, not int. On hourly bars the useful stop is a part-session --
+    #: 0.29 days is seven hours -- and an int annotation truncated that to
+    #: zero, which silently disables the stop rather than failing. The
+    #: config loader coerces to the annotated type, so the annotation is
+    #: what decides whether a fraction survives being read.
+    time_stop_days: float | None = None
     #: Days an instrument is left alone after a position in it closes.
-    reentry_cooldown_days: int = 0
+    #: Float for the same reason: a cooldown of hours is now meaningful.
+    reentry_cooldown_days: float = 0.0
     #: Relative drift before an open position is resized.
     rebalance_threshold: float = 0.25
     #: Notional per unit of signal size, as a multiple of equity.

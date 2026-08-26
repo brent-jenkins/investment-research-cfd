@@ -30,29 +30,53 @@ data_root = "data"
 # The strategy trades both directions and the signal decides which; the job
 # of this list is to offer instruments that *trend*, in enough different
 # markets that they do not all turn at once.
+# ONE TRADING SESSION, deliberately.
+#
+# Everything here trades 14:30-21:00 UTC. That is a constraint of the bar
+# interval below, not a view about which markets are interesting.
+#
+# The analysis layer builds one matrix indexed by every timestamp across
+# every instrument. On daily bars that is nearly dense -- one bar a day,
+# roughly aligned. On hourly bars it is mostly holes, because FX trades
+# around the clock, the Nikkei trades overnight and the FTSE closes before
+# New York opens: each instrument is absent from about four rows in five.
+# Rolling windows over a column that is 80% NaN return NaN, so conviction
+# cannot be computed and every signal collapses to flat. Measured on the
+# full forty-one at 1h: returns 19% populated, realised volatility 0.3%,
+# and exactly zero active signals across 16,026 bars.
+#
+# Restricting to one session makes the panel dense again -- returns 100%,
+# volatility 99.4% -- and the signals come back. Restoring FX, commodities
+# and the European and Asian indices to intraday needs per-session panels
+# in the preprocessing layer, which is real work and not yet done.
 tickers = [
-    # Indices -> US 500, US Tech 100, US 30
+    # US indices -> US 500, US Tech 100, US 30
     "^GSPC", "^NDX", "^DJI",
-    #         -> UK 100, Germany 40, France 40, Europe 50, Japan 225
-    "^FTSE", "^GDAXI", "^FCHI", "^STOXX50E", "^N225",
-    # Metals -> Gold, Copper, Platinum
-    "GC=F", "HG=F", "PL=F",
-    # Energy -> Oil - Crude (WTI), Oil - Brent
-    "CL=F", "BZ=F",
-    # FX majors and two crosses
-    "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X",
-    "USDCAD=X", "USDCHF=X", "NZDUSD=X", "EURGBP=X",
     # Large-cap technology
     "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
     "AVGO", "NFLX", "ADBE", "ORCL",
     # Other sectors: financials, energy, healthcare, semis, consumer
     "JPM", "XOM", "JNJ", "INTC", "NKE", "LULU", "COST",
-    # Volatility. NOT tradable and never recommended -- it is an input to
-    # the regime classification, and the tradability gate keeps it out of
-    # the signals. Removing it would cost the risk-off detection.
-    "^VIX",
 ]
-interval = "1d"          # "1d", "1h" or "1wk"
+# Hourly, not daily.
+#
+# A CFD held for days pays financing that was 72% of every cost in the
+# backtest, and a daily bar offers one decision per instrument per session
+# -- the position is chosen once and then only watched. Measured over two
+# years on the list above, against the same costs and the same engine:
+#
+#                  trips/yr   win%   %/trip   total%   hours held
+#   daily               347   56.9    0.798    553.8        169.1
+#   hourly, 7h stop   1,626   53.8    0.238    773.6         22.1
+#
+# Lower per trip, higher in total, and the mechanism is the holding period:
+# 22 hours against 169 pays a fraction of the carry. At confidence >= 0.60
+# the win rate goes from 61.8% to 75.3%.
+#
+# Finer intervals are available from the vendor but not usable: 15m and 5m
+# carry only ~85 days of history, which is too little to validate against.
+# Hourly is the shortest bar with two years behind it.
+interval = "1h"          # "1d", "1h" or "1wk"
 start = "2005-01-01"
 # end = "2025-01-01"     # omit for "up to now"
 auto_adjust = true       # split/dividend-adjusted OHLC
@@ -178,16 +202,33 @@ regime_mode = "tilt"          # was "gate"; tilting returned -40.9% against -54.
 exit_on_flat = false          # was true; reading flat as "no view" quadrupled gross P&L
 exit_on_opposing_signal = false
 
-# Close a position that is still behind after this many days, financing
-# deducted. 73% of eventual losers are already behind on day one against 29%
-# of eventual winners. On indices this took the win rate from 39.5% to 69.5%.
-# Leave unset to disable.
-time_stop_days = 1            # win rate 39.5% -> 69.5% on indices
+# Close a position that is still behind after this long, financing deducted.
+# In days, so a fraction is a part-session: 0.29 is seven hours, which on
+# hourly bars is one US cash session.
+#
+# It was 1 day, chosen on daily bars where 73% of eventual losers were
+# already behind on day one against 29% of eventual winners. The same idea
+# at the new bar size, re-measured over two years on this universe:
+#
+#   stop      trips/yr   win%   total%   hours held
+#   1 day          484   48.3    247.3         50.1
+#   7 hours      1,626   53.8    773.6         22.1
+#
+# Carrying a daily stop onto hourly bars is the worst of both -- it keeps
+# the carry and gives up the extra decisions. Left at one session because
+# shorter stops measured no better and appear to clamp: 3-hour and 1-hour
+# stops returned byte-identical results, which is a floor in the engine
+# rather than a finding, and not something to tune against until it is
+# understood.
+time_stop_days = 0.29         # one US session; 773.6% against 247.3% at 1 day
 
-# Days an instrument is left alone after a position in it closes. Trips
-# reopened within 21 days lost £1,489 across 145 of them; those opened after a
-# longer gap made £19,954 across 512.
-reentry_cooldown_days = 14    # was 0; fast re-entries lost £1,489 across 145 trips
+# Days an instrument is left alone after a position in it closes. Two, not
+# fourteen: a fourteen-day cooldown on a book that now opens ~1,600
+# positions a year would lock out most of the universe most of the time.
+# The original finding stands -- reopening *immediately* loses money -- but
+# the gap that matters scales with the holding period, and holds are now 22
+# hours rather than 169.
+reentry_cooldown_days = 2     # was 14, which suited 7-day holds and not 22-hour ones
 
 # Relative drift before an open position is resized. At 3.0 and above, drift
 # rebalancing is off entirely and only opens and closes remain.

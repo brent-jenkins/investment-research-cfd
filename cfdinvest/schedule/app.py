@@ -786,7 +786,16 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
             runner_module._refresh(
                 DataRepository(app_config), backtest.tickers or [], backtest
             )
-        elif name == "run-daily":
+        elif name == "ingest-intraday":
+            # The same top-up, on the trading cadence. Separate from the
+            # daily job because they do different work: this one keeps the
+            # recent hourly bars current, the daily one refreshes the full
+            # history and the macro series.
+            backtest = _backtest_config(args, app_config)
+            runner_module._refresh(
+                DataRepository(app_config), backtest.tickers or [], backtest
+            )
+        elif name in ("run-daily", "run-intraday"):
             _command_run_once(
                 _job_args(args, "run-once", refresh=False),
                 app_config, smtp, transport,
@@ -817,7 +826,20 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
     try:
         while args.max_ticks is None or ticks < args.max_ticks:
             now = pd.Timestamp.now(tz="UTC")
-            for name in daemon_module.jobs_due(now, last_run):
+            # Asked once per tick and passed in, so jobs_due stays pure.
+            # A calendar that cannot answer is treated as closed: trading on
+            # a guess about whether the market is open is worse than pausing.
+            try:
+                from cfdinvest.schedule import scheduler as scheduler_module
+
+                market_open = bool(
+                    scheduler_module.any_open(list(app_config.market.tickers), now)
+                )
+            except Exception as error:  # noqa: BLE001
+                logger.warning("Could not read the market calendar: %s", error)
+                market_open = False
+
+            for name in daemon_module.jobs_due(now, last_run, market_open=market_open):
                 logger.info("Daemon: running %s", name)
                 try:
                     run_job(name)

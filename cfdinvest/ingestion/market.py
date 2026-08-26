@@ -408,7 +408,48 @@ class MarketDataIngestor:
             changes["start"] = start
         if end is not None:
             changes["end"] = end
-        return replace(self.settings, **changes) if changes else self.settings
+        settings = replace(self.settings, **changes) if changes else self.settings
+        return self._clamp_intraday_start(settings)
+
+    @staticmethod
+    def _clamp_intraday_start(settings: MarketDataConfig) -> MarketDataConfig:
+        """Pull an intraday start inside the vendor's window.
+
+        Yahoo serves roughly 730 days of hourly bars and *rejects* a request
+        that reaches further rather than truncating it -- "1h data not
+        available for startTime=..., the requested range must be within the
+        last 730 days" -- and the whole request comes back empty. So a
+        configured start of 2005-01-01, which is right for daily bars, would
+        return nothing at all on hourly and the lake would stay empty with
+        only a warning to show for it.
+
+        Clamped rather than raised: the configured start says how far back to
+        go if the vendor allows it, and one interval being unable to reach
+        that far is not a configuration error. The existing warning still
+        reports what is being given up.
+
+        Ten days inside the limit, because the boundary is enforced against
+        the vendor's clock rather than ours -- a request computed at exactly
+        720 days was still refused once timezones shifted it.
+        """
+        if settings.interval not in INTRADAY_INTERVALS or not settings.start:
+            return settings
+        try:
+            requested = pd.Timestamp(settings.start, tz="UTC")
+        except (TypeError, ValueError):
+            return settings
+
+        earliest = pd.Timestamp.now(tz="UTC") - pd.Timedelta(
+            days=INTRADAY_HISTORY_LIMIT_DAYS - 10
+        )
+        if requested >= earliest:
+            return settings
+
+        logger.info(
+            "Start %s is beyond the %s history the vendor serves; asking from "
+            "%s instead", settings.start, settings.interval, earliest.date(),
+        )
+        return replace(settings, start=str(earliest.date()))
 
     @staticmethod
     def _validate_interval(settings: MarketDataConfig) -> None:

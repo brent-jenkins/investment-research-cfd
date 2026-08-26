@@ -2307,3 +2307,82 @@ def test_a_restart_does_not_make_every_job_due_at_once(tmp_path, monkeypatch):
     # never runs again.
     tomorrow = pd.Timestamp("2026-08-27T14:00:00Z")
     assert "run-daily" in daemon.jobs_due(tomorrow, remembered)
+
+
+def test_signals_are_refreshed_during_the_session_not_once_a_day():
+    """M149: a trading cadence that cannot see intraday moves.
+
+    The pipeline ran once at 03:05 UTC and the paper book then re-read the
+    same daily bar every five minutes. Four consecutive runs across forty
+    minutes produced the same two signals with confidence moving by 0.002,
+    because re-reading an unchanged bar cannot produce a different answer --
+    a CFD book was being offered one decision per instrument per session.
+    """
+    from cfdinvest.schedule import daemon
+
+    ran_at_three = {
+        "ingest-daily": "2026-08-26T03:00:00Z",
+        "run-daily": "2026-08-26T03:05:00Z",
+        "poll-live-quotes": "2026-08-26T14:59:00Z",
+    }
+    midday = "2026-08-26T15:00:00Z"
+
+    due = daemon.jobs_due(midday, ran_at_three, market_open=True)
+    assert "run-intraday" in due, "no fresh signals during the session"
+    # Bars before signals, or the pipeline reads a lake still being written.
+    assert due.index("ingest-intraday") < due.index("run-intraday")
+
+    # Not again a minute later.
+    just_ran = {**ran_at_three, "run-intraday": "2026-08-26T14:58:00Z"}
+    assert "run-intraday" not in daemon.jobs_due(midday, just_ran, market_open=True)
+
+    # And again once the interval has passed.
+    later = "2026-08-26T15:20:00Z"
+    assert "run-intraday" in daemon.jobs_due(later, just_ran, market_open=True)
+
+
+def test_nothing_intraday_runs_while_the_market_is_shut():
+    """Trading hours are a constraint, not a preference.
+
+    A fill at a price nobody was quoting is not a fill. An unknown calendar
+    counts as shut for the same reason: pausing costs a few bars, trading on
+    a guess costs whatever the guess was worth.
+    """
+    from cfdinvest.schedule import daemon
+
+    history = {
+        "ingest-daily": "2026-08-26T03:00:00Z",
+        "run-daily": "2026-08-26T03:05:00Z",
+        "poll-live-quotes": "2026-08-26T02:00:00Z",
+    }
+    for state in (False, None):
+        due = daemon.jobs_due("2026-08-26T23:00:00Z", history, market_open=state)
+        assert "run-intraday" not in due, f"traded with market_open={state}"
+        assert "ingest-intraday" not in due
+
+
+def test_the_snapshots_stay_on_the_daily_run():
+    """M150: ninety operational records a session, all saying the same thing.
+
+    The snapshots and the prune describe a day. Tied to the intraday run
+    they would fire every fifteen minutes, and a prune that runs before the
+    run it would prune is worse than useless.
+    """
+    from cfdinvest.schedule import daemon
+
+    intraday_only = daemon.jobs_due(
+        "2026-08-26T15:00:00Z",
+        {"ingest-daily": "2026-08-26T03:00:00Z",
+         "run-daily": "2026-08-26T03:05:00Z",
+         "poll-live-quotes": "2026-08-26T14:59:00Z"},
+        market_open=True,
+    )
+    assert "run-intraday" in intraday_only
+    for job in ("monitoring-snapshot", "risk-snapshot", "prune-runs"):
+        assert job not in intraday_only, f"{job} fired on the intraday cadence"
+
+    # They still follow the daily run.
+    daily = daemon.jobs_due("2026-08-27T03:10:00Z", {}, market_open=False)
+    assert "run-daily" in daily
+    for job in ("monitoring-snapshot", "risk-snapshot", "prune-runs"):
+        assert job in daily

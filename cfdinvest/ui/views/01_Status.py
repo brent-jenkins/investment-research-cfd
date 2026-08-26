@@ -93,15 +93,35 @@ st.subheader("Scheduler health")
 
 held = components.confirmed_open_count(data)
 st.caption(
-    "Each job's last run is taken from the artefact it wrote, not from the "
-    "daemon's own memory — a record written whether or not the work "
-    "succeeded is not evidence that it did."
+    "Each job's last run is taken from the artefact it wrote where it writes "
+    "one, and otherwise from the daemon's own record — the paper book writes "
+    "a file only when it opens something, and declining to trade is a run "
+    "that happened."
 )
+
+# Whether a market this universe trades is open right now. The intraday
+# jobs run only during a session, so an overnight gap is the system working
+# rather than a fault.
+# Unknown is treated as open. Guessing wrong that way shows "overdue" while
+# the market is shut, which is visible and harmless; guessing the other way
+# hides a genuinely stalled pipeline behind "markets closed".
+session_open = True
+try:
+    market_source = data.get("market")
+    market = getattr(market_source, "value", None)
+    sessions = market.get("sessions") if isinstance(market, dict) else None
+    # Explicit emptiness checks throughout: a DataFrame has no truth value,
+    # and `or {}` on one raises rather than falling back.
+    if sessions is not None and not sessions.empty and "is_open" in sessions:
+        session_open = bool(sessions["is_open"].any())
+except Exception:  # noqa: BLE001 - a calendar gap must not blank the page
+    session_open = True
 
 rows = vitals.job_report(
     vitals.gather_evidence(data["config"], account=data.get("account")),
     now=now,
     quotes_expected=held > 0,
+    session_open=session_open,
 )
 
 table = pd.DataFrame([
