@@ -50,6 +50,9 @@ __all__ = [
     "PRICE_REPORT_PATTERNS",
     "is_price_report",
     "score_headline",
+    "emotional_heat",
+    "PANIC_TERMS",
+    "EUPHORIA_TERMS",
     "summarise_headlines",
     "fetch_headlines",
     "sentiment_for",
@@ -68,6 +71,17 @@ NEGATIVE_TERMS: tuple[str, ...] = (
     "departure", "steps down", "layoffs", "job cuts", "sell rating",
     "reduce", "underperform", "bearish", "short seller", "exits", "exit",
     "reduces stake", "trims stake", "halts", "suspends", "delays",
+    # Events, which is the half price history cannot contain. A fraud
+    # charge, a recall or a boycott is not visible in a moving average and
+    # is exactly the kind of thing that moves a share overnight.
+    "fraud", "fraudulent", "arrest", "arrested", "charged", "indicted",
+    "indictment", "sec charges", "settlement", "fine", "fined", "penalty",
+    "subpoena", "class action", "boycott", "strike", "walkout", "union",
+    "data breach", "hack", "hacked", "outage", "safety", "defect",
+    "contamination", "ban", "banned", "restrictions", "sanctions",
+    "tariff", "tariffs", "antitrust", "monopoly", "scandal", "resigned",
+    "ousted", "fired", "misconduct", "whistleblower", "downsizing",
+    "bankruptcy", "default", "writedown", "impairment", "guidance cut",
 )
 
 #: And better. "Beats" is here without a qualifier on purpose: a beat that
@@ -80,6 +94,44 @@ POSITIVE_TERMS: tuple[str, ...] = (
     "jumps", "rally", "expansion", "expands", "launches", "wins",
     "approval", "approved", "partnership", "buyback", "dividend increase",
     "raises stake", "builds stake", "initiates coverage", "price target raised",
+    # And the events that help. A contract win or a regulatory clearance is
+    # the same kind of fact in the other direction.
+    "acquisition", "acquires", "merger", "deal", "contract", "awarded",
+    "award", "wins contract", "clearance", "cleared", "settles favourably",
+    "breakthrough", "patent", "milestone", "guidance raise", "raises guidance",
+    "beats expectations", "returns to growth", "market share gains",
+    "new product", "unveils", "debut", "collaboration", "invests",
+    "reinstates", "resumes", "recovery", "turnaround",
+)
+
+#: Words that carry heat rather than direction.
+#:
+#: Retail flow generalises into two modes -- panic, where everything is sold
+#: and talked down, and euphoria, where the fear is of missing out. Both are
+#: emotional rather than analytical, and both move a share further than the
+#: fact underneath it warrants. Direction alone cannot tell "guidance
+#: trimmed" from "shares crater as investors flee", and the second is the
+#: one that gaps a price overnight.
+#:
+#: Scored separately from direction and never folded into it: a heat reading
+#: is a statement about the language, not about the company, and merging
+#: them would let a shouty headline outvote a quiet fact.
+PANIC_TERMS: tuple[str, ...] = (
+    "plunge", "plunges", "plummet", "plummets", "crater", "craters",
+    "collapse", "collapses", "crash", "crashes", "tumble", "tumbles",
+    "rout", "panic", "fear", "fears", "meltdown", "bloodbath", "carnage",
+    "freefall", "spiral", "capitulation", "worst day", "worst since",
+    "flee", "fleeing", "dump", "dumping", "exodus", "bleeding", "hammered",
+    "crisis", "emergency", "disaster", "catastrophic", "alarm",
+)
+
+EUPHORIA_TERMS: tuple[str, ...] = (
+    "soar", "soars", "skyrocket", "skyrockets", "rocket", "rockets",
+    "surge", "surges", "explode", "explodes", "moonshot", "frenzy",
+    "mania", "euphoria", "fomo", "parabolic", "melt-up", "squeeze",
+    "best day", "best since", "record high", "all-time high", "blowout",
+    "stampede", "piling in", "can't miss", "unstoppable", "supercycle",
+    "to the moon", "hype",
 )
 
 #: A headline that is describing the price rather than telling you anything
@@ -98,6 +150,26 @@ PRICE_REPORT_PATTERNS: tuple[str, ...] = (
 )
 
 _PRICE_REPORT = re.compile("|".join(PRICE_REPORT_PATTERNS), re.IGNORECASE)
+
+
+def emotional_heat(title: str) -> tuple[int, tuple[str, ...]]:
+    """``(-1, 0, +1)`` for panic, calm, euphoria -- and the words behind it.
+
+    Deliberately separate from :func:`score_headline`. A share can have bad
+    news reported calmly and good news reported hysterically, and the two
+    readings answer different questions: what happened, and how loudly it
+    is being said.
+    """
+    text = str(title or "").lower()
+    panic = tuple(w for w in PANIC_TERMS if w in text)
+    euphoria = tuple(w for w in EUPHORIA_TERMS if w in text)
+    if panic and euphoria:
+        return 0, panic + euphoria
+    if panic:
+        return -1, panic
+    if euphoria:
+        return 1, euphoria
+    return 0, ()
 
 
 @dataclass(frozen=True, slots=True)

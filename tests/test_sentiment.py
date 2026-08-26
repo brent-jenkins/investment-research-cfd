@@ -16,6 +16,10 @@ M97  no reading rendered as a zero score rather than a dash
      -> test_the_badge_is_absent_rather_than_neutral_when_nothing_was_read
 M98  the advisor consulting sentiment when sizing
      -> test_sentiment_reaches_no_calculation
+M99  emotional heat folded into the directional score
+     -> test_heat_is_measured_separately_from_direction
+M100 mixed heat resolved to a direction rather than cancelled
+     -> test_a_headline_both_panicked_and_euphoric_is_neither
 """
 
 from __future__ import annotations
@@ -211,3 +215,65 @@ def test_the_overview_shows_it_beside_a_suggestion_not_inside_one():
     # And nothing may multiply a number by a sentiment score.
     assert "* reading.score" not in page
     assert "reading.score *" not in page
+
+
+# --------------------------------------------------------------------------- #
+# Heat, which is a different question from direction
+# --------------------------------------------------------------------------- #
+def test_heat_is_measured_separately_from_direction():
+    """M99: emotional language folded into the directional score.
+
+    Retail flow generalises into two modes -- panic, where everything is
+    sold and talked down, and euphoria, where the fear is of missing out.
+    Both move a share further than the fact underneath warrants. But "how
+    loudly is this being said" and "is this good or bad" are different
+    questions, and merging them lets a shouty headline outvote a quiet
+    fact.
+    """
+    calm_bad = "Lululemon guidance trimmed on softer demand"
+    loud_bad = "Lululemon shares crater as investors flee the stock"
+
+    assert module.emotional_heat(calm_bad)[0] == 0
+    assert module.emotional_heat(loud_bad)[0] == -1
+
+    loud_good = "Nvidia soars to record high in buying frenzy"
+    assert module.emotional_heat(loud_good)[0] == 1
+    assert module.score_headline(loud_good)[0] == 1
+
+    # Calm good news is directionally positive and not hot.
+    calm_good = "Nvidia announces a new data centre chip"
+    assert module.emotional_heat(calm_good)[0] == 0
+
+
+def test_heat_reports_the_words_that_caused_it():
+    """Same rule as direction: a reading nobody can interrogate is useless."""
+    value, words = module.emotional_heat("Shares crater as investors flee")
+    assert value == -1
+    assert "crater" in words and "flee" in words
+
+
+def test_a_headline_both_panicked_and_euphoric_is_neither():
+    """Mixed heat is not a small amount of heat."""
+    value, words = module.emotional_heat(
+        "Panic selling gives way to a buying frenzy"
+    )
+    assert value == 0
+    assert words
+
+
+def test_the_event_words_that_price_history_cannot_contain():
+    """Fraud, recalls, contracts -- the half a moving average cannot see.
+
+    These are what a share gaps on overnight, and the reason for reading
+    headlines at all rather than only prices.
+    """
+    for headline, expected in (
+        ("Acme executives charged with fraud by the SEC", -1),
+        ("Acme recalls two million units over a safety defect", -1),
+        ("Acme faces boycott after chief executive's remarks", -1),
+        ("Acme hit by data breach affecting 40m customers", -1),
+        ("Acme wins $4bn defence contract", 1),
+        ("Acme announces merger with Beta Corp", 1),
+        ("Acme receives regulatory clearance for its new device", 1),
+    ):
+        assert module.score_headline(headline)[0] == expected, headline
