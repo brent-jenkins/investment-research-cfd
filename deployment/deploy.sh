@@ -41,6 +41,19 @@ deploy_steps() {
     "${VENV}/bin/pip" install --quiet -e "${REPO_DIR}[ui]" || { fail "pip install"; return 1; }
   fi
 
+  # The broker rules table. One file in the repository is the source; the
+  # live copy is installed from it, so the two cannot drift. It used to be
+  # gitignored and copied by hand, which is the same class of mistake as
+  # copying code and not restarting.
+  local rules_src="${REPO_DIR}/config/t212_rules.toml"
+  local rules_dst="/var/lib/cfdinvest/.config/cfdinvest/t212_rules.toml"
+  if [[ -f "${rules_src}" ]]; then
+    if ! cmp -s "${rules_src}" "${rules_dst}" 2>/dev/null; then
+      log "Installing the Trading 212 rules table"
+      install -o cfdinvest -g cfdinvest -m 640 -D "${rules_src}" "${rules_dst}"         || fail "install rules table"
+    fi
+  fi
+
   # Restart every resident process. Both hold imported modules in memory and
   # neither notices a file changing underneath it.
   for service in "${SERVICES[@]}"; do

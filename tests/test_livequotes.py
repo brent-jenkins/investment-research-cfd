@@ -465,22 +465,31 @@ def test_the_gate_can_be_lifted_for_research_only():
     assert SignalConfig().require_tradable is True
 
 
-def test_the_rules_template_covers_the_universe_and_asserts_no_numbers():
-    """The template makes filling the table quick without filling it in."""
+def test_the_shipped_rules_cover_every_tradable_instrument():
+    """One table, in the repository, covering the configured universe.
+
+    There were three copies of this: a commented-out template, a gitignored
+    working copy, and the live file on the server, kept in step by somebody
+    remembering to copy one to the other. The deploy installs it now, so the
+    repository's copy is the only one that can be edited.
+    """
+    import tomllib
+
     from cfdinvest.config import load_config
 
-    body = Path("deployment/scripts/t212_rules.example.toml").read_text(
-        encoding="utf-8"
+    document = tomllib.loads(
+        Path("config/t212_rules.toml").read_text(encoding="utf-8")
     )
     for ticker in load_config().market.tickers:
         if t212_instruments.mapping_for(ticker).tradable:
-            assert f'["{ticker}"]' in body, ticker
+            assert ticker in document, f"{ticker} has no recorded rules"
 
-    # Every line is a comment: nothing here is a value the helper would read.
-    for line in body.splitlines():
-        assert not line.strip() or line.lstrip().startswith("#"), line
 
-    assert "regulatory retail ceiling" in body.lower()
+def test_the_deploy_installs_the_rules_table():
+    """Otherwise the live copy drifts, which is how it worked before."""
+    body = Path("deployment/deploy.sh").read_text(encoding="utf-8")
+    assert "config/t212_rules.toml" in body
+    assert ".config/cfdinvest/t212_rules.toml" in body
 
 
 def test_the_daemon_can_actually_invoke_every_job_it_schedules():

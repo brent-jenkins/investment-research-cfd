@@ -1,0 +1,439 @@
+# Trading 212 instrument rules — the live table.
+#
+# This is the file the safety engine reads. Anything recorded here is
+# treated as CHECKED; anything absent is reported "unverified", never
+# assumed. Nothing in this project invents a broker number.
+#
+# FIELDS, and the two that are easy to get wrong:
+#
+#   t212_name           what the app calls it -- overrides the built-in guess
+#   leverage            e.g. 20.0 for 20:1
+#   financing_daily_pct the overnight fee AS THE APP SHOWS IT, %/day.
+#                       0.0083 means 0.0083%/day = 3.03%/year. Do NOT put a
+#                       daily figure in `financing_rate`, which is annual --
+#                       that is wrong by ~4,000x and looks plausible.
+#   fx_fee_applies      whether the 0.5% conversion is charged on the result.
+#                       RECORD IT, do not infer: USA 500 is funded in GBP and
+#                       charges it; UK 100 is funded in GBP and does not.
+#   spread_typical      indicative only -- the live spread moves constantly
+#   currency            what the instrument is really priced in
+#   expiry              dated contracts only, e.g. "2026-09-17"
+#   available = false   Trading 212 does not offer it; stops it being suggested
+#
+
+# ── CONFIRMED: 40 of 40 ──────────────────────────────
+
+["^GSPC"]
+t212_name            = "USA 500"
+leverage             = 20.0
+financing_daily_pct_long  = 0.0083
+financing_daily_pct_short = 0.0139
+spread_typical       = 0.34
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["^NDX"]
+t212_name            = "US Tech 100"
+leverage             = 20.0
+financing_daily_pct_long  = 0.0083
+financing_daily_pct_short = 0.0139
+spread_typical       = 0.19
+min_trade_value      = 20.0                    # GBP.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["^FTSE"]
+t212_name            = "UK 100"
+leverage             = 20.0
+financing_daily_pct_long  = 0.0083
+financing_daily_pct_short = 0.0139
+spread_typical       = 0.62
+fx_fee_applies       = false
+currency             = "GBP"
+expiry               = "2026-09-17"
+source               = "T212 ticket, 2026-08-25"
+
+
+["^DJI"]
+t212_name            = "USA 30"
+leverage             = 20.0
+financing_daily_pct_long  = 0.0083
+financing_daily_pct_short = 0.0139
+spread_typical       = 0.44
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["^GDAXI"]
+t212_name            = "Germany 40"
+leverage             = 20.0
+financing_daily_pct_long  = 0.0083
+financing_daily_pct_short = 0.0139
+spread_typical       = 0.79
+min_trade_value      = 20.0                    # GBP.
+fx_fee_applies       = false           # confirmed N/A on the ticket
+currency             = "EUR"
+source               = "T212 app, 2026-08-25"
+
+["^FCHI"]
+t212_name            = "France 40"
+leverage             = 20.0
+financing_daily_pct_long  = 0.0083
+financing_daily_pct_short = 0.0139
+spread_typical       = 1.64
+fx_fee_applies       = false           # confirmed N/A on the ticket
+currency             = "EUR"
+source               = "T212 app, 2026-08-25"
+
+["^STOXX50E"]
+t212_name            = "Europe 50"
+leverage             = 20.0
+financing_daily_pct_long  = 0.0083
+financing_daily_pct_short = 0.0139
+fx_fee_applies       = false           # EUR index, as GER40 and FRA40
+currency             = "EUR"
+source               = "T212 app, 2026-08-25"
+# Name assumed "Europe 50" from the others; you gave the code EU50.
+
+["^N225"]
+t212_name            = "Japan 225"
+leverage             = 20.0
+financing_daily_pct_long  = 0.0104
+financing_daily_pct_short = 0.0035
+fx_fee_applies       = false           # confirmed N/A on the ticket
+currency             = "JPY"
+source               = "T212 app, 2026-08-25"
+# Short is CHEAPER than long here, unlike every other instrument -- yen
+# funding. Exactly why the two sides are recorded separately.
+
+["GC=F"]
+t212_name            = "Gold"                  # GOLDF, the futures contract
+leverage             = 20.0
+financing_daily_pct_long  = 0.0110             # 4.01% a year
+financing_daily_pct_short = 0.0139             # 5.07% a year
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+# GOLDF (futures) rather than XAUUSD (spot), decided on the numbers.
+# Spot charges 15.0% a year to hold long against the future's 4.01% -- £45
+# more per 30 days on £5,000. The future costs 1 point more to short, which
+# does not come close to offsetting it.
+#
+# It also matches what the lake prices: GC=F is front-month COMEX futures.
+# The cost is an expiry to roll through, which nothing here models yet --
+# worth a warning before a position runs into one.
+
+["HG=F"]
+t212_name            = "Copper"                # futures-only on T212
+leverage             = 10.0                    # NOT 20x -- commodities cap lower
+financing_daily_pct_long  = 0.0096             # 3.50% a year
+financing_daily_pct_short = 0.0043             # 1.57% a year
+min_trade_value      = 20.0                    # GBP. Commodity futures sit between the two.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["PL=F"]
+t212_name            = "Platinum"
+leverage             = 10.0                    # 10x, as copper
+financing_daily_pct_long  = 0.0076             # 2.77% a year
+financing_daily_pct_short = 0.0098             # 3.58% a year
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["CL=F"]
+t212_name            = "Crude Oil"             # CRUDE
+leverage             = 10.0
+financing_daily_pct_long  = 0.0139             # 5.07% a year
+financing_daily_pct_short = 0.0139             # 5.07% -- symmetric, unlike
+                                               # every other instrument so far
+min_trade_value      = 20.0                    # GBP.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["BZ=F"]
+t212_name            = "Oil Brent"             # BRENT
+leverage             = 10.0
+financing_daily_pct_long  = 0.0139             # 5.07% a year
+financing_daily_pct_short = 0.0139             # symmetric, as with Crude
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["EURUSD=X"]
+t212_name            = "EURUSD"
+leverage             = 30.0                    # major FX -- 30x, the highest yet
+financing_daily_pct_long  = 0.0189             # 6.90% a year
+financing_daily_pct_short = 0.0092             # 3.36% a year
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["GBPUSD=X"]
+t212_name            = "GBPUSD"
+leverage             = 30.0
+financing_daily_pct_long  = 0.0153             # 5.58% a year
+financing_daily_pct_short = 0.0106             # 3.87% a year
+min_trade_value      = 100.0                   # GBP. FX floors are far higher than share ones.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["USDJPY=X"]
+t212_name            = "USDJPY"
+leverage             = 30.0
+financing_daily_pct_long  = 0.0100             # 3.65% a year
+financing_daily_pct_short = 0.0236             # 8.61% -- the dearest short
+                                               # in the whole table so far
+fx_fee_applies       = true
+currency             = "JPY"
+source               = "T212 app, 2026-08-25"
+
+["AUDUSD=X"]
+t212_name            = "AUDUSD"
+leverage             = 20.0                    # 20x, NOT the 30x of EURUSD,
+                                               # GBPUSD and USDJPY
+financing_daily_pct_long  = 0.0096             # 3.50% a year
+financing_daily_pct_short = 0.0111             # 4.05% a year
+min_trade_value      = 100.0                   # GBP.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["USDCAD=X"]
+t212_name            = "USDCAD"
+leverage             = 30.0
+financing_daily_pct_long  = 0.0100             # 3.65% a year
+financing_daily_pct_short = 0.0133             # 4.85% a year
+fx_fee_applies       = true
+currency             = "CAD"
+source               = "T212 app, 2026-08-25"
+
+["USDCHF=X"]
+t212_name            = "USDCHF"
+leverage             = 30.0
+financing_daily_pct_long  = 0.0043             # 1.57% -- the cheapest long here
+financing_daily_pct_short = 0.0174             # 6.35% a year, 4x the long
+fx_fee_applies       = true
+currency             = "CHF"
+source               = "T212 app, 2026-08-25"
+
+["NZDUSD=X"]
+t212_name            = "NZDUSD"
+leverage             = 20.0
+financing_daily_pct_long  = 0.0117             # 4.27% long, 3.87% short
+financing_daily_pct_short = 0.0106
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["EURGBP=X"]
+t212_name            = "EURGBP"
+leverage             = 30.0
+financing_daily_pct_long  = 0.0175             # 6.39% long, 4.56% short. No FX fee -- the only
+                                               # pair with no USD leg.
+financing_daily_pct_short = 0.0125
+fx_fee_applies       = false
+currency             = "GBP"
+source               = "T212 app, 2026-08-25"
+
+["NVDA"]
+t212_name            = "NVIDIA"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long! 9.16% short. Shares cap at 5x.
+financing_daily_pct_short = 0.0251
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["AAPL"]
+t212_name            = "Apple"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["MSFT"]
+t212_name            = "Microsoft"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["AMZN"]
+t212_name            = "Amazon"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["GOOGL"]
+t212_name            = "Alphabet (Class A)"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["META"]
+t212_name            = "Meta Platforms"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["TSLA"]
+t212_name            = "Tesla"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["AMD"]
+t212_name            = "Advanced Micro Devices"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["AVGO"]
+t212_name            = "Broadcom"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["NFLX"]
+t212_name            = "Netflix"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["ADBE"]
+t212_name            = "Adobe"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["ORCL"]
+t212_name            = "Oracle"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["JPM"]
+t212_name            = "JPMorgan Chase"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["XOM"]
+t212_name            = "Exxon Mobil"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["JNJ"]
+t212_name            = "Johnson & Johnson"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["INTC"]
+t212_name            = "Intel"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["NKE"]
+t212_name            = "Nike"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+# NOTE ON MINIMUMS: min_quantity (units) and min_trade_value (account
+# currency) both vary by instrument type and must be read per instrument.
+# Shares, index CFDs, FX pairs and commodity futures are quoted in
+# different units, so a floor from one says nothing about another. Only
+# LULU has been read so far; every other instrument reports these as
+# unverified, which is the correct answer rather than a gap.
+
+["LULU"]
+t212_name            = "Lululemon Athletica"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+min_trade_value      = 5.0                     # GBP. The smallest position the
+                                               # ticket accepts -- roughly 0.04 of
+                                               # a share, not 5 of them.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+
+["COST"]
+t212_name            = "Costco Wholesale"      # the NYSE listing, NOT Costain
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # 25.3% long, 9.16% short -- the standard
+financing_daily_pct_short = 0.0251             # US-share pair on T212.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-25"
+# Searching Trading 212 for "COST" returns Costain first: a UK construction
+# firm on the LSE, priced in GBP with no FX fee. The lake's COST is Costco
+# Wholesale on the NYSE, which is what every price, signal and backtest
+# figure under this ticker was computed from.
+#
+# One set of terms was recorded here from that search before the collision
+# was spotted. Worth keeping in mind for any instrument added later: the
+# symbol matching is not the confirmation, the company name is. Two firms
+# sharing a symbol attaches the trading terms of one to the prices of the
+# other, and the resulting suggestion names the right size, the right stop
+# and the wrong company.
+
+# ── STILL TO DO: 0 ─────────────────────────────────────────
+# Paste the figures and they get written in above. The dashboard's
+# "T212 Rules" page shows this same list, live.
+#

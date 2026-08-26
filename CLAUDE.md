@@ -211,12 +211,17 @@ all refinement inputs now exist.
 The lake freshness warning appears until ingestion is run; monitoring
 reports stale data as a warning.
 
-**The one open gap:** `~/.config/cfdinvest/t212_rules.toml` ships empty and
-deliberately so — nothing publishes Trading 212's instrument rules and this
-project makes no broker calls, so an invented table would be numbers that look
-measured and are not. Until the owner fills it in from the ticket, the eight
-broker checks report *unverified*. Template:
-`deployment/scripts/t212_rules.example.toml`.
+**The broker rules are filled in.** All forty instruments were read off the
+Trading 212 app by the owner and recorded in `config/t212_rules.toml`, which
+the deploy installs to `~/.config/cfdinvest/t212_rules.toml`. That file is the
+single source: it used to be a commented-out template, a gitignored working
+copy and a hand-copied live file, which is three ways for one table to go
+stale. Every entry names its source, and a test fails the build on one that
+does not — the fear that kept the table empty was invented figures that look
+measured, and provenance is the answer to it rather than emptiness.
+
+Minimums vary by instrument type and only seven are read so far; the rest
+report *unverified*, which is correct rather than a gap.
 
 **Account separation is opt-in.** With `CFD_ACCOUNT_MODE` unset everything
 uses the shared root, exactly as before it existed. See

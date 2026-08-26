@@ -717,12 +717,26 @@ def test_the_runner_survives_a_missing_table():
     assert len(loaded) == 0
 
 
-def test_the_shipped_example_is_entirely_commented_out():
-    """It documents the fields and ships no values. Filling one in is how one
-    gets committed."""
+def test_every_shipped_broker_figure_names_where_it_came_from():
+    """The table ships real numbers now, so each must say who measured it.
+
+    It used to ship a template that was entirely commented out, and the test
+    asserted exactly that -- the fear being an invented figure that looks
+    measured. The fear is unchanged; the table is filled in, so the guard
+    moves from "no values" to "no value without a provenance". An entry that
+    cannot say where it came from is the thing that was always dangerous.
+    """
     import tomllib
 
-    source = Path("deployment/scripts/t212_rules.example.toml").read_text(
-        encoding="utf-8"
+    document = tomllib.loads(
+        Path("config/t212_rules.toml").read_text(encoding="utf-8")
     )
-    assert tomllib.loads(source) == {}
+    assert document, "the shipped table must not be empty"
+
+    for ticker, entry in document.items():
+        assert entry.get("source"), (
+            f"{ticker} carries broker figures with no source recorded"
+        )
+        assert entry.get("t212_name"), (
+            f"{ticker} has no Trading 212 name, so nobody can find it to check"
+        )
