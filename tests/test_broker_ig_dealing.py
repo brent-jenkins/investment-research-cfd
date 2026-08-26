@@ -294,3 +294,54 @@ def test_the_read_only_client_still_cannot_deal():
     source = inspect.getsource(client)
     assert "/positions/otc" not in source
     assert source.count('method="POST"') == 1
+
+
+def test_a_rejection_carries_its_reason_into_the_probe():
+    """M188: the answer discarded from the response that contained it.
+
+    IG puts REJECTED in dealStatus and the *why* in `reason`. The why is
+    what distinguishes a malformed order from a short account. This dropped
+    REJECT_CFD_ORDER_ON_SPREADBET_ACCOUNT once and cost an hour of guessing
+    at something the response had already said.
+    """
+    def opener(url, data=None, headers=None, method=None):
+        if url.endswith("/positions/otc"):
+            return {"dealReference": "REF"}, {}
+        return {
+            "dealStatus": "REJECTED",
+            "reason": "REJECT_CFD_ORDER_ON_SPREADBET_ACCOUNT",
+            "dealReference": "REF", "epic": "EPIC", "level": None,
+        }, {}
+
+    probe = measure_spread(
+        "EPIC", a_session(), demo(), DealingConfig(enabled=True),
+        opener=opener, sleep=lambda _s: None,
+    )
+    assert not probe.ok
+    assert "REJECT_CFD_ORDER_ON_SPREADBET_ACCOUNT" in probe.error, (
+        f"the reason was discarded: {probe.error!r}"
+    )
+
+
+def test_a_spread_bet_asks_for_the_expiry_it_needs():
+    """A daily funded bet is expiry DFB; a CFD is "-".
+
+    Getting it wrong does not fail cleanly -- IG accepts the order and then
+    rejects it with a message that reads like an account problem.
+    """
+    sent = {}
+
+    def opener(url, data=None, headers=None, method=None):
+        if url.endswith("/positions/otc"):
+            sent.update(data or {})
+            return {"dealReference": "REF"}, {}
+        return {"dealStatus": "ACCEPTED", "dealId": "D", "level": 31210.0}, {}
+
+    place_order("UA.D.AAPL.DAILY.IP", "BUY", 0.24, a_session(), demo(),
+                DealingConfig(enabled=True), expiry="DFB", opener=opener)
+    assert sent.get("expiry") == "DFB"
+
+    sent.clear()
+    place_order("UA.D.AAPL.CASH.IP", "BUY", 1.0, a_session(), demo(),
+                DealingConfig(enabled=True), opener=opener)
+    assert sent.get("expiry") == "-", "the CFD default changed"

@@ -160,10 +160,16 @@ def place_order(
     dealing: DealingConfig | None = None,
     *,
     currency: str = "USD",
+    expiry: str = "-",
     opener=None,
     now=None,
 ) -> DealResult:
     """Open a position at market. Never raises.
+
+    ``expiry`` is "-" for a CFD and **"DFB"** for a daily funded bet. Getting
+    it wrong does not fail cleanly: IG accepts the order, then rejects it
+    with REJECT_CFD_ORDER_ON_SPREADBET_ACCOUNT, which reads like an account
+    problem and is actually a malformed order.
 
     Refuses before it does anything if the gates are shut, and says which
     one. The refusal is checked here rather than by the caller, because a
@@ -191,7 +197,7 @@ def place_order(
     read = opener or _read
     body = {
         "epic": str(epic),
-        "expiry": "-",
+        "expiry": str(expiry),
         "direction": side,
         "size": str(size),
         "orderType": "MARKET",
@@ -349,6 +355,7 @@ def measure_spread(
     ticker: str = "",
     size: float = 1.0,
     currency: str = "USD",
+    expiry: str = "-",
     settle: float = 1.0,
     opener=None,
     sleep=time.sleep,
@@ -369,7 +376,7 @@ def measure_spread(
     """
     opened = place_order(
         epic, "BUY", size, session, broker, dealing,
-        currency=currency, opener=opener, now=now,
+        currency=currency, expiry=expiry, opener=opener, now=now,
     )
     if opened.error:
         return SpreadProbe(epic=epic, ticker=ticker, size=size, error=opened.error)
@@ -377,10 +384,15 @@ def measure_spread(
     sleep(settle)
     filled = confirm_deal(opened.deal_reference, session, broker, opener=opener)
     if not filled.ok:
-        return SpreadProbe(
-            epic=epic, ticker=ticker, size=size,
-            error=filled.error or "the opening deal did not fill",
-        )
+        # The reason, not just the status. IG says REJECTED in dealStatus and
+        # puts the *why* in `reason` -- and the why is what tells you the
+        # order was malformed rather than the account short of margin. This
+        # swallowed REJECT_CFD_ORDER_ON_SPREADBET_ACCOUNT once, which cost
+        # an hour of guessing at an answer the response already carried.
+        detail = filled.error or "the opening deal did not fill"
+        if filled.reason and filled.reason not in detail:
+            detail = f"{detail}: {filled.reason}"
+        return SpreadProbe(epic=epic, ticker=ticker, size=size, error=detail)
 
     shut = close_position(
         filled.deal_id, "SELL", size, session, broker, dealing, opener=opener
