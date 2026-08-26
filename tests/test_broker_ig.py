@@ -305,3 +305,35 @@ def test_a_good_session_carries_the_account_and_the_host():
     assert headers["CST"] == "cst-1"
     assert headers["X-SECURITY-TOKEN"] == "tok-1"
     assert headers["X-IG-API-KEY"] == "an-api-key"
+
+
+def test_a_tradeable_market_with_no_prices_says_why():
+    """M182: nineteen instruments reporting "error:" and nothing after it.
+
+    IG answers 200 for a share whose data this account is not entitled to:
+    the instrument metadata, its high and low and its margin factor all
+    arrive, and bid and offer are simply absent. The first version returned
+    an empty error string for that, so the whole universe failed silently
+    and the actual reason -- `unauthorised.access.to.equity.exception` on
+    the prices endpoint -- had to be found by hand afterwards.
+
+    A failure that does not say what happened costs more than the failure.
+    """
+    def opener(url, data=None, headers=None, method=None):
+        document = market_document()
+        document["snapshot"]["bid"] = None
+        document["snapshot"]["offer"] = None
+        document["snapshot"]["marketStatus"] = "TRADEABLE"
+        return document, {}
+
+    market = fetch_market("EPIC", a_session(), IgConfig.from_env(CREDS), opener=opener)
+
+    assert not market.ok
+    assert market.error, "a failure with no reason attached"
+    assert "no dealing prices" in market.error
+    assert "entitlement" in market.error, (
+        "the likely cause is not named, so the next person repeats the search"
+    )
+    # The metadata that did arrive is still useful and still returned.
+    assert market.margin_factor == pytest.approx(20.0)
+    assert market.name == "Apple Inc"

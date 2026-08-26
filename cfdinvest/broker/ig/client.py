@@ -290,10 +290,23 @@ def fetch_market(
 
     bid, offer = _number(snapshot.get("bid")), _number(snapshot.get("offer"))
     spread_points = spread_pct = None
+    price_error = ""
     if bid is not None and offer is not None and offer > 0 and bid > 0:
         spread_points = offer - bid
         mid = (offer + bid) / 2.0
         spread_pct = spread_points / mid * 100.0 if mid > 0 else None
+    else:
+        # A tradeable market with no dealing prices is a market-data
+        # entitlement, not a fault -- IG returns the instrument's metadata,
+        # its high and low and its margin factor, and simply omits bid and
+        # offer. The first version of this returned an empty error string
+        # for that case, so nineteen instruments reported "error:" with
+        # nothing after it and the reason had to be found by hand.
+        status = str(snapshot.get("marketStatus") or "unknown")
+        price_error = (
+            f"no dealing prices (market {status.lower()}); this account may "
+            "lack the market-data entitlement for this instrument type"
+        )
 
     minimum = (rules.get("minDealSize") or {}).get("value")
 
@@ -318,6 +331,7 @@ def fetch_market(
             else str(snapshot.get("marketStatus")) == "TRADEABLE"
         ),
         fetched_at=str(now or ""),
+        error=price_error,
     )
 
 
