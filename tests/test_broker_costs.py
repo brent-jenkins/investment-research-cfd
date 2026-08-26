@@ -1306,3 +1306,98 @@ def test_volume_is_measured_against_the_instrument_own_normal():
     # large one traded vastly more in absolute terms and is not.
     assert outcome.long_multiplier["SMALL"].iloc[25] == pytest.approx(0.6)
     assert outcome.long_multiplier["LARGE"].iloc[25] == pytest.approx(1.0)
+
+
+def _hourly_market(bar_return, bars=60):
+    """One instrument on hourly bars, moving a fixed amount per bar.
+
+    Hourly rather than daily because that is the only place the bug shows.
+    On daily bars position age advances in whole days, so a 0.5-day stop and
+    a 0-day stop fire at the same moment and a truncating cast is invisible.
+    """
+    from cfdinvest.preprocessing import PreprocessConfig
+    from cfdinvest.preprocessing.frame import build_analysis_frame
+
+    calendar = pd.date_range(
+        "2021-01-04 14:30", periods=bars, freq="h", tz="UTC", name="timestamp"
+    )
+    close = 100.0 * (1.0 + bar_return) ** np.arange(len(calendar))
+    tidy = pd.DataFrame(
+        {
+            "open": close, "high": close * 1.001, "low": close * 0.999,
+            "close": close, "volume": 1e6, "ticker": "SPX",
+        },
+        index=calendar,
+    ).set_index("ticker", append=True).sort_index()
+    return build_analysis_frame(
+        tidy, interval="1h", config=PreprocessConfig(correlation_window=10)
+    )
+
+
+def test_a_part_day_stop_is_not_truncated_away_inside_the_engine():
+    """M153: fractional days cast to int where they are used.
+
+    The engine compares position age against the stop in *fractional* days
+    -- it divides nanoseconds by NANOS_PER_DAY -- so part-days always worked
+    arithmetically. The cast did not: ``int(0.29)`` is 0, and so are
+    ``int(0.13)`` and ``int(0.50)``.
+
+    On daily bars nothing noticed, because every useful stop was a whole
+    number. On hourly bars it destroyed the setting silently. Three
+    configurations returned byte-identical results, which read as evidence
+    that the outcome was robust to the parameter; it was one number
+    truncated three ways, and the strategy ran with no time stop at all
+    while its configuration file said seven hours.
+
+    The config layer had the same bug and was fixed first. This is the
+    second seam, and it kept truncating after the first was mended -- which
+    is the argument for testing behaviour rather than annotations.
+    """
+    import dataclasses
+
+    from cfdinvest.execution import ExecutionConfig, run_backtest
+
+    falling = _hourly_market(-0.004)
+    signals = _always_long(falling)
+
+    def bars_held(stop):
+        result = run_backtest(
+            signals, falling,
+            dataclasses.replace(
+                ExecutionConfig(), time_stop_days=stop, reentry_cooldown_days=0.0
+            ),
+        )
+        return int((result.positions.to_numpy() != 0).sum())
+
+    # Three hours, seven hours, and a whole day. On hourly bars these are
+    # genuinely different ages; under int() all three become 0 or 1.
+    three_hours = bars_held(0.125)
+    seven_hours = bars_held(0.29)
+    one_day = bars_held(1.0)
+
+    assert three_hours < seven_hours < one_day, (
+        f"stops of 3h, 7h and 1d held {three_hours}, {seven_hours} and "
+        f"{one_day} bars -- fractions that truncate to the same integer "
+        "cannot order like this"
+    )
+
+    # The cooldown has the same cast and the same failure. It is a whole
+    # number in the shipped configuration, so nothing currently depends on
+    # it -- which is exactly when a truncation goes unnoticed until someone
+    # sets six hours and gets none.
+    # The falling market, where the stop actually fires: positions close and
+    # the cooldown then decides how soon the next one may open.
+    def entries(cooldown):
+        result = run_backtest(
+            signals, falling,
+            dataclasses.replace(
+                ExecutionConfig(), time_stop_days=0.125,
+                reentry_cooldown_days=cooldown,
+            ),
+        )
+        opened = result.trades[result.trades.action.str.startswith("open")]
+        return len(opened)
+
+    assert entries(0.5) < entries(0.0), (
+        "a half-day cooldown admitted as many entries as no cooldown"
+    )

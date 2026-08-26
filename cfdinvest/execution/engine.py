@@ -246,10 +246,17 @@ def run_execution(signal_frame, analysis_frame, config):
     # which does not fail, it just puts every instrument permanently inside
     # its cooldown and quietly cuts the book from 3,383 trades to 171.
     bar_stamps = pd.DatetimeIndex(index).as_unit("ns").asi8.astype("float64")
-    cooldown = max(int(getattr(config, "reentry_cooldown_days", 0) or 0), 0)
+    # Float, not int. Both limits are compared against ages computed in
+    # fractional days (`/ NANOS_PER_DAY`), so the arithmetic has always
+    # supported part-days -- only the cast did not. On hourly bars that
+    # silently destroyed the setting: a configured stop of 0.29 days became
+    # int(0.29) = 0, as did 0.13 and 0.50, which is why three different
+    # configurations returned byte-identical results and looked like a
+    # finding about robustness. It was one number, truncated three ways.
+    cooldown = max(float(getattr(config, "reentry_cooldown_days", 0) or 0), 0.0)
     blackout = _earnings_blackout(index, columns, config)
     time_stop = getattr(config, "time_stop_days", None)
-    time_stop = None if time_stop is None else max(int(time_stop), 0)
+    time_stop = None if time_stop is None else max(float(time_stop), 0.0)
     time_stop_threshold = float(getattr(config, "time_stop_threshold", 0.0) or 0.0)
     # When each open position was entered, for the time stop.
     opened_at = np.full(assets, np.nan, dtype="float64")
@@ -391,22 +398,6 @@ def run_execution(signal_frame, analysis_frame, config):
             )
             new_held = np.where(blocked, 0, new_held)
 
-        if time_stop is not None:
-            # Stamp new entries and clear closed ones, so age is measured
-            # from when the position was actually taken.
-            opened_at = np.where(
-                (held == 0) & (new_held != 0), bar_stamps[bar], opened_at
-            )
-            opened_at = np.where(new_held == 0, np.nan, opened_at)
-
-        if cooldown:
-            # Stamp the close so the next bar can measure the gap. Done
-            # after the suppression above, so an entry the cooldown just
-            # blocked does not restart its own clock.
-            closed_at = np.where(
-                (held != 0) & (new_held == 0), bar_stamps[bar], closed_at,
-            )
-
         if blackout is not None:
             # No position may be open into a print. The rule closes as well
             # as blocks: a position taken a fortnight ago is in exactly the
@@ -434,6 +425,27 @@ def run_execution(signal_frame, analysis_frame, config):
                 & np.isfinite(net_pct) & (net_pct <= time_stop_threshold)
             )
             new_held = np.where(stale, 0, new_held)
+
+        # Stamped here, after every rule that can close a position has had
+        # its say -- the cooldown suppression, the blackout and the time
+        # stop. It used to happen before the time stop, so a position the
+        # time stop closed never recorded a close time and the cooldown
+        # never applied to it. In a configuration where the time stop is the
+        # usual exit that made the cooldown inert while the config file
+        # still named one: 15 re-entries in 60 bars whether the cooldown was
+        # zero or a full day.
+        #
+        # After the suppression too, so an entry the cooldown just blocked
+        # does not restart its own clock.
+        if time_stop is not None:
+            opened_at = np.where(
+                (held == 0) & (new_held != 0), bar_stamps[bar], opened_at
+            )
+            opened_at = np.where(new_held == 0, np.nan, opened_at)
+        if cooldown:
+            closed_at = np.where(
+                (held != 0) & (new_held == 0), bar_stamps[bar], closed_at,
+            )
 
         target_units = _target_units(
             new_held, size[bar], reference, equity, config, tradable
