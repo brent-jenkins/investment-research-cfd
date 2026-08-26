@@ -17,10 +17,17 @@ set -uo pipefail
 REPO_DIR="/opt/cfdinvest"
 VENV="${REPO_DIR}/.venv"
 SERVICES=(cfdinvest cfdinvest-dashboard)
-# Timers are enabled on every deploy, not just installed. cfdinvest-prune is
-# the one that keeps the disk bounded: without it each pipeline run leaves a
-# 30 MB analysis frame behind forever.
-TIMERS=(cfdinvest.timer cfdinvest-monitor.timer cfdinvest-pipeline.timer cfdinvest-prune.timer)
+# Timers are enabled on every deploy, not just installed -- enabling is
+# idempotent, so one that was never switched on gets switched on rather than
+# waiting to be noticed.
+#
+# Exactly one. cfdinvest.service is a resident daemon that owns every job
+# there is: quotes, the advisor, the paper book, ingestion, the daily run,
+# both snapshots and pruning. The pipeline and monitor timers are superseded
+# by it and their unit files survive only as history, which is why
+# cfdinvest.service declares Conflicts= against them. Adding either one here
+# would run ingestion twice on two different schedules against one lake.
+TIMERS=(cfdinvest.timer)
 LOG_TAG="cfdinvest-deploy"
 
 log() { echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') | $*" | systemd-cat -t "${LOG_TAG}" -p info; echo "$*"; }
@@ -122,10 +129,12 @@ deploy_steps() {
     fi
   done
 
-  # Disk. The pipeline writes a 30 MB analysis frame per run and pruning is
-  # what keeps that bounded, so the free figure is the direct evidence that
-  # the timer above is doing its job. Reported every deploy rather than
-  # waited for: the dashboard showed 17% free before anyone looked.
+  # Disk. The daemon prunes after each daily run, which keeps the artefact
+  # store bounded at a few hundred megabytes, so this figure is the evidence
+  # that it is still doing so -- and it also catches the case that actually
+  # bit, which was another tenant on the box rather than this one. Reported
+  # every deploy rather than waited for: the dashboard showed 17% free
+  # before anyone looked.
   local free_pct
   free_pct="$(df --output=pcent /var/lib/cfdinvest | tail -1 | tr -dc '0-9')"
   if [[ -n "${free_pct}" ]]; then

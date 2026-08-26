@@ -95,7 +95,6 @@ def test_the_units_exist():
         "cfdinvest.service",
         "cfdinvest-webhook.service",
         "cfdinvest-deploy.service",
-        "cfdinvest-prune.service",
     }
 
 
@@ -879,21 +878,26 @@ def test_the_listener_carries_no_secret_and_the_unit_names_its_own():
 
 
 
-def test_every_timer_is_enabled_by_the_deploy():
-    """M137: a unit that exists but is never switched on.
+def test_the_deploy_never_enables_a_superseded_timer():
+    """M137: a second scheduler for a job that already has an owner.
 
-    This is not hypothetical. The retention module, the `prune-runs`
-    command and its tests were all written and correct, and no unit ever
-    called any of them -- so every pipeline run left a 30 MB analysis
-    frame behind and the box reached 17% free with a working prune sitting
-    unused. Shipping the capability is not the same as running it.
+    cfdinvest.service is a resident daemon owning every job there is --
+    quotes, the advisor, the paper book, ingestion, the daily run, both
+    snapshots and pruning. The pipeline and monitor timers predate it and
+    are superseded; their unit files survive as history and the daemon
+    declares Conflicts= against their services.
 
-    So the deploy enables timers rather than the README describing how to,
-    and this asserts the two lists agree in both directions: a timer file
-    the deploy does not enable is dead, and a name the deploy enables
-    without a file behind it fails at deploy time on the live box.
+    A deploy that enabled them would run ingestion twice on two schedules
+    against one lake. This nearly happened: a prune timer was added here on
+    the belief that nothing pruned, when the daemon had owned pruning all
+    along -- the artefacts it would have removed were already gone, which is
+    why the reading was zero. Enabling superseded units is easy to do while
+    believing you are fixing something.
+
+    Asserted against the Conflicts= line rather than a hardcoded list, so a
+    unit retired later is covered without anyone remembering to come back.
     """
-    deploy = (DEPLOYMENT / "deploy.sh").read_text(encoding="utf-8")
+    deploy = text(DEPLOYMENT / "deploy.sh")
 
     declared = set()
     for line in deploy.splitlines():
@@ -902,11 +906,48 @@ def test_every_timer_is_enabled_by_the_deploy():
             break
     assert declared, "deploy.sh declares no timers"
 
+    # Every timer named must have a unit file behind it, or the deploy fails
+    # on the live box rather than here.
     on_disk = {path.name for path in (DEPLOYMENT / "systemd").glob("*.timer")}
-    assert declared == on_disk, (
-        f"deploy enables {sorted(declared - on_disk)} with no unit file; "
-        f"ships {sorted(on_disk - declared)} that nothing enables"
+    assert declared <= on_disk, (
+        f"deploy enables {sorted(declared - on_disk)} with no unit file"
     )
+
+    body = text(DEPLOYMENT / "systemd" / "cfdinvest.service")
+    conflicts = re.search(r"^Conflicts=(.*)$", body, re.M)
+    assert conflicts
+
+    superseded = {
+        name.strip().replace(".service", ".timer")
+        for name in conflicts.group(1).split()
+        if name.strip().endswith(".service")
+    }
+    clash = declared & superseded
+    assert not clash, f"deploy enables superseded timers: {sorted(clash)}"
+
+    # And the daemon's own timer is the one that must be on.
+    assert "cfdinvest.timer" in declared
+
+
+def test_the_daemon_owns_every_scheduled_job():
+    """The single owner, asserted rather than described.
+
+    Each job the deploy does not schedule has to be scheduled by something,
+    and the daemon is that something. If a job were dropped from its list
+    while its timer stayed retired, nothing would run it and the symptom
+    would be silence -- the hardest kind of failure to notice.
+    """
+    from cfdinvest.schedule import daemon
+
+    assert "prune-runs" in daemon.JOBS, "nothing would bound the artefact store"
+    assert "paper-book" in daemon.JOBS, "the forward record would stop"
+    assert "run-daily" in daemon.JOBS and "ingest-daily" in daemon.JOBS
+
+    # Pruning runs only after the snapshots that describe a run, so a run is
+    # never pruned before everything about it has been written.
+    due = daemon.jobs_due("2026-08-26T03:10:00Z", {})
+    if "prune-runs" in due:
+        assert due.index("prune-runs") > due.index("monitoring-snapshot")
 
 
 def test_the_disk_is_checked_on_every_deploy():
