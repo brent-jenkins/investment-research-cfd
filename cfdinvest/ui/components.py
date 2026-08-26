@@ -427,53 +427,10 @@ def render_sign_out(st) -> None:
         return
     with st.sidebar:
         st.divider()
-        render_theme_choice(st)
         st.caption(f"Signed in as **{user}**")
         if st.button("Log out", width="stretch", key="cfd_sign_out"):
             sign_out(st)
             st.rerun()
-
-
-def render_theme_choice(st) -> None:
-    """Light, dark, or follow the browser.
-
-    Streamlit offers its own light/dark switch only while an app has *not*
-    specified a theme. This one has -- a full palette in .streamlit/config
-    so the first paint matches the brand instead of flashing white -- and
-    the moment that was added the Settings menu began offering "Custom" and
-    nothing else. The palette supported both modes throughout; what went
-    missing was any way to ask for the other one.
-
-    Auto is the default and means follow the browser, because a dashboard
-    should match the rest of somebody's screen unless they say otherwise.
-    """
-    labels = {"auto": "Auto", "light": "Light", "dark": "Dark"}
-    current = st.session_state.get(theme.MODE_KEY) or "auto"
-
-    try:
-        chosen = st.segmented_control(
-            "Appearance",
-            options=list(labels),
-            format_func=lambda key: labels[key],
-            default=current,
-            key="cfd_theme_control",
-        )
-    except Exception:  # noqa: BLE001 - older Streamlit has no segmented control
-        chosen = st.radio(
-            "Appearance", list(labels), format_func=lambda key: labels[key],
-            index=list(labels).index(current), horizontal=True,
-            key="cfd_theme_control",
-        )
-
-    if chosen is None:
-        return
-    wanted = None if chosen == "auto" else chosen
-    if st.session_state.get(theme.MODE_KEY) != wanted:
-        if wanted is None:
-            st.session_state.pop(theme.MODE_KEY, None)
-        else:
-            st.session_state[theme.MODE_KEY] = wanted
-        st.rerun()
 
 
 def page_setup(st, title: str, *, icon: str = "📈", subtitle: str = "") -> dict:

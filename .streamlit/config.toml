@@ -1,20 +1,37 @@
-# Streamlit's own theme, so the first paint matches the app rather than
-# flashing light and then being restyled.
+# Streamlit's own theme, in both modes.
 #
-# cfdinvest's stylesheet (cfdinvest/ui/theme.py) supports both modes and
-# follows the viewer's choice; this only sets which one they start in. Dark
-# is the default because it matches the other CFDINVEST app, and because a
-# dashboard someone leaves open all day should not be a white rectangle.
+# Expressed as [theme.light] and [theme.dark] rather than one flat palette,
+# which matters for a reason worth recording: a single custom theme replaces
+# Streamlit's light/dark switch with "Custom" and nothing else, so branding
+# the app cost the reader any way to choose. The sub-theme form brands both
+# modes and leaves the switch working, which is what was wanted all along --
+# we had been working around Streamlit's theming instead of using it.
+#
+# The values come from cfdinvest/ui/theme.py PALETTES, and a test asserts
+# they still match. Two places holding one colour is how a wordmark ends up
+# a different blue from the buttons beside it.
 
 [theme]
-base = "dark"
-# The brand blue. The same value as theme.BRAND["colour"], and it has to
-# stay that way -- a test asserts it, because two places holding one colour
-# is how a wordmark ends up a different blue from the buttons beside it.
+# The brand blue, identical in both modes. It is the one colour that does
+# not bend to the contrast rule, because a wordmark that changes colour
+# between light and dark is no longer a wordmark.
 primaryColor = "#00C2FF"
-backgroundColor = "#0E1117"
-secondaryBackgroundColor = "#161B22"
-textColor = "#E6EDF3"
+
+[theme.dark]
+backgroundColor = "#0B0C10"
+secondaryBackgroundColor = "#1F2833"
+textColor = "#C5C6C7"
+linkColor = "#66FCF1"
+
+[theme.light]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F3F5F6"
+# The dark palette's panel colour promoted to text: the same brand navy,
+# now carrying the contrast instead of the background.
+textColor = "#1F2833"
+# #66FCF1 fails badly on white, so light mode keeps the hue and drops the
+# luminance until it passes.
+linkColor = "#0E7C77"
 
 [server]
 # Load-bearing in deployment: without it Streamlit binds every interface and

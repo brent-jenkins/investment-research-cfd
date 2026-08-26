@@ -1734,13 +1734,25 @@ def test_the_brand_blue_has_one_value():
     assert declared.group(1).upper() == theme.BRAND["colour"].upper()
 
 
-def test_the_dashboard_starts_dark():
-    """It matches the other CFDINVEST app, and a dashboard left open all day
-    should not be a white rectangle. The stylesheet still follows a viewer
-    who switches."""
+def test_the_dashboard_follows_the_viewer_rather_than_forcing_a_mode():
+    """Changed deliberately: it used to start dark and offer no choice.
+
+    ``base = "dark"`` with one flat palette meant Streamlit showed "Custom"
+    in place of its light/dark control, so the app was dark for everyone and
+    nobody could say otherwise. Both modes are branded now and the viewer's
+    own preference decides, which is the ordinary behaviour of a web page
+    and the reason the switch is back.
+
+    What is given up is the guarantee that a dashboard left open all day is
+    not a white rectangle. That is now the viewer's call, which is where it
+    belongs.
+    """
     config = Path(".streamlit/config.toml").read_text(encoding="utf-8")
 
-    assert 'base = "dark"' in config
+    assert 'base = "dark"' not in config, (
+        "a forced base overrides the per-mode palettes and hides the switch"
+    )
+    assert "[theme.dark]" in config and "[theme.light]" in config
     assert set(theme.MODES) == {"light", "dark"}, "both modes stay supported"
 
 
@@ -2656,3 +2668,44 @@ def test_the_signal_list_stays_compact(populated):
         "a bordered card per signal is back"
     )
     assert "#### " not in body, "a heading per signal is back"
+
+
+def test_the_streamlit_theme_brands_both_modes():
+    """M164: branding the app at the cost of the reader's light/dark switch.
+
+    A single flat ``[theme]`` palette replaces Streamlit's light/dark
+    control with "Custom" and nothing else, so specifying brand colours
+    silently removed any way to choose. The sub-theme form brands both and
+    leaves the switch working.
+
+    The values are asserted against theme.PALETTES rather than restated, so
+    the config and the stylesheet cannot drift into being two different
+    blues.
+    """
+    import tomllib
+
+    from cfdinvest.ui import theme
+
+    config = tomllib.loads(
+        (Path(".streamlit") / "config.toml").read_text(encoding="utf-8")
+    )
+    block = config.get("theme") or {}
+
+    assert "light" in block and "dark" in block, (
+        "only one mode is branded -- Streamlit will drop the light/dark switch"
+    )
+    # A flat palette alongside the sub-themes would reintroduce the problem.
+    for flat in ("backgroundColor", "secondaryBackgroundColor", "textColor"):
+        assert flat not in block, f"theme.{flat} is set flat, overriding both modes"
+
+    for mode in ("light", "dark"):
+        palette = theme.PALETTES[mode]
+        assert block[mode]["backgroundColor"].upper() == palette["background"].upper()
+        assert (
+            block[mode]["secondaryBackgroundColor"].upper() == palette["panel"].upper()
+        )
+        assert block[mode]["textColor"].upper() == palette["text"].upper()
+
+    assert block["primaryColor"].upper() == theme.BRAND["colour"].upper(), (
+        "the wordmark blue and the widget blue have drifted apart"
+    )

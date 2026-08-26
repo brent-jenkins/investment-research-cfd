@@ -137,14 +137,11 @@ def active_mode(st=None) -> str:
     if st is None:
         return "light"
 
-    # The viewer's own choice, made in this app's sidebar, wins over
-    # everything else.
-    #
-    # It has to exist because config.toml specifies a complete custom theme,
-    # and Streamlit drops its own light/dark switch as soon as one is given
-    # -- the Settings menu offers "Custom" and nothing else. The palette
-    # here has always supported both modes; what went missing was any way
-    # for a reader to ask for the other one.
+    # An explicit override, if anything set one. Nothing in the app does
+    # any more: config.toml brands both modes as [theme.light] and
+    # [theme.dark], so Streamlit's own switch works and reports its result
+    # through st.context.theme below. The key is kept because a test and any
+    # future embedding may want to force a mode without a browser.
     try:
         chosen = st.session_state.get(MODE_KEY)
         if chosen in MODES:
