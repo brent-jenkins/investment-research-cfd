@@ -285,40 +285,61 @@ def test_a_selection_records_what_it_rejected_and_cannot_be_edited(tmp_path, mon
     assert both[0]["as_of"].startswith("2026-08-26"), "history was reordered or lost"
 
 
-def test_the_daily_lake_keeps_being_refreshed_after_the_move_to_hourly():
+def test_the_daily_lake_keeps_being_refreshed_after_the_move_to_hourly(monkeypatch):
     """M176: a lake that quietly stops updating.
 
     Every scheduled ingest follows ``config.market.interval``. The moment
-    the engine moved to hourly bars, that became 1h -- and the daily lake
+    the engine moved to hourly bars that became 1h, and the daily lake
     stopped being refreshed by anything at all. Nothing broke, which is
-    exactly the problem: the universe screen reads daily bars, and so does
-    any analysis wanting more than the two years the vendor serves intraday.
-    The failure would have surfaced as a screen ranking on months-old
-    turnover, with no error anywhere.
+    exactly the problem: the universe screen reads daily bars, so the
+    failure would have surfaced as a screen ranking on months-old turnover,
+    with no error anywhere.
 
-    In the daily job rather than the intraday one, because a daily bar
-    changes once a day and re-fetching it every fifteen minutes would ask
-    the vendor for the same row ninety times a session.
+    Asserted on what the job *does*, not on which identifiers appear near
+    it. The first version of this test searched the source for
+    ``_SCREENING_INTERVAL`` and passed against a mutation that disabled the
+    branch, because the name was still sitting inside the dead code.
     """
-    import inspect
+    from cfdinvest.config import AppConfig, MarketDataConfig
+    from cfdinvest.schedule import app, runner as runner_module
 
-    from cfdinvest.schedule import app
+    asked: list[str] = []
 
-    source = inspect.getsource(app)
-    assert '_SCREENING_INTERVAL = "1d"' in source
+    def fake_refresh(repository, tickers, backtest):
+        asked.append(backtest.interval)
 
-    daily = source[source.index('elif name == "ingest-daily":"'.rstrip('"')):]
-    daily = daily[: daily.index('elif name == "ingest-intraday":')]
-    assert "_SCREENING_INTERVAL" in daily, (
-        "the daily job does not top up the screening interval"
+    monkeypatch.setattr(runner_module, "_refresh", fake_refresh)
+    monkeypatch.setattr(app, "DataRepository", lambda *a, **k: object())
+
+    config = AppConfig(
+        market=MarketDataConfig(tickers=("AAPL", "MSFT"), interval="1h")
     )
-    assert "_refresh" in daily
+    class Args:
+        no_email = True
+        interval = None
+        start = None
+        end = None
+        tickers = None
+        account = None
+        dry_run = False
 
-    intraday = source[source.index('elif name == "ingest-intraday":'):]
-    intraday = intraday[: intraday.index("elif name ==", 10)]
-    assert "_SCREENING_INTERVAL" not in intraday, (
-        "the intraday job re-fetches daily bars every fifteen minutes"
+    app.run_daemon_job("ingest-daily", Args(), config)
+
+    # The trading interval arrives as None, which means "whatever the config
+    # says" and is resolved by the repository at read time.
+    assert asked, "nothing was refreshed at all"
+    assert asked[0] in (None, "1h"), f"unexpected trading interval: {asked[0]}"
+    assert "1d" in asked, (
+        f"the daily lake was not topped up -- refreshed only {asked}"
     )
+
+    # And a deployment already trading daily bars must not fetch them twice.
+    asked.clear()
+    daily_config = AppConfig(
+        market=MarketDataConfig(tickers=("AAPL",), interval="1d")
+    )
+    app.run_daemon_job("ingest-daily", Args(), daily_config)
+    assert asked.count("1d") <= 1, f"the daily lake was fetched twice: {asked}"
 
 
 def test_the_screen_reads_daily_bars_whatever_the_engine_trades():

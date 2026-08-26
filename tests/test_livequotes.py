@@ -566,7 +566,10 @@ def test_the_daemons_job_names_all_map_to_something_runnable():
     from cfdinvest.schedule import daemon as daemon_module
     from cfdinvest.schedule import app as app_module
 
-    body = inspect.getsource(app_module._command_daemon)
+    # The dispatch lives in run_daemon_job, lifted out of the loop so it
+    # can be called by a test at all -- a branch nothing can call is a
+    # branch nothing can check.
+    body = inspect.getsource(app_module.run_daemon_job)
     for job in daemon_module.JOBS:
         assert f'"{job}"' in body, f"the daemon schedules {job} but cannot run it"
 

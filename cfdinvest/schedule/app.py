@@ -778,6 +778,90 @@ def _command_paper_book(args, app_config, smtp=None, transport=None) -> int:
     return EXIT_OK
 
 
+def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
+    """Run one daemon job by name.
+
+    Module level, not a closure inside the loop. It was a closure, which
+    made the dispatch untestable -- and the one bug it hid was a lake that
+    silently stopped refreshing when the trading interval changed. A branch
+    nothing can call is a branch nothing can check.
+    """
+    if name == "poll-live-quotes":
+        _command_poll_live_quotes(
+            _job_args(args, "poll-live-quotes"), app_config
+        )
+    elif name == "ingest-daily":
+        # Ingestion alone, not a pipeline run with --refresh. The two are
+        # separate jobs here precisely so the pipeline reads a lake that
+        # ingestion has finished writing, and folding them back together
+        # would put that ordering back inside one command.
+        backtest = _backtest_config(args, app_config)
+        repository = DataRepository(app_config)
+        runner_module._refresh(repository, backtest.tickers or [], backtest)
+
+        # And the daily bars, whatever interval the engine trades on.
+        #
+        # Every scheduled ingest follows config.market.interval, which is
+        # now 1h -- so the moment the engine moved to hourly bars the
+        # daily lake stopped being refreshed by anything and began
+        # quietly going stale. Nothing broke, which is the problem: the
+        # universe screen reads daily bars, and so does any analysis
+        # wanting more than the two years the vendor serves intraday.
+        #
+        # Here rather than in the intraday job because a daily bar
+        # changes once a day, and re-fetching it every fifteen minutes
+        # would be asking the vendor for the same row ninety times a
+        # session.
+        # Resolved, not compared raw. `backtest.interval` is None when
+        # nothing overrode it, meaning "whatever the config says" -- so
+        # comparing it directly would top up even on a deployment already
+        # trading daily bars, fetching the same rows twice.
+        trading = backtest.interval or getattr(app_config.market, "interval", None)
+        if trading != _SCREENING_INTERVAL:
+            try:
+                import dataclasses as _dc
+
+                runner_module._refresh(
+                    repository, backtest.tickers or [],
+                    _dc.replace(backtest, interval=_SCREENING_INTERVAL),
+                )
+            except Exception as error:  # noqa: BLE001
+                logger.warning(
+                    "Could not top up %s bars: %s", _SCREENING_INTERVAL, error
+                )
+    elif name == "ingest-intraday":
+        # The same top-up, on the trading cadence. Separate from the
+        # daily job because they do different work: this one keeps the
+        # recent hourly bars current, the daily one refreshes the full
+        # history and the macro series.
+        backtest = _backtest_config(args, app_config)
+        runner_module._refresh(
+            DataRepository(app_config), backtest.tickers or [], backtest
+        )
+    elif name in ("run-daily", "run-intraday"):
+        _command_run_once(
+            _job_args(args, "run-once", refresh=False),
+            app_config, smtp, transport,
+        )
+    elif name == "monitoring-snapshot":
+        _command_monitor(
+            _job_args(args, "monitor", alert=not args.no_email),
+            app_config, smtp, transport,
+        )
+    elif name == "risk-snapshot":
+        _command_risk_snapshot(_job_args(args, "risk-snapshot"), app_config)
+    elif name == "advisor-alert":
+        _command_advisor_alert(
+            _job_args(args, "advisor-alert"), app_config, smtp, transport
+        )
+    elif name == "paper-book":
+        _command_paper_book(
+            _job_args(args, "poll-live-quotes"), app_config, smtp, transport
+        )
+    elif name == "prune-runs":
+        _command_prune_runs(_job_args(args, "prune-runs"), app_config)
+
+
 def _command_daemon(args, app_config, smtp, transport) -> int:
     """Every scheduled job, in one loop, until stopped.
 
@@ -807,76 +891,9 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
         last_run = {}
     ticks = 0
 
-    def run_job(name: str) -> None:
-        if name == "poll-live-quotes":
-            _command_poll_live_quotes(
-                _job_args(args, "poll-live-quotes"), app_config
-            )
-        elif name == "ingest-daily":
-            # Ingestion alone, not a pipeline run with --refresh. The two are
-            # separate jobs here precisely so the pipeline reads a lake that
-            # ingestion has finished writing, and folding them back together
-            # would put that ordering back inside one command.
-            backtest = _backtest_config(args, app_config)
-            repository = DataRepository(app_config)
-            runner_module._refresh(repository, backtest.tickers or [], backtest)
-
-            # And the daily bars, whatever interval the engine trades on.
-            #
-            # Every scheduled ingest follows config.market.interval, which is
-            # now 1h -- so the moment the engine moved to hourly bars the
-            # daily lake stopped being refreshed by anything and began
-            # quietly going stale. Nothing broke, which is the problem: the
-            # universe screen reads daily bars, and so does any analysis
-            # wanting more than the two years the vendor serves intraday.
-            #
-            # Here rather than in the intraday job because a daily bar
-            # changes once a day, and re-fetching it every fifteen minutes
-            # would be asking the vendor for the same row ninety times a
-            # session.
-            if backtest.interval != _SCREENING_INTERVAL:
-                try:
-                    import dataclasses as _dc
-
-                    runner_module._refresh(
-                        repository, backtest.tickers or [],
-                        _dc.replace(backtest, interval=_SCREENING_INTERVAL),
-                    )
-                except Exception as error:  # noqa: BLE001
-                    logger.warning(
-                        "Could not top up %s bars: %s", _SCREENING_INTERVAL, error
-                    )
-        elif name == "ingest-intraday":
-            # The same top-up, on the trading cadence. Separate from the
-            # daily job because they do different work: this one keeps the
-            # recent hourly bars current, the daily one refreshes the full
-            # history and the macro series.
-            backtest = _backtest_config(args, app_config)
-            runner_module._refresh(
-                DataRepository(app_config), backtest.tickers or [], backtest
-            )
-        elif name in ("run-daily", "run-intraday"):
-            _command_run_once(
-                _job_args(args, "run-once", refresh=False),
-                app_config, smtp, transport,
-            )
-        elif name == "monitoring-snapshot":
-            _command_monitor(
-                _job_args(args, "monitor", alert=not args.no_email),
-                app_config, smtp, transport,
-            )
-        elif name == "risk-snapshot":
-            _command_risk_snapshot(_job_args(args, "risk-snapshot"), app_config)
-        elif name == "advisor-alert":
-            _command_advisor_alert(
-                _job_args(args, "advisor-alert"), app_config, smtp, transport
-            )
-        elif name == "paper-book":
-            _command_paper_book(
-                _job_args(args, "poll-live-quotes"), app_config, smtp, transport
-            )
-        elif name == "prune-runs":
-            _command_prune_runs(_job_args(args, "prune-runs"), app_config)
+    run_job = lambda name: run_daemon_job(  # noqa: E731
+        name, args, app_config, smtp, transport
+    )
 
     print(
         "cfdinvest scheduler daemon. Quotes every "
