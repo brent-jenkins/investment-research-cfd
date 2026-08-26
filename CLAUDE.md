@@ -10,21 +10,49 @@ yourself. It has never placed one.
 
 These are standing instructions from the project owner, not preferences.
 
-- **No trade execution.** No broker client, no order endpoint, no automation
-  of the Trading 212 interface, anywhere.
-- **No broker API calls.** No Trading 212 endpoints, private or public. The
-  only outbound network calls in the whole project are FRED, yfinance
-  (ingestion only) and SMTP.
+- **Trading 212 is never automated.** No T212 endpoints, public or private,
+  and no automation of its interface. This is not a preference either — the
+  owner confirmed there is no CFD API, so any automation would mean driving
+  the web UI, which breaches their terms.
+- **Execution is opt-in, explicit, and off by default.** A broker client may
+  exist; it may not place an order because a config file drifted. Anything
+  that can trade says so in its name, is gated on an explicit setting, and
+  refuses to act against a live account without one.
+- **The paper book stays a simulation.** It must never become the thing that
+  places orders. Its whole value is being a record nobody could have
+  edited after the outcome, and a book that sometimes trades is not that.
 - **No credentials in code, in logs, or in the repository.** Secrets are read
-  from the environment or `/etc/cfdinvest/env`. The dashboard redacts.
+  from the environment or `/etc/cfdinvest/env`. The dashboard redacts. This
+  matters more now than it did: a broker API key and password are not a
+  FRED key, and a leak is a funded account rather than a rate limit.
+- **Demo before live.** A broker integration is developed and measured
+  against the demo environment. Pointing it at a live account is a separate,
+  deliberate act.
 - **Read-only except for the layer's own writes.** Each layer names exactly
   what it may write in its README.
 - **No config mutation.**
 
-Several packages enforce these structurally — `tests/` parses their imports
-and fails the build on `requests`, `urllib`, `selenium`, the backtest engine,
-or the scheduler's runner. Keep those tests passing rather than adjusting
-them.
+Several packages enforce their own isolation structurally — `tests/` parses
+their imports and fails the build on `requests`, `urllib`, `selenium`, the
+backtest engine, or the scheduler's runner. Those restrictions are
+package-scoped and still stand: the analysis, bias, insights and refinement
+layers have no business talking to a network whatever the broker situation
+is. Keep them passing rather than adjusting them.
+
+**What changed, and when.** Until 2026-08-26 this section forbade broker API
+calls and trade execution outright. That constraint existed because Trading
+212 cannot be automated, not because automation was unwanted — so it was
+contingent, and it lapsed when an IG demo CFD account was opened. It is
+replaced rather than deleted, because most of what it protected is
+unchanged and the rest matters more once real credentials exist.
+
+The first use is read-only and is worth stating on its own terms: every one
+of the nineteen instruments currently charges an *estimated* spread, a
+single per-class constant of 4bp round trip, and that constant is 79% of all
+modelled cost against a measured break-even of about 4bp of further
+slippage. The largest number in the cost model is a guess. Replacing it with
+nineteen measured ones is the point of the integration; placing orders is a
+later and separate decision.
 
 ### Before every commit
 
