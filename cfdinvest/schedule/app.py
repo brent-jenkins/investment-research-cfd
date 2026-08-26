@@ -190,6 +190,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     quotes.add_argument("--account", default=None)
 
+    paper = commands.add_parser(
+        "paper-book",
+        help="one pass of the simulated forward-test book",
+    )
+    paper.add_argument(
+        "--account",
+        help="which account's book to write; the shared root when unset",
+    )
+
     daemon_parser = commands.add_parser(
         "daemon",
         help="run every scheduled job in one loop until stopped",
@@ -389,6 +398,7 @@ def _backtest_config(args, app_config) -> BacktestConfig:
             use_volume=app_config.strategy.use_volume,
             volume_heavy_ratio=app_config.strategy.volume_heavy_ratio,
             volume_heavy_multiplier=app_config.strategy.volume_heavy_multiplier,
+            environment_in_confidence=app_config.strategy.environment_in_confidence,
         ),
     )
 
@@ -675,6 +685,64 @@ def _command_poll_live_quotes(args, app_config) -> int:
     return EXIT_OK
 
 
+def _command_paper_book(args, app_config) -> int:
+    """One pass of the simulated book. Writes a file and nothing else.
+
+    Runs unattended and sends nothing: the point is a record to score in a
+    few weeks, not a notification. Every cost is the real one, from the
+    recorded Trading 212 table.
+    """
+    from cfdinvest.advisor.papertrade_run import run_all_cohorts
+    from cfdinvest.livequotes.poller import poll_live_quotes
+    from cfdinvest.persist import readers
+
+    account = getattr(args, "account", None)
+    strategy = app_config.strategy
+
+    try:
+        run_id = readers.load_latest_run(app_config, account=account)
+        frame = (
+            None if run_id is None
+            else readers.load_frame("signals", run_id, app_config, account)
+        )
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Paper book: no signals to read (%s)", error)
+        return EXIT_OK
+
+    latest = []
+    if frame is not None and not getattr(frame, "empty", True):
+        working = frame.reset_index() if hasattr(frame, "reset_index") else frame
+        if "timestamp" in working.columns:
+            stamps = pd.to_datetime(working["timestamp"], utc=True, errors="coerce")
+            working = working[stamps == stamps.max()]
+        latest = working.to_dict("records")
+
+    wanted = [str(row.get("ticker") or "") for row in latest if row.get("ticker")]
+    # Anything already open needs a mark even if it no longer signals.
+    from cfdinvest.advisor import papertrade
+
+    wanted += list(papertrade.open_positions(papertrade.load_book(app_config, account)))
+    # And the currency pairs, always. The £1,000 stake is exposure in
+    # sterling, so a dollar-priced instrument needs the rate to size at all
+    # -- without it the position is wrong by the rate itself.
+    wanted += ["GBPUSD=X", "EURGBP=X", "USDJPY=X", "USDCAD=X", "USDCHF=X"]
+    prices = {
+        ticker: value
+        for ticker, value in poll_live_quotes(sorted(set(wanted))).items()
+        if value is not None
+    }
+
+    summaries = run_all_cohorts(
+        latest, prices, config=app_config, account=account,
+    )
+    for summary in summaries:
+        print(
+            f"Paper book [{summary['cohort']}]: opened {summary['opened']}, "
+            f"closed {summary['closed']}, {summary['still_open']} open."
+        )
+    return EXIT_OK
+
+
 def _command_daemon(args, app_config, smtp, transport) -> int:
     """Every scheduled job, in one loop, until stopped.
 
@@ -722,6 +790,8 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
             _command_advisor_alert(
                 _job_args(args, "advisor-alert"), app_config, smtp, transport
             )
+        elif name == "paper-book":
+            _command_paper_book(_job_args(args, "poll-live-quotes"), app_config)
         elif name == "prune-runs":
             _command_prune_runs(_job_args(args, "prune-runs"), app_config)
 
@@ -965,6 +1035,8 @@ def main(argv: list[str] | None = None) -> int:
             return _command_prune_runs(args, app_config)
         if args.command == "poll-live-quotes":
             return _command_poll_live_quotes(args, app_config)
+        if args.command == "paper-book":
+            return _command_paper_book(args, app_config)
         if args.command == "daemon":
             return _command_daemon(args, app_config, smtp, transport)
     except KeyboardInterrupt:

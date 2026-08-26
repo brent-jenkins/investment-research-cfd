@@ -171,31 +171,31 @@ level = "INFO"
 # the regime is. Tilting returned -40.9% against the gate's -54.7% over the
 # full history, and the ordering carries real information -- flattening the
 # tilts entirely gave -82.5%.
-regime_mode = "gate"          # tested better: "tilt"
+regime_mode = "tilt"          # was "gate"; tilting returned -40.9% against -54.7%
 
 # Whether a flat signal closes an open position. Reading flat as "no view"
 # rather than "get out" quadrupled gross P&L.
-exit_on_flat = true           # tested better: false
-exit_on_opposing_signal = true
+exit_on_flat = false          # was true; reading flat as "no view" quadrupled gross P&L
+exit_on_opposing_signal = false
 
 # Close a position that is still behind after this many days, financing
 # deducted. 73% of eventual losers are already behind on day one against 29%
 # of eventual winners. On indices this took the win rate from 39.5% to 69.5%.
 # Leave unset to disable.
-# time_stop_days = 1
+time_stop_days = 1            # win rate 39.5% -> 69.5% on indices
 
 # Days an instrument is left alone after a position in it closes. Trips
 # reopened within 21 days lost £1,489 across 145 of them; those opened after a
 # longer gap made £19,954 across 512.
-reentry_cooldown_days = 0     # tested better: 14
+reentry_cooldown_days = 14    # was 0; fast re-entries lost £1,489 across 145 trips
 
 # Relative drift before an open position is resized. At 3.0 and above, drift
 # rebalancing is off entirely and only opens and closes remain.
-rebalance_threshold = 0.25    # tested better: 3.0
+rebalance_threshold = 3.0     # was 0.25; drift rebalancing off entirely
 
 # Notional per unit of signal size, as a multiple of equity. Raising this is
 # gearing rather than edge -- efficiency peaks around 4 and degrades after.
-exposure_per_unit_size = 1.0  # tested better: 4.0
+exposure_per_unit_size = 4.0  # was 1.0; efficiency peaks here and degrades after
 
 # Days either side of a reporting date to hold no position. Correct but rarely
 # binding: only 0.5% of share position-days fall inside a window, because the
@@ -214,7 +214,7 @@ earnings_blackout_days = 0
 #
 # The only risk signal here that works on indices, which file nothing with
 # any regulator.
-use_volume = false            # measured, not yet enabled
+use_volume = true             # was false; same return, a tenth off the drawdown
 volume_heavy_ratio = 1.5      # multiples of the 20-day median
 volume_heavy_multiplier = 0.6
 
@@ -228,4 +228,9 @@ fx_conversion_fee_pct = 0.005
 # environment multiplier is folded into the confidence score and is 0.5 in
 # high volatility, so any bar above 0.5 is unreachable on roughly one day in
 # three. The dashboard says so when it happens rather than reporting silence.
+# Folded into confidence, the environment multiplier caps the score at 0.5
+# in high volatility, which makes a 0.60 bar a blackout on roughly one day
+# in three rather than a filter. Off, the bar means what it says and the
+# environment still scales the size.
+environment_in_confidence = false
 suggestion_confidence = 0.60

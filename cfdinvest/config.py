@@ -257,6 +257,14 @@ class StrategyConfig:
     fx_conversion_fee_pct: float = 0.005
 
     # -- what the advisor will suggest -------------------------------------- #
+    #: Whether the environment multiplier is folded into the confidence
+    #: score. ``True`` is the recorded behaviour and makes any bar above
+    #: 0.5 unreachable in high volatility -- roughly one day in three --
+    #: because the multiplier halves the score. ``False`` leaves the
+    #: environment to do its real job of scaling size, and lets a
+    #: confidence threshold mean what it says.
+    environment_in_confidence: bool = True
+
     #: Confidence a signal must reach to be offered as a trade. Note that
     #: the environment multiplier is folded into confidence, so a bar above
     #: 0.5 is unreachable whenever volatility is high -- roughly one day in

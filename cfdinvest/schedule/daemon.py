@@ -49,6 +49,7 @@ RUN_AT_UTC = (3, 5)
 JOBS: tuple[str, ...] = (
     "poll-live-quotes",
     "advisor-alert",
+    "paper-book",
     "ingest-daily",
     "run-daily",
     "monitoring-snapshot",
@@ -108,6 +109,10 @@ def jobs_due(now, last_run: Mapping[str, object] | None = None) -> list[str]:
         # Straight after the poll, on the same cadence: the whole point of a
         # fresh price is noticing what it means before you are asked.
         due.append("advisor-alert")
+        # The paper book on the same cadence, and for the same reason: a
+        # forward record is only worth having if the decision was written
+        # down at a moment it could actually have been acted on.
+        due.append("paper-book")
 
     if _due_daily(moment, history.get("ingest-daily"), INGEST_AT_UTC):
         due.append("ingest-daily")

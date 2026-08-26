@@ -344,9 +344,13 @@ def test_quotes_are_owed_every_five_minutes():
     at = lambda m: pd.Timestamp("2026-08-25 04:00", tz="UTC") + pd.Timedelta(minutes=m)
 
     assert daemon.jobs_due(at(4), last) == []
-    # The advisor rides the same tick: a fresh price is only useful if
-    # something notices what it means.
-    assert daemon.jobs_due(at(5), last) == ["poll-live-quotes", "advisor-alert"]
+    # The advisor and the paper book ride the same tick: a fresh price is
+    # only useful if something notices what it means, and a forward record
+    # is only worth having if the decision was written down at a moment it
+    # could actually have been acted on.
+    assert daemon.jobs_due(at(5), last) == [
+        "poll-live-quotes", "advisor-alert", "paper-book",
+    ]
 
 
 # --------------------------------------------------------------------------- #
