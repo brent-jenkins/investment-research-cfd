@@ -91,7 +91,16 @@ components.render_tiles(st, [
 st.divider()
 st.subheader("Scheduler health")
 
+# What the poller is actually asked to price: the confirmed book *and* the
+# paper book. Counting only confirmed positions had this page reporting
+# "nothing is confirmed open, so there is nothing to price" while the
+# poller was pricing three instruments for the forward record every five
+# minutes -- a row that says a working job has nothing to do is how a table
+# teaches you to stop reading it.
 held = components.confirmed_open_count(data)
+paper_source = data.get("paper")
+paper_value = getattr(paper_source, "value", None) or {}
+held += int((paper_value.get("pooled") or {}).get("open") or 0)
 st.caption(
     "Each job's last run is taken from the artefact it wrote where it writes "
     "one, and otherwise from the daemon's own record — the paper book writes "

@@ -119,7 +119,8 @@ def job_report(
             if not quotes_expected:
                 rows.append(JobRow(
                     name, schedule, last, None, "pass",
-                    "Nothing is confirmed open, so there is nothing to price.",
+                    "Nothing is open in either book, so there is nothing "
+                    "to price.",
                 ))
                 continue
             next_due = None if last is None else last + pd.Timedelta(minutes=interval)
@@ -278,9 +279,16 @@ def gather_evidence(config=None, account: str | None = None) -> dict[str, Any]:
 
     guarded("poll-live-quotes", newest_quote)
     guarded("ingest-daily", newest_ingest)
-    guarded("run-daily", newest_run)
     guarded("monitoring-snapshot", newest_monitoring)
     guarded("risk-snapshot", newest_risk)
+
+    # run-daily and run-intraday both write a run directory, so the newest
+    # directory cannot say which of them made it. Dating run-daily by it
+    # reported the intraday run's time under the daily row, and then marked
+    # the snapshots that correctly follow the daily run as "older than the
+    # most recent run" -- two false warnings for a scheduler doing exactly
+    # what it was told. Where an artefact cannot distinguish the jobs, the
+    # daemon's own record is the only thing that can.
 
     # The rest have no artefact of their own to date. The paper book writes a
     # file only when it opens something, and "decided not to open" is a run
@@ -297,6 +305,12 @@ def gather_evidence(config=None, account: str | None = None) -> dict[str, Any]:
 
         return read
 
+    for job in ("run-daily", "run-intraday"):
+        guarded(job, recorded(job))
+
+    # Everything else falls back to the daemon's record only when it wrote
+    # no artefact to be dated by -- the paper book writes a file solely when
+    # it opens something, and declining to trade is a run that happened.
     for job in evidence:
         if evidence.get(job) is None:
             guarded(job, recorded(job))

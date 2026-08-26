@@ -2514,3 +2514,95 @@ def test_a_position_that_cannot_be_priced_is_still_shown(
     assert len(marks) == 1, "an unpriced position was dropped from the table"
     assert marks[0]["priced"] is False
     assert marks[0]["value_gbp"] is None, "an unvalued position must not show a value"
+
+
+def test_the_daily_run_is_not_dated_by_the_intraday_one():
+    """M161: two false warnings for a scheduler doing as it was told.
+
+    run-daily and run-intraday both write a run directory, so the newest
+    directory cannot say which of them made it. Dating run-daily by it put
+    the intraday run's time under the daily row, and then marked the
+    snapshots that correctly follow the daily run as "older than the most
+    recent run" -- risk-snapshot and prune-runs both reported behind
+    schedule while the daemon's own record showed them running seconds
+    after run-daily, exactly as designed.
+
+    A status table that cries wolf is worse than no status table.
+    """
+    import pandas as pd
+
+    from cfdinvest.ui import vitals
+
+    # The daily run and its snapshots at 03:05; an intraday run since.
+    evidence = {
+        "poll-live-quotes": "2026-08-26T17:20:00Z",
+        "advisor-alert": "2026-08-26T17:20:00Z",
+        "paper-book": "2026-08-26T17:20:00Z",
+        "ingest-daily": "2026-08-26T03:00:00Z",
+        "run-daily": "2026-08-26T03:05:00Z",
+        "ingest-intraday": "2026-08-26T17:10:00Z",
+        "run-intraday": "2026-08-26T17:10:00Z",
+        "monitoring-snapshot": "2026-08-26T03:05:30Z",
+        "risk-snapshot": "2026-08-26T03:05:31Z",
+        "prune-runs": "2026-08-26T03:05:32Z",
+    }
+    rows = {
+        row.name: row
+        for row in vitals.job_report(
+            evidence, now=pd.Timestamp("2026-08-26T17:25:00Z"), session_open=True
+        )
+    }
+
+    for job in ("risk-snapshot", "prune-runs", "monitoring-snapshot"):
+        assert rows[job].status == "pass", (
+            f"{job} reported {rows[job].status}: {rows[job].detail}"
+        )
+
+    # And a snapshot that genuinely lags its own daily run is still caught.
+    stale = dict(evidence, risk_snapshot=None)
+    stale["risk-snapshot"] = "2026-08-25T03:05:31Z"
+    stale["run-daily"] = "2026-08-26T03:05:00Z"
+    lagging = {
+        row.name: row
+        for row in vitals.job_report(
+            stale, now=pd.Timestamp("2026-08-26T17:25:00Z"), session_open=True
+        )
+    }
+    assert lagging["risk-snapshot"].status == "warning", (
+        "a snapshot older than its own daily run must still be flagged"
+    )
+
+
+def test_the_daily_run_row_is_dated_by_the_daemon_not_the_run_directory(monkeypatch):
+    """The seam the previous test missed.
+
+    Asserting on job_report with hand-fed evidence proved the *reporting*
+    logic was sound while leaving the actual defect untouched -- it lived in
+    gather_evidence, which chose the wrong source. The first version of this
+    test passed happily against the mutation that reintroduced it.
+    """
+    import pandas as pd
+
+    from cfdinvest.persist import readers, scheduler_state
+    from cfdinvest.ui import vitals
+
+    # A run directory stamped by the most recent *intraday* run.
+    monkeypatch.setattr(
+        readers, "load_latest_run", lambda *a, **k: "20260826T171000Z"
+    )
+    monkeypatch.setattr(
+        scheduler_state, "last_job_runs",
+        lambda *a, **k: {
+            "run-daily": "2026-08-26T03:05:00Z",
+            "run-intraday": "2026-08-26T17:10:00Z",
+        },
+    )
+
+    evidence = vitals.gather_evidence(None)
+
+    daily = pd.Timestamp(evidence["run-daily"])
+    assert daily.hour == 3, (
+        f"run-daily dated {daily} -- that is the intraday run's directory, "
+        "not the daily job"
+    )
+    assert pd.Timestamp(evidence["run-intraday"]).hour == 17
