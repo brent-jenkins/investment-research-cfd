@@ -1,0 +1,13 @@
+[Unit]
+Description=Watch for a cfdinvest deploy request
+Documentation=https://github.com/brent-jenkins/cfdinvest
+
+[Path]
+# Written by cfdinvest-webhook.service once a push to main has been
+# authenticated. The watcher is how an unprivileged, network-facing process
+# asks for privileged work without ever holding privilege itself.
+PathChanged=/run/cfdinvest/deploy.request
+Unit=cfdinvest-deploy.service
+
+[Install]
+WantedBy=multi-user.target

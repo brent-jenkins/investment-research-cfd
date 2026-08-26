@@ -75,13 +75,51 @@ def test_the_caddyfile_rotates_its_log():
 # --------------------------------------------------------------------------- #
 # systemd
 # --------------------------------------------------------------------------- #
+#: The one unit permitted to run as root, and why.
+#:
+#: A deploy restarts services and may install packages; no unprivileged user
+#: can do either. What makes it acceptable is that nothing on the network can
+#: reach it. It is started by cfdinvest-deploy.path and by nothing else, it
+#: takes no input, and it reads nothing from the request file but the fact
+#: that it changed. The listener that *is* reachable runs as cfdinvest and
+#: holds no privilege at all -- which is why it is a separate unit rather
+#: than the single root listener the other two apps on this machine use.
+PRIVILEGED_UNITS = {"cfdinvest-deploy.service"}
+
+
 def test_the_units_exist():
     assert {path.name for path in UNITS} == {
         "cfdinvest-dashboard.service",
         "cfdinvest-pipeline.service",
         "cfdinvest-monitor.service",
         "cfdinvest.service",
+        "cfdinvest-webhook.service",
+        "cfdinvest-deploy.service",
     }
+
+
+def test_only_the_deploy_unit_is_privileged_and_it_is_unreachable():
+    """Root is allowed in exactly one place, and only where nothing can call it.
+
+    The compensating condition matters more than the exemption: a root unit
+    that took a network request would be a shell on the box for anyone who
+    found the path.
+    """
+    for unit in UNITS:
+        if unit.name not in PRIVILEGED_UNITS:
+            continue
+        body = text(unit)
+        assert "User=root" in body
+        # Started by the path watcher alone.
+        assert "ExecStart=" in body
+        assert "ListenStream" not in body and "Socket" not in body, (
+            f"{unit.name} runs as root and must not listen on anything"
+        )
+
+    listener = next(u for u in UNITS if u.name == "cfdinvest-webhook.service")
+    body = text(listener)
+    assert "User=cfdinvest" in body, "the network-facing unit must not be root"
+    assert "NoNewPrivileges=true" in body
 
 
 def test_only_one_unit_may_schedule_the_pipeline():
@@ -111,6 +149,8 @@ def test_every_unit_reads_its_secrets_from_a_file(unit):
 
 @pytest.mark.parametrize("unit", UNITS, ids=lambda p: p.name)
 def test_every_unit_runs_as_the_service_user(unit):
+    if unit.name in PRIVILEGED_UNITS:
+        pytest.skip(f"{unit.name} is the deploy unit; see PRIVILEGED_UNITS")
     body = text(unit)
     assert "User=cfdinvest" in body
     assert "User=root" not in body
@@ -118,6 +158,10 @@ def test_every_unit_runs_as_the_service_user(unit):
 
 @pytest.mark.parametrize("unit", UNITS, ids=lambda p: p.name)
 def test_every_unit_is_confined(unit):
+    if unit.name in PRIVILEGED_UNITS:
+        # Confinement and "restart other services" are contradictory. The
+        # protection here is unreachability, asserted separately.
+        pytest.skip(f"{unit.name} is the deploy unit; see PRIVILEGED_UNITS")
     body = text(unit)
     assert "ProtectSystem=strict" in body
     assert "NoNewPrivileges=true" in body
@@ -149,7 +193,12 @@ def test_every_unit_invokes_something_that_exists(unit):
         name = Path(command).name
         # Console scripts a *dependency* installs into the same venv. Listed
         # rather than pattern-matched, so adding one is a deliberate act.
-        from_dependencies = {"streamlit", "python", "python3"}
+        # `bash` and `python3.11` are the OS interpreters the deploy pair
+        # runs: the listener must not depend on the project venv it exists
+        # to reinstall, and deploy.sh runs before any reinstall happens.
+        from_dependencies = {
+            "streamlit", "python", "python3", "python3.11", "bash",
+        }
 
         assert name in declared or name in from_dependencies, (
             f"{unit.name} runs {name!r}, which is neither a declared console "
@@ -264,7 +313,13 @@ _NOT_A_SECRET = re.compile(r"""^$|^["']?[{$<]|^["']{1,2}$""")
 
 @pytest.mark.parametrize(
     "path",
-    sorted(p for p in DEPLOYMENT.rglob("*") if p.is_file()),
+    # Compiled bytecode is not committed and is not text; importing the
+    # webhook listener from a test creates some, which the scan then tried
+    # to decode as UTF-8.
+    sorted(
+        p for p in DEPLOYMENT.rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts
+    ),
     ids=lambda p: str(p),
 )
 def test_no_deployment_file_carries_a_value_for_a_secret(path):
@@ -724,3 +779,99 @@ def test_the_monitoring_alert_carries_the_account_too():
         SmtpConfig.from_env({"CFD_ACCOUNT_MODE": "live"}),
     )
     assert message["Subject"].endswith("(live)")
+
+
+# --------------------------------------------------------------------------- #
+# The deploy listener
+# --------------------------------------------------------------------------- #
+def test_the_listener_rejects_an_unsigned_or_wrongly_signed_body():
+    """M88: signature verification accepts anything.
+
+    The endpoint is reachable by anyone who finds the path, and a request
+    that passes triggers a shell script as root. Verification is the only
+    thing between those two facts.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path("deployment").resolve()))
+    import webhook_listener as listener
+
+    secret = "correct horse battery staple"
+    body = b'{"ref": "refs/heads/main"}'
+    import hashlib
+    import hmac
+
+    good = "sha256=" + hmac.new(
+        secret.encode(), body, hashlib.sha256
+    ).hexdigest()
+
+    assert listener.verify_signature(secret, body, good)
+    assert not listener.verify_signature(secret, body, None)
+    assert not listener.verify_signature(secret, body, "")
+    assert not listener.verify_signature(secret, body, "sha256=deadbeef")
+    assert not listener.verify_signature("a different secret", body, good)
+    # A body altered after signing must fail even with a valid-looking header.
+    assert not listener.verify_signature(secret, body + b" ", good)
+
+
+def test_only_a_push_to_main_deploys():
+    """M89: any event deploys.
+
+    A tag, a fork's pull request or a push to a branch must not put code on
+    the server.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path("deployment").resolve()))
+    import webhook_listener as listener
+
+    assert listener.should_deploy("push", {"ref": "refs/heads/main"})
+    assert not listener.should_deploy("push", {"ref": "refs/heads/feature"})
+    assert not listener.should_deploy("push", {"ref": "refs/tags/v1"})
+    assert not listener.should_deploy("pull_request", {"ref": "refs/heads/main"})
+    assert not listener.should_deploy("ping", {"ref": "refs/heads/main"})
+    assert not listener.should_deploy("push", {})
+
+
+def test_the_deploy_script_restarts_every_resident_service():
+    """M90: the deploy pulls and does not restart.
+
+    This is the whole reason the script exists. Copying files while a
+    daemon holds its imported modules leaves the change on disk and out of
+    production, which is what happened on 2026-08-25.
+    """
+    from pathlib import Path
+
+    script = Path("deployment/deploy.sh").read_text(encoding="utf-8")
+
+    assert "git fetch" in script and "git reset --hard" in script
+    for service in ("cfdinvest", "cfdinvest-dashboard"):
+        assert f'systemctl restart "${{service}}"' in script or service in script, service
+    assert "SERVICES=(cfdinvest cfdinvest-dashboard)" in script, (
+        "both resident services must be restarted, not just one"
+    )
+    # And it must check what it produced rather than assume.
+    assert "is-active" in script and "http_code" in script
+
+
+def test_the_listener_carries_no_secret_and_the_unit_names_its_own():
+    """No credential in the repository, and not the other apps' secret."""
+    from pathlib import Path
+
+    listener = Path("deployment/webhook_listener.py").read_text(encoding="utf-8")
+    unit = Path("deployment/systemd/cfdinvest-webhook.service").read_text(
+        encoding="utf-8"
+    )
+
+    assert "CFD_GITHUB_WEBHOOK_SECRET" in listener
+    assert "os.environ" in listener
+    # The other listeners on the box use GITHUB_WEBHOOK_SECRET; sharing it
+    # would mean one compromise reached all three.
+    assert '"GITHUB_WEBHOOK_SECRET"' not in listener
+    assert "EnvironmentFile=/etc/cfdinvest/env" in unit
+    # KillMode=process is what the other two listeners need because they
+    # spawn their own deploy scripts. This one does not: the deploy runs in
+    # its own unit, so restarting the listener cannot truncate it.
+    assert "User=cfdinvest" in unit

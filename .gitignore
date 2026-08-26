@@ -70,3 +70,4 @@ desktop.ini
 # retail vs professional), so it stays out of the repository -- but it is
 # real, hand-checked data, so keep a copy somewhere.
 config/t212_rules.local.toml
+deployment/__pycache__/

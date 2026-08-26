@@ -1,0 +1,39 @@
+[Unit]
+Description=cfdinvest GitHub Webhook Deploy Listener
+Documentation=https://github.com/brent-jenkins/cfdinvest
+After=network.target
+
+[Service]
+Type=simple
+
+# Unprivileged, like every other unit here. The other two listeners on this
+# machine run as root because they spawn their own deploy scripts; this one
+# does not. It verifies the signature and writes a request, and
+# cfdinvest-deploy.path starts the privileged half. The process reachable
+# from the network therefore holds nothing worth stealing, which is worth
+# one extra unit.
+User=cfdinvest
+Group=cfdinvest
+WorkingDirectory=/opt/cfdinvest
+
+# The secret lives here and nowhere else. It is this repository's own and is
+# deliberately not the GITHUB_WEBHOOK_SECRET the other two apps share: one
+# compromise would otherwise reach all three.
+EnvironmentFile=/etc/cfdinvest/env
+
+ExecStart=/usr/bin/python3.11 /opt/cfdinvest/deployment/webhook_listener.py
+
+Restart=always
+RestartSec=10
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+# The one thing it may write: the deploy request.
+RuntimeDirectory=cfdinvest
+RuntimeDirectoryMode=0755
+ReadWritePaths=/run/cfdinvest
+
+[Install]
+WantedBy=multi-user.target

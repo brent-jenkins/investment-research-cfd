@@ -1,0 +1,25 @@
+[Unit]
+Description=cfdinvest deploy (pull, install, restart, verify)
+Documentation=https://github.com/brent-jenkins/cfdinvest
+
+[Service]
+Type=oneshot
+
+# Root, and the only unit here that is. It restarts services and may install
+# packages, neither of which an unprivileged user can do. What makes that
+# acceptable is that nothing on the network can reach it: it is started by
+# cfdinvest-deploy.path and by nothing else, takes no input, and reads
+# nothing from the request file but the fact that it changed.
+User=root
+Group=root
+WorkingDirectory=/opt/cfdinvest
+
+# It needs nothing from here today. Declared anyway, so that the day it does
+# the value comes from the file rather than from an Environment= line, which
+# would put a credential in `systemctl show` and in `ps`.
+EnvironmentFile=/etc/cfdinvest/env
+
+ExecStart=/bin/bash /opt/cfdinvest/deployment/deploy.sh
+
+# A deploy that hangs must not hold the path unit open forever.
+TimeoutStartSec=900
