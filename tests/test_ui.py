@@ -833,7 +833,21 @@ def assert_clean(app, page: str) -> None:
 
 @pytest.fixture
 def populated(lake, run, monkeypatch):
-    """Point the whole app at the synthetic lake."""
+    """Point the whole app at the synthetic lake.
+
+    The bundle cache is cleared first. ``read_everything`` memoises on a key
+    that does not vary between tests, so without this a test inherits the
+    previous one's sources -- which made a test asserting on absent live
+    quotes pass against the previous test's present ones, and pass or fail
+    depending on the order pytest happened to run them in.
+    """
+    import streamlit as _st
+
+    try:
+        _st.cache_data.clear()
+    except Exception:  # noqa: BLE001 - clearing must never fail a test
+        pass
+
     monkeypatch.setattr(
         sources, "load_app_config",
         lambda *a, **k: sources.Source(value=config_for(lake)),
@@ -2386,3 +2400,117 @@ def test_the_snapshots_stay_on_the_daily_run():
     assert "run-daily" in daily
     for job in ("monitoring-snapshot", "risk-snapshot", "prune-runs"):
         assert job in daily
+
+
+@pytest.fixture
+def dashboard_with_a_position(monkeypatch, populated):
+    """A paper book holding one open position, so the marking path runs.
+
+    Patched at ``sources.load_paper_book`` rather than at the storage path.
+    The first version of this patched ``papertrade._path``, which the cached
+    bundle never consulted, so the page found no book, stopped early, and
+    the whole open-positions block went unexercised -- the fixture looked
+    like coverage and was not. A missing import inside that block survived
+    the entire suite because of it.
+    """
+    from cfdinvest.advisor import papertrade
+    from cfdinvest.livehelper.t212_rules import load_rules
+    from cfdinvest.ui import sources
+
+    trade = papertrade.open_trade(
+        "AAPL", "long", 200.0, "2026-08-26T14:00:00Z",
+        rules=load_rules("config/t212_rules.toml"), fx_rate=0.7355,
+        cohort="c50", state={"confidence": 0.72, "regime": "risk_on"},
+    )
+    book = [trade.as_row()]
+
+    monkeypatch.setattr(
+        sources, "load_paper_book",
+        lambda config, account=None: sources.Source(
+            value={
+                "book": book,
+                "cohorts": papertrade.summarise_all(book),
+                "pooled": papertrade.summarise(book),
+                "min_closed": papertrade.MIN_CLOSED_FOR_RATE,
+                "stake": papertrade.STAKE_GBP,
+            }
+        ),
+    )
+    return book
+
+
+def test_the_dashboard_marks_open_positions_against_the_latest_quote(
+    dashboard_with_a_position, monkeypatch
+):
+    """M156: the open-position block never exercised.
+
+    It was not: the fixture book was always empty, so the page stopped
+    before the block and a NameError sitting in it survived the whole
+    suite. It would have fired on the live dashboard the moment the first
+    trade opened, which is the worst possible time to find an import.
+    """
+    from cfdinvest.ui import sources
+
+    monkeypatch.setattr(
+        sources, "load_live_quotes",
+        lambda config, account=None: sources.Source(
+            value={
+                "quotes": {"AAPL": 204.0},
+                "taken_at": "2026-08-26T17:00:00Z",
+                "age_minutes": 3.0,
+                "limit_minutes": 15.0,
+                "stale": False,
+                "unavailable": [],
+            }
+        ),
+    )
+
+    result = render("views/00_Dashboard.py")
+    assert not result.exception, f"dashboard raised: {result.exception}"
+
+    drawn = " ".join(str(e.value) for e in result.markdown)
+    drawn += " ".join(str(e.value) for e in result.caption)
+    assert "Open positions" in drawn or any(
+        "Open positions" in str(e.value) for e in result.subheader
+    ), "the page stopped before the open-position block -- fixture is not covering it"
+
+    # M157: the age must be stated, not merely the value.
+    #
+    # Asserted on the marks caption specifically. A looser search for
+    # "minutes ago" anywhere on the page passed against a mutation that
+    # removed it entirely, because the sidebar's freshness line says the
+    # same words about something else.
+    captions = [str(e.value) for e in result.caption]
+    dated = [c for c in captions if "Marked at" in c]
+    assert dated, "the marks carry no timestamp of their own"
+    assert any("minutes ago" in c for c in dated), (
+        "the marks are timestamped but not aged -- how far behind the "
+        "market they are is the whole point"
+    )
+
+
+def test_a_position_that_cannot_be_priced_is_still_shown(
+    dashboard_with_a_position, monkeypatch
+):
+    """Absence is named. A position you cannot value is the one to look at."""
+    from cfdinvest.advisor import papertrade
+    from cfdinvest.ui import sources
+
+    monkeypatch.setattr(
+        sources, "load_live_quotes",
+        lambda config, account=None: sources.Source.missing(
+            "no live quote has been polled yet", value={}
+        ),
+    )
+    result = render("views/00_Dashboard.py")
+    assert not result.exception, f"dashboard raised: {result.exception}"
+
+    drawn = " ".join(str(e.value) for e in result.markdown)
+    assert "not live" in drawn, "an unknown quote age was not called out"
+
+    marks = papertrade.mark_open_positions(
+        dashboard_with_a_position, {}, "2026-08-26T17:00:00Z", "c50"
+    )
+    assert len(marks) == 1, "an unpriced position was dropped from the table"
+    assert marks[0]["priced"] is False
+    assert marks[0]["value_gbp"] is None, "an unvalued position must not show a value"

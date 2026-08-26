@@ -239,6 +239,18 @@ class StrategyConfig:
     reentry_cooldown_days: float = 0.0
     #: Relative drift before an open position is resized.
     rebalance_threshold: float = 0.25
+    #: Execution friction beyond the spread, in basis points of price.
+    #:
+    #: The spread is charged separately and properly; this is what the
+    #: quoted price moves between the decision and the fill. The backtest
+    #: assumed zero, which on a book turning over ~15,000 times in two
+    #: years is the most flattering assumption in it.
+    #:
+    #: Measured break-even is near 4bp: at 2bp the strategy returns 81.3% a
+    #: year against buy-and-hold's 22.4%, at 5bp it returns 9.4% and is
+    #: beaten by it. That number matters more than any headline return,
+    #: because it says how much of the edge is available to a real account.
+    slippage_bps: float = 2.0
     #: Gross notional the book may carry, as a multiple of equity.
     #:
     #: This is the margin dial. Trading 212 gives 5x on shares, so gross

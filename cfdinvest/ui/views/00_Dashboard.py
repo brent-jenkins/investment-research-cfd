@@ -27,6 +27,7 @@ if _ROOT not in sys.path:
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
+from cfdinvest.advisor import papertrade  # noqa: E402
 from cfdinvest.ui import components  # noqa: E402
 
 data = components.page_setup(
@@ -157,38 +158,100 @@ st.divider()
 st.subheader("Open positions")
 
 book = value.get("book") or []
+quotes_source = data.get("quotes")
+quotes_value = getattr(quotes_source, "value", None) or {}
+prices = quotes_value.get("quotes") or {}
+age = quotes_value.get("age_minutes")
+taken_at = quotes_value.get("taken_at")
 
-# Replayed per cohort, not filtered by ticker. The same instrument may be
-# held in all three arms at once -- that is the point of running them
-# together -- so matching on the ticker alone would collapse three distinct
-# positions into whichever row happened to come last.
-from cfdinvest.advisor import papertrade  # noqa: E402
-
-open_rows = []
-for arm in cohorts:
-    name = str(arm.get("cohort") or "")
-    open_rows.extend(papertrade.open_positions(book, name).values())
-
-if not open_rows:
-    components.render_note(st, "Nothing open.")
-else:
-    frame = pd.DataFrame(open_rows)
-    wanted = [
-        column
-        for column in (
-            "cohort", "ticker", "direction", "at", "price", "quantity",
-            "confidence", "notional_gbp", "margin_gbp", "financing_rate",
-            "spread_cost_gbp", "spread_source", "atr_pct", "regime",
-        )
-        if column in frame.columns
-    ]
-    components.render_frame(st, frame[wanted].sort_values(["cohort", "ticker"]))
+# How old the marks are, said before the numbers rather than after. Quotes
+# are polled every few minutes, so every value below is behind the market;
+# a figure shown without its age invites being read as live, and on a
+# leveraged book that is the reading that costs money.
+if age is None:
     components.render_note(
         st,
-        "`margin_gbp` is what the account would commit; `notional_gbp` is the "
-        "£1,000 of exposure. `spread_source` says whether the spread was a "
-        "figure Trading 212 published or one estimated from the instrument's "
-        "class — an estimated cost and a measured one are different claims.",
+        ":orange[**These marks are not live.** No quote timestamp is "
+        "available, so how far behind the market they are is unknown — "
+        "which is worse than knowing they are stale.]",
+    )
+elif quotes_value.get("stale"):
+    components.render_note(
+        st,
+        f":red[**Quotes are {age:.0f} minutes old**, past the "
+        f"{quotes_value.get('limit_minutes', 15):.0f}-minute limit. The "
+        "values below are marks against a price the market has moved on "
+        "from. Treat them as indicative only.]",
+    )
+else:
+    st.caption(
+        f"Marked at {components.clock(taken_at)} — **{age:.0f} minutes ago**. "
+        "Quotes are polled on a cycle, so every figure here is that far "
+        "behind the market."
+    )
+
+marks = []
+for arm in cohorts:
+    marks.extend(
+        papertrade.mark_open_positions(
+            book, prices, str(data.get("now") or ""), str(arm.get("cohort") or "")
+        )
+    )
+
+if not marks:
+    components.render_note(st, "Nothing open.")
+else:
+    frame = pd.DataFrame(marks)
+
+    # The headline: what the open book is worth against what was staked.
+    priced = frame[frame["priced"].fillna(False).astype(bool)]
+    unpriced = len(frame) - len(priced)
+
+    if len(priced):
+        staked = priced["notional_gbp"].sum()
+        worth = priced["value_gbp"].sum()
+        open_pnl = priced["net_pnl_gbp"].sum()
+        cells = st.columns(4)
+        cells[0].metric("Staked", components.money(staked, "£"))
+        cells[1].metric(
+            "Current value", components.money(worth, "£"),
+            delta=components.money(open_pnl, "£"),
+        )
+        cells[2].metric(
+            "Open P&L", components.money(open_pnl, "£"),
+            delta=f"{open_pnl / staked * 100:+.2f}%" if staked else None,
+            delta_color="off",
+        )
+        cells[3].metric("Margin committed", components.money(
+            priced["margin_gbp"].sum(), "£"
+        ))
+
+    if unpriced:
+        components.render_note(
+            st,
+            f":orange[{unpriced} open position(s) could not be priced and are "
+            "excluded from the totals above.] A position that exists and "
+            "cannot be valued is the one most worth seeing, so it is still "
+            "listed below.",
+        )
+
+    shown = frame.rename(columns={
+        "entry_price": "entry", "price": "now", "net_pnl_gbp": "open P&L",
+        "net_pct": "open %", "value_gbp": "value", "notional_gbp": "staked",
+        "financing_gbp": "financing", "days_held": "days",
+    })
+    wanted = [c for c in (
+        "cohort", "ticker", "direction", "confidence", "entry", "now",
+        "staked", "value", "open P&L", "open %", "financing", "days",
+        "margin_gbp",
+    ) if c in shown.columns]
+    components.render_frame(st, shown[wanted].sort_values(["cohort", "ticker"]))
+    components.render_note(
+        st,
+        "`open P&L` is after everything the position has cost so far — the "
+        "spread paid on entry, financing accrued to the mark, and the "
+        "conversion fee on the result. It is the same calculation that will "
+        "close the trade, so the figure will not jump when it does.",
     )
 
 st.divider()

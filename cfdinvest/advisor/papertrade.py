@@ -599,6 +599,74 @@ def summarise(
     }
 
 
+def mark_open_positions(
+    book: Iterable[Mapping[str, Any]],
+    prices: Mapping[str, Any],
+    at: str,
+    cohort: str | None = None,
+) -> list[dict[str, Any]]:
+    """Value every open position at the prices given. Never raises.
+
+    Returns plain dictionaries, deliberately not ``PaperTrade`` events. A
+    valuation is not a close: nothing here is appended to the book, and
+    giving it the same type as a real event is how a mark ends up recorded
+    as a trade that never happened.
+
+    The arithmetic is :func:`value_trade`'s, unchanged -- financing accrued
+    to now, the spread paid on entry, the conversion fee on the result --
+    because a position marked by one calculator and closed by another will
+    disagree with itself at exactly the moment somebody is watching.
+
+    An instrument with no usable price is returned with its figures absent
+    and ``priced`` false, rather than left out. A position that exists and
+    could not be valued is the thing you most need to see.
+    """
+    marks: list[dict[str, Any]] = []
+    for ticker, position in open_positions(book, cohort).items():
+        price = prices.get(ticker)
+        row: dict[str, Any] = {
+            "cohort": str(position.get("cohort") or ""),
+            "ticker": ticker,
+            "direction": position.get("direction"),
+            "opened_at": position.get("at"),
+            "entry_price": _number(position.get("price")),
+            "quantity": _number(position.get("quantity")),
+            "notional_gbp": _number(position.get("notional_gbp")),
+            "margin_gbp": _number(position.get("margin_gbp")),
+            "confidence": _number(position.get("confidence")),
+            "price": None, "days_held": None, "gross_pnl_gbp": None,
+            "financing_gbp": None, "fx_fee_gbp": None, "value_gbp": None,
+            "net_pnl_gbp": None, "net_pct": None, "priced": False,
+        }
+        if _number(price) is None:
+            marks.append(row)
+            continue
+
+        try:
+            valued = value_trade(position, float(price), str(at))
+        except Exception as error:  # noqa: BLE001 - one row, not the table
+            logger.warning("Could not mark %s: %s", ticker, error)
+            marks.append(row)
+            continue
+
+        row.update({
+            "price": float(price),
+            "days_held": valued.days_held,
+            "gross_pnl_gbp": valued.gross_pnl_gbp,
+            "financing_gbp": valued.financing_gbp,
+            "fx_fee_gbp": valued.fx_fee_gbp,
+            "net_pnl_gbp": valued.net_pnl_gbp,
+            "net_pct": valued.net_pct,
+            "priced": valued.net_pnl_gbp is not None,
+        })
+        # What the position is worth now: the stake plus what it has made,
+        # which is the figure a broker screen shows.
+        if valued.net_pnl_gbp is not None and row["notional_gbp"] is not None:
+            row["value_gbp"] = row["notional_gbp"] + valued.net_pnl_gbp
+        marks.append(row)
+    return marks
+
+
 def summarise_all(book: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Every arm, in threshold order, plus the pooled total last."""
     rows = list(book or ())

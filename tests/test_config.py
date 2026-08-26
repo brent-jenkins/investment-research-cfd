@@ -198,3 +198,36 @@ def test_the_margin_ceiling_reaches_the_execution_engine():
     # And an override travels rather than being ignored.
     strategy = StrategyConfig(max_leverage=1.5)
     assert app._execution_config(["AAPL"], strategy).max_leverage == 1.5
+
+
+def test_execution_friction_reaches_the_engine_and_is_not_zero():
+    """M155: a backtest that fills at the quoted price, free.
+
+    The spread is charged separately and properly. This is what the price
+    moves between deciding and filling, and it was zero -- on a book turning
+    over roughly 15,000 times in two years, the single most flattering
+    assumption in the model. The live daemon acts up to fifteen minutes
+    after an hourly bar closes, which the backtest does not model at all.
+
+    Break-even against buy-and-hold sits near 4bp, so the difference
+    between 0 and 2 is a large fraction of the claimed edge rather than a
+    rounding detail.
+    """
+    from cfdinvest.config import StrategyConfig, load_config
+    import cfdinvest.schedule.app as app
+
+    config = load_config()
+    execution = app._execution_config(list(config.market.tickers), config.strategy)
+
+    assert config.strategy.slippage_bps > 0, "the backtest fills for free"
+    assert execution.slippage_fraction == pytest.approx(
+        config.strategy.slippage_bps / 10_000.0
+    ), "the configured friction does not reach the engine"
+
+    # Basis points, not a fraction: 2.0 must mean 0.0002, not 2.0.
+    assert execution.slippage_fraction < 0.01
+
+    # And an override travels.
+    assert app._execution_config(
+        ["AAPL"], StrategyConfig(slippage_bps=5.0)
+    ).slippage_fraction == pytest.approx(0.0005)

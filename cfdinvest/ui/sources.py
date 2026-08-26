@@ -55,6 +55,7 @@ __all__ = [
     "load_execution_frame",
     "load_regime_frame",
     "load_analysis_frame",
+    "load_live_quotes",
     "load_paper_book",
     "load_error_log",
     "load_scheduler_log",
@@ -1049,3 +1050,47 @@ def load_paper_book(config: AppConfig, account: str | None = None) -> Source:
     except Exception as error:  # noqa: BLE001
         logger.warning("Could not read the paper book: %s", error)
         return Source.missing(f"the paper book could not be read: {error}", value={})
+
+
+def load_live_quotes(config: AppConfig, account: str | None = None) -> Source:
+    """The last poll: prices, when they were taken, and how old that is.
+
+    The age is the point. Quotes are polled every five minutes, so a mark on
+    this dashboard is up to five minutes behind the market and further behind
+    if the poller has stalled. A value shown without saying how old it is
+    invites someone to read it as live, which on a leveraged book is the
+    reading that costs money.
+
+    Absent rather than empty when nothing has been polled: no quotes and
+    quotes-that-are-old are different states.
+    """
+    try:
+        from cfdinvest.livequotes import storage as quote_store
+
+        document = quote_store.load_quotes(config, account) or {}
+        quotes = document.get("quotes") or {}
+        if not quotes:
+            return Source.missing(
+                "no live quote has been polled yet — the daemon polls every "
+                f"{quote_store.DEFAULT_MAX_AGE_MINUTES:.0f} minutes at most",
+                value={},
+            )
+
+        taken = document.get("timestamp")
+        age = quote_store.age_minutes(document)
+        return Source(
+            value={
+                "quotes": quotes,
+                "taken_at": taken,
+                "age_minutes": age,
+                "limit_minutes": quote_store.DEFAULT_MAX_AGE_MINUTES,
+                "stale": (
+                    None if age is None
+                    else bool(age > quote_store.DEFAULT_MAX_AGE_MINUTES)
+                ),
+                "unavailable": list(document.get("unavailable") or ()),
+            }
+        )
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not read the live quotes: %s", error)
+        return Source.missing(f"the live quotes could not be read: {error}", value={})

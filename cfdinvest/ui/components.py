@@ -202,6 +202,7 @@ def read_everything(
             "analytics": sources.load_run_analytics(config, account=account),
             "persisted": sources.load_persisted_run(config),
             "paper": sources.load_paper_book(config, account=account),
+            "quotes": sources.load_live_quotes(config, account=account),
         }
 
     stamp = st.session_state.get("cfd_refresh_stamp", "initial")
@@ -240,7 +241,7 @@ def read_everything(
 #: pages already know how to draw.
 BUNDLE_KEYS: tuple[str, ...] = (
     "lake", "summary", "scheduler", "execution", "signals", "errors",
-    "disk", "market", "analytics", "persisted", "paper",
+    "disk", "market", "analytics", "persisted", "paper", "quotes",
 )
 
 

@@ -251,6 +251,25 @@ reentry_cooldown_days = 0.083 # two hours; the multi-day version measured as noi
 # rebalancing is off entirely and only opens and closes remain.
 rebalance_threshold = 3.0     # was 0.25; drift rebalancing off entirely
 
+# Execution friction beyond the spread, in basis points of price. The spread
+# is charged separately; this is what the quote moves between deciding and
+# filling.
+#
+# It was zero, which on a book turning over ~15,000 times in two years is
+# the most flattering assumption in the whole backtest -- and the live
+# daemon acts up to fifteen minutes after an hourly bar closes, which the
+# backtest does not model at all.
+#
+#   slippage    0bp    0.5bp   1bp     2bp     5bp     10bp
+#   CAGR      155.6%  135.1%  113.8%   81.3%    9.4%  -52.4%
+#
+# Break-even against buy-and-hold (22.4% a year) is near 4bp. 2.0 is the
+# cautious end of what a £1,000 retail order should suffer at a broker's own
+# quote, and the point of setting it is to stop the backtest flattering
+# itself rather than to model any measured figure -- nobody has measured
+# this, because no order has ever been placed.
+slippage_bps = 2.0
+
 # Gross notional the book may carry, as a multiple of equity -- the margin
 # dial. Trading 212 gives 5x on shares, so gross exposure of G times equity
 # commits about G/5 of the account as margin.
