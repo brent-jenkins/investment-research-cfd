@@ -1353,10 +1353,15 @@ def test_the_application_title_has_one_owner():
 
 
 def test_a_clock_reading_is_one_fixed_width():
-    """The cards need every timestamp the same shape, and in local time."""
+    """The cards need every timestamp the same shape, and in local time.
+
+    Minutes, not seconds. Nothing on these pages is read to the second, and
+    the extra three characters pushed the tiles wider than their column --
+    precision that costs layout and buys nothing.
+    """
     text = components.clock("2026-08-25T16:42:03+00:00")
 
-    assert re.fullmatch(r"\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}", text), text
+    assert re.fullmatch(r"\d{2}/\d{2}/\d{4} \d{2}:\d{2}", text), text
     assert text.startswith("25/08/2026")
     assert components.clock(None) == components.DASH
     assert components.clock("not a date") == components.DASH
@@ -2709,3 +2714,29 @@ def test_the_streamlit_theme_brands_both_modes():
     assert block["primaryColor"].upper() == theme.BRAND["colour"].upper(), (
         "the wordmark blue and the widget blue have drifted apart"
     )
+
+
+
+def test_the_sidebar_draws_no_rule_of_its_own_under_the_navigation():
+    """M165: two horizontal rules with a gap between them.
+
+    st.navigation already separates the page list from whatever follows.
+    Adding another put two lines at the top of every sidebar, which reads
+    as a section that failed to render rather than as a divider.
+    """
+    import inspect
+
+    from cfdinvest.ui import components as ui
+
+    source = inspect.getsource(ui.render_sign_out)
+    assert "st.divider()" not in source, (
+        "render_sign_out draws a rule Streamlit has already drawn"
+    )
+
+
+def test_the_status_page_does_not_repeat_the_wordmark_above_its_title():
+    """The crumb said "CFDINVEST Status" directly above a heading reading
+    "System status", and was clipped by the toolbar besides. The wordmark is
+    in the sidebar; a page does not need to introduce itself twice."""
+    page = (UI / "views" / "01_Status.py").read_text(encoding="utf-8")
+    assert "render_crumb" not in page

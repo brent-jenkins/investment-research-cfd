@@ -524,7 +524,9 @@ def stylesheet(mode: str = "dark") -> str:
     border-left: 3px solid var(--cfd-border);
     border-radius: 8px;
     padding: 12px 16px;
-    height: 100%;
+    /* Not 100%: a tile stretched to its row's height leaves no gap between
+       rows, which is what made six of them read as one slab. */
+    margin-bottom: 14px;
     display: flex;
     flex-direction: column;
     gap: 3px;

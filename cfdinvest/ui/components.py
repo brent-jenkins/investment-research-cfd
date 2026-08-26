@@ -426,7 +426,9 @@ def render_sign_out(st) -> None:
     if not user:
         return
     with st.sidebar:
-        st.divider()
+        # No rule of our own. st.navigation draws one under the page list
+        # already, and adding a second put two lines with a gap between them
+        # at the top of every sidebar.
         st.caption(f"Signed in as **{user}**")
         if st.button("Log out", width="stretch", key="cfd_sign_out"):
             sign_out(st)
@@ -851,7 +853,10 @@ def render_tiles(st, tiles) -> None:
     if not tiles:
         return
     mode = theme.active_mode(st)
-    columns = st.columns(len(tiles))
+    # Gapped, and the CSS gives each tile a bottom margin, because two rows
+    # of these sat flush against each other and read as one grey slab
+    # rather than six readings.
+    columns = st.columns(len(tiles), gap="medium")
     for column, (label, value, note, level) in zip(columns, tiles):
         colour = state_colour(level, mode) or theme.palette_for(mode)["border"]
         text = DASH if _missing(value) else str(value)
@@ -1399,7 +1404,7 @@ def moment(value: Any) -> str:
 
 
 def clock(value: Any) -> str:
-    """A timestamp as ``25/08/2026 16:42:03``, in the display zone.
+    """A timestamp as ``25/08/2026 16:42``, in the display zone.
 
     The metric cards want one fixed shape. "14 minutes ago" makes the reader
     work out when that was and goes stale while they look at it, and the long
@@ -1413,7 +1418,10 @@ def clock(value: Any) -> str:
     stamp = localise(value)
     if stamp is None:
         return DASH
-    return f"{stamp:%d/%m/%Y %H:%M:%S}"
+    # No seconds. Nothing on these pages is read to the second, and the
+    # extra three characters were pushing the tiles wider than their column
+    # -- precision that costs layout and buys nothing is just noise.
+    return f"{stamp:%d/%m/%Y %H:%M}"
 
 
 def short_moment(value: Any) -> str:

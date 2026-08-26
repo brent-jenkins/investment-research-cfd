@@ -108,47 +108,58 @@ components.render_note(
     "verdict: the comparison *is* the experiment.",
 )
 
-BARS = {"c50": "0.50", "c60": "0.60", "c70": "0.70"}
+BARS = {"c50": "≥ 0.50", "c60": "≥ 0.60", "c70": "≥ 0.70"}
 
 if not cohorts:
     components.render_note(st, "No arm has opened a position yet.")
 else:
-    columns = st.columns(len(cohorts))
-    for cell, arm in zip(columns, cohorts):
+    # One table, not three boxes of key-values. The arms exist to be read
+    # against each other and a reader comparing three separate panels is
+    # doing in their head what a row alignment does for free.
+    rows = []
+    for arm in cohorts:
         name = str(arm.get("cohort") or "")
-        with cell.container(border=True):
-            st.markdown(f"#### Confidence ≥ {BARS.get(name, name)}")
+        rate = arm.get("win_rate")
+        provisional = rate is None and arm.get("rate_so_far") is not None
+        rows.append({
+            "Bar": BARS.get(name, name),
+            "Open": arm.get("open", 0),
+            "Closed": arm.get("closed", 0),
+            "Won": arm.get("wins", 0),
+            "Lost": arm.get("losses", 0),
+            "Win rate": (
+                f"{rate:.0f}%" if rate is not None
+                else f"{arm['rate_so_far']:.0f}%*" if provisional
+                else components.DASH
+            ),
+            "Net P&L": (
+                components.money(arm.get("net_gbp"), "£")
+                if arm.get("net_gbp") is not None else components.DASH
+            ),
+            "Avg hours": (
+                f"{arm['avg_days_held'] * 24:.1f}"
+                if arm.get("avg_days_held") is not None else components.DASH
+            ),
+            "Holding": ", ".join(arm.get("open_tickers") or []) or "—",
+        })
 
-            components.render_kv(
-                st,
-                {
-                    "Open": arm.get("open", 0),
-                    "Closed": arm.get("closed", 0),
-                    "Won / lost": f"{arm.get('wins', 0)} / {arm.get('losses', 0)}",
-                    "Win rate": (
-                        components.percent(arm["win_rate"] / 100, 1)
-                        if arm.get("win_rate") is not None
-                        else (
-                            f"{arm['rate_so_far']:.0f}% (provisional)"
-                            if arm.get("rate_so_far") is not None
-                            else "—"
-                        )
-                    ),
-                    "Net P&L": (
-                        components.money(arm.get("net_gbp"), "£")
-                        if arm.get("net_gbp") is not None else "—"
-                    ),
-                    "Avg days held": components.number(arm.get("avg_days_held"), 1),
-                },
-            )
+    components.render_frame(st, pd.DataFrame(rows))
 
-            if arm.get("open_tickers"):
-                st.caption("Holding: " + ", ".join(arm["open_tickers"]))
-            if arm.get("unpriced"):
-                st.caption(
-                    f":orange[{arm['unpriced']} closed trade(s) could not be "
-                    "priced and are excluded from every total.]"
-                )
+    if any(
+        arm.get("win_rate") is None and arm.get("rate_so_far") is not None
+        for arm in cohorts
+    ):
+        st.caption(
+            f"\\* provisional — fewer than {floor} closed trades, so the rate "
+            "is shown but not claimed."
+        )
+
+    unpriced = sum(int(arm.get("unpriced") or 0) for arm in cohorts)
+    if unpriced:
+        st.caption(
+            f":orange[{unpriced} closed trade(s) could not be priced and are "
+            "excluded from every total.]"
+        )
 
 st.divider()
 

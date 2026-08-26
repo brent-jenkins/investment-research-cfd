@@ -26,7 +26,6 @@ import streamlit as st  # noqa: E402
 
 from cfdinvest.ui import components, explain, vitals  # noqa: E402
 
-components.render_crumb(st, "Status")
 data = components.page_setup(
     st,
     "System status",
@@ -62,28 +61,49 @@ disk_level = (
     else "pass"
 )
 
-last_run = components.clock(scheduler.get("last_run"))
-last_success = components.clock(scheduler.get("last_success"))
+# The Data page is gone -- the dashboard was cut to three during the
+# research period -- so this page carries the run's own figures too.
+last_run_at = scheduler.get("last_run")
+last_success_at = scheduler.get("last_success")
 outcome = explain.outcome(scheduler.get("last_status")) or components.DASH
+succeeded = scheduler.get("last_status") == "ok"
 
-components.render_tiles(st, [
-    ("Overall", overall, f"{len(health.checks) - len(health.triggered)} of "
-     f"{len(health.checks)} checks passing", overall_level),
-    ("Last run", last_run, components.age(scheduler.get("last_run"), now),
-     "pass" if scheduler.get("last_run") else "unchecked"),
-    ("Last success", last_success, outcome,
-     "pass" if scheduler.get("last_status") == "ok" else "warning"),
-])
+# Last run and last success were separate tiles showing, on a healthy
+# system, the identical timestamp twice. The information was never the pair
+# of values -- it is whether they *differ*, which says a run started and did
+# not finish. So they are one tile until they disagree, and a second tile
+# appears only when there is something to say.
+run_note = " · ".join(part for part in (
+    components.age(last_run_at, now),
+    outcome if outcome != components.DASH else "",
+    components.duration(record.get("duration_seconds")),
+) if part and part != components.DASH)
 
-components.render_tiles(st, [
+tiles = [
+    ("Overall", overall,
+     f"{len(health.checks) - len(health.triggered)} of {len(health.checks)} "
+     "checks passing", overall_level),
+    ("Last run", components.clock(last_run_at), run_note,
+     "pass" if succeeded else "warning" if last_run_at else "unchecked"),
+]
+
+if not succeeded and last_success_at:
+    # Only when it means something: a successful run older than the last
+    # attempt is the shape of "it started and died".
+    tiles.append((
+        "Last success", components.clock(last_success_at),
+        components.age(last_success_at, now), "warning",
+    ))
+
+tiles.extend([
     ("Disk free", components.DASH if free_gb is None else f"{free_gb:.1f} GB",
      components.percent(free_share) + " free" if free_share is not None else "",
      disk_level),
     ("Bars processed", f"{record.get('bars', 0):,}",
      f"{len(record.get('universe') or [])} instruments", "pass"),
-    ("Run duration", components.duration(record.get("duration_seconds")),
-     f"run {record.get('run_id', '?')}", "pass"),
 ])
+
+components.render_tiles(st, tiles)
 
 # --------------------------------------------------------------------------- #
 # Scheduler health
