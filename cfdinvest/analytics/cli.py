@@ -133,6 +133,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="score every stored run and print them as one table",
     )
 
+    evaluated = commands.add_parser(
+        "evaluate", parents=[common],
+        help="the standard battery against the shipped configuration",
+    )
+    evaluated.add_argument(
+        "--walkforward", action="store_true",
+        help="include the out-of-sample walk-forward (minutes, not seconds)",
+    )
+    evaluated.add_argument(
+        "--no-shuffle", action="store_true",
+        help="skip the random-direction control",
+    )
+    # --json comes from the shared parent parser.
+
     sweep = commands.add_parser("sweep", parents=[common], help="run a parameter grid")
     sweep.add_argument(
         "--grid",
@@ -243,6 +257,30 @@ def _command_score(args, app_config, repository, run_id: str) -> int:
     _report(args, {"run_id": result.label, **result.headline,
                    "warnings": list(result.warnings)})
     return 0
+
+
+def _command_evaluate(args, app_config, repository, run_id: str) -> int:
+    """The standard battery, so the same questions get asked every time.
+
+    Every performance figure in this project used to come from a throwaway
+    script, which is how two tables came to disagree about the same universe
+    while both were correct. This is the fixed version of those scripts.
+    """
+    import json as _json
+
+    from cfdinvest.analytics.evaluate import evaluate, render
+
+    result = evaluate(
+        app_config,
+        repository=repository,
+        include_shuffle=not getattr(args, "no_shuffle", False),
+        include_walkforward=bool(getattr(args, "walkforward", False)),
+    )
+    if getattr(args, "json", False):
+        print(_json.dumps(result.as_row(), indent=2, default=str))
+    else:
+        print(render(result))
+    return EXIT_OK
 
 
 def _command_sweep(args, app_config, repository, run_id: str) -> int:
@@ -415,6 +453,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = {
         "run-once": _command_run_once,
         "score": _command_score,
+        "evaluate": _command_evaluate,
         "sweep": _command_sweep,
         "walkforward": _command_walkforward,
         "montecarlo": _command_montecarlo,

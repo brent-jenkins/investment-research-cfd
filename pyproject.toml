@@ -22,6 +22,9 @@ cfdinvest-confirm = "cfdinvest.confirm.cli:main"
 cfdinvest-schedule = "cfdinvest.schedule.app:main"
 
 [project.optional-dependencies]
+# Coverage is a development tool, not a runtime dependency. The suite
+# runs without it; `--cov` needs it.
+dev = ["pytest-cov>=5"]
 # The dashboard is optional: nothing in the pipeline imports it.
 ui = ["streamlit>=1.49"]
 dev = ["pytest>=8.0", "pytest-mock>=3.12", "streamlit>=1.49"]
