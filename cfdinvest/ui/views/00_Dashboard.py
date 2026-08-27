@@ -6,10 +6,16 @@ the strategy trades a horizon of days; a backtest on that universe cannot
 settle whether it works, and a few weeks of trades recorded before the
 outcome was known can.
 
-Three arms run side by side at confidence bars of 0.50, 0.60 and 0.70, on
-the same signals and the same prices, each with £1,000 of exposure. They
-are shown separately and never pooled into the headline, because the whole
-reason for running three is to compare them.
+Four arms run side by side, on the same signals and the same prices, each
+with £1,000 of exposure. The first is the bar the engine actually enters on;
+the rest are raised, to test whether raising it helps. They are shown
+separately and never pooled into the headline, because the whole reason for
+running several is to compare them.
+
+The page reads the arms from the book rather than naming them. It used to
+say "three at 0.50, 0.60 and 0.70", which stopped being true the day the
+baseline arm was added and nobody noticed -- on the page a person reads to
+reconcile against their broker.
 
 Read-only. Nothing here places a trade, and the Trading 212 account this is
 compared against is a virtual one.
@@ -28,6 +34,8 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from cfdinvest.advisor import papertrade  # noqa: E402
+from cfdinvest.advisor.papertrade_run import cohorts_for  # noqa: E402
+from cfdinvest.config import load_config  # noqa: E402
 from cfdinvest.ui import components  # noqa: E402
 
 data = components.page_setup(
@@ -48,7 +56,7 @@ if components.render_absent(st, paper, "The paper book"):
         st,
         "Signals clear a confidence bar on a minority of days — 395 of 1,125 "
         "bars carried any signal above 0.50 in two years of history — so the "
-        "expectation is a few trades a week across all three arms, not a few "
+        "expectation is a few trades a week across the arms, not a few "
         "a day.",
     )
     st.stop()
@@ -98,9 +106,9 @@ if closed < floor:
 st.divider()
 
 # --------------------------------------------------------------------------- #
-# The three arms
+# The arms
 # --------------------------------------------------------------------------- #
-st.subheader("The three arms")
+st.subheader("The arms")
 components.render_note(
     st,
     f"Each takes £{stake:,.0f} of exposure — notional, not margin — so "
@@ -108,7 +116,14 @@ components.render_note(
     "verdict: the comparison *is* the experiment.",
 )
 
-BARS = {"c50": "≥ 0.50", "c60": "≥ 0.60", "c70": "≥ 0.70"}
+# Read from the arms the book actually runs, not written out here. The
+# hardcoded version listed c50, c60 and c70 -- so the baseline arm, the one
+# the engine enters on and the only one the trade mail carries, rendered
+# with its bare cohort name and no bar at all. The arm being acted on was
+# the one the page could not label.
+BARS = {
+    name: f"≥ {bar:.2f}" for name, bar in cohorts_for(load_config().strategy)
+}
 
 if not cohorts:
     components.render_note(st, "No arm has opened a position yet.")

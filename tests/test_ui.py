@@ -2952,3 +2952,57 @@ def test_the_coverage_check_runs_with_the_rest():
     from cfdinvest.ui import health
 
     assert "_check_universe_coverage" in inspect.getsource(health.run_checks)
+
+
+# --------------------------------------------------------------------------- #
+# M259 the dashboard naming a set of arms it no longer runs
+# --------------------------------------------------------------------------- #
+def test_the_dashboard_does_not_name_a_stale_set_of_arms():
+    """M259: the page says three arms; there are four.
+
+    The baseline arm was added when the book was found to be scoring
+    thresholds the engine does not trade, and the prose describing the arms
+    was not updated with it. So the dashboard told a reader there were three
+    arms at 0.50, 0.60 and 0.70 while the one being emailed and acted on --
+    0.35 -- was not mentioned at all.
+
+    It matters more than a stale sentence usually would: this is the page a
+    person reads to reconcile the book against their broker, and a mail that
+    goes missing is only noticeable here.
+
+    Asserted as an absence of hardcoded arm names rather than as a count.
+    A count would be right until the entry bar moves again, which is the
+    same failure one level up.
+    """
+    from pathlib import Path
+
+    page = (UI / "views" / "00_Dashboard.py").read_text(encoding="utf-8")
+    prose = page[: page.index("import ")] if "import " in page else page
+
+    for stale in ("three arms", "0.50, 0.60 and 0.70"):
+        assert stale not in prose.lower().replace('"three at 0.50, 0.60 and 0.70"', ""), (
+            f"the page still says {stale!r}"
+        )
+
+
+def test_the_arms_shown_are_the_arms_that_run():
+    """The arms on the page come from the book, not from a list in the page.
+
+    Every arm the strategy runs must be reachable on the dashboard, or the
+    one being traded could be the one not shown.
+    """
+    from cfdinvest.advisor.papertrade_run import cohorts_for
+    from cfdinvest.config import load_config
+
+    page = (UI / "views" / "00_Dashboard.py").read_text(encoding="utf-8")
+
+    # It renders whatever the summary reports, rather than filtering to names
+    # written here.
+    assert 'value.get("cohorts"' in page
+
+    arms = [name for name, _ in cohorts_for(load_config().strategy)]
+    assert len(arms) >= 2, "the comparison needs more than one arm"
+    for arm in arms:
+        assert f'"{arm}"' not in page, (
+            f"{arm} is named in the page; the arms must come from the book"
+        )
