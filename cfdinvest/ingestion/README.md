@@ -28,6 +28,12 @@ default.
 
 `earnings.py` / `filings.py` — reporting dates and EDGAR 8-K events.
 
+`capital_prices.py` — Capital.com hourly bars into a lake of their own,
+under the interval label `capital_1h`. Separate from `1h` on purpose: the
+two sources disagree about what a bar is, and merging them makes a third
+thing that is neither. It is the only source here that carries a bid and an
+ask on every bar.
+
 ## Judgement calls
 
 **Intervals coexist.** The lake is `raw/market/<interval>/<TICKER>.parquet`,
@@ -67,6 +73,19 @@ missing instrument is a universe that quietly shrank.
 - A part-finished session's volume compared against full-day medians reads
   low for **every** instrument at once. That is a clock artefact, not a
   quiet market, and it once returned 0.08× across the whole universe.
+- **A Capital.com REST session lasts ten minutes.** A full backfill runs far
+  longer, so expiry is the expected case rather than a fault. A walk that
+  did not renew would return a *short* history and report success, which is
+  the dangerous kind of wrong.
+- **A resume cannot infer that the caller wants more history.** The earliest
+  bar on disk is normally later than the requested start, because the
+  server's history begins where it begins — so comparing the two refetches
+  three years on every ordinary resume. Widening the window is `refetch=True`,
+  asked for rather than guessed.
+- **Capital's `volume` is its own clients, not the market** — a few hundred
+  contracts on an AAPL hourly bar. It must never reach the universe screen,
+  which ranks on turnover and would end up ranking by what one broker's
+  customers happen to like.
 
 ## Mutations checked
 
@@ -76,9 +95,18 @@ missing instrument is a universe that quietly shrank.
 | M176 | A lake that quietly stops updating one interval |
 | M193 | A universe of twenty where nineteen are traded |
 | M131 | A partial bar compared against full-day medians |
+| M321 | The price walk stopping at the first expired session |
+| M322 | A repeated page walking until the call budget is gone |
+| M323 | The spread folded into the price, read as a move |
+| M324 | A second copy of the request interval, free to drift |
+| M325 | Dividends written as zero, claiming there was none |
+| M326 | A resume that starts over, or drops what is on disk |
+| M327 | A requested end treated as advisory |
+| M328 | One bad instrument taking down the whole backfill |
 
 ## What it writes
 
-`<data root>/raw/market/<interval>/<TICKER>.parquet`,
+`<data root>/raw/market/<interval>/<TICKER>.parquet` (including
+`capital_1h/`),
 `<data root>/raw/macro/<SERIES>.parquet`, and the earnings and filings
 stores. Nothing else in the project writes to `raw/`.

@@ -34,6 +34,17 @@ accident. Two gates, checked inside every order rather than once at start-up:
 Closing is gated identically to opening. Safety that depends on which
 function you happened to call is not safety.
 
+`prices.py` sits on the read-only side and walks historical bars. Its reason
+for existing is the bid and ask on every one of them: spread is the largest
+single item in the modelled cost and is currently one estimated constant for
+every instrument in every hour. These bars replace that guess with a series.
+Two things about the walk are not obvious and both were measured rather than
+assumed — a range wider than a thousand bars is *refused* rather than
+truncated, so it walks forward from a start instead of requesting a span;
+and a REST session lasts ten minutes against a backfill that runs for far
+longer, so it renews mid-walk. Without that it would return short histories
+and call them complete.
+
 ## Judgement calls
 
 **Demo unless `live` is spelled exactly.** A typo, an empty string,
