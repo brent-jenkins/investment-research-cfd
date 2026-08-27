@@ -98,6 +98,7 @@ JOBS: tuple[str, ...] = (
     "ingest-intraday",
     "run-intraday",
     "record-spreads",
+    "trade-capital",
     "paper-book",
     "ingest-daily",
     "monitoring-snapshot",
@@ -207,6 +208,10 @@ def jobs_due(
             # On the same tick as the run, so a reading lines up with the
             # bar the engine decided on rather than falling between two.
             due.append("record-spreads")
+            # And then the account, last: it acts on the signals that run
+            # has just written, and the reading of what a trade costs is
+            # taken before anything is placed rather than after.
+            due.append("trade-capital")
 
     if _due_daily(moment, history.get("ingest-daily"), INGEST_AT_UTC):
         due.append("ingest-daily")

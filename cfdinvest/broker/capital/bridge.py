@@ -139,6 +139,9 @@ def plan_orders(
     session_open: Mapping[str, bool] | None = None,
     placed: Mapping[str, Mapping[str, Any]] | None = None,
     fx_rate: float = 1.0,
+    recheck: bool = True,
+    rechecked: Mapping[str, Mapping[str, Any]] | None = None,
+    entry_confidence: float = 0.35,
 ) -> BridgeReport:
     """Decide what to place. Pure: it reads and returns, and places nothing.
 
@@ -146,6 +149,7 @@ def plan_orders(
     network and without a gate — the thing that decides and the thing that
     acts are different concerns, and only one of them can lose money.
     """
+    from cfdinvest.advisor.livecheck import holds
     from cfdinvest.execution.state import needs_resize
     import numpy as np
 
@@ -243,6 +247,30 @@ def plan_orders(
             continue
 
         if held_units == 0.0:
+            # The last look, on opens only.
+            #
+            # It is what the paper book already does, on the same evidence:
+            # requiring the signal to still hold against the live price
+            # refused 197 of 2,139 round trips, and those refused won 36.0%
+            # against 50.4% for the ones kept (t=+4.18, p=0.000038).
+            #
+            # Opens only, deliberately. The measurement was about entries. A
+            # resize acts on a position already justified and the hysteresis
+            # already demands a 25% drift; gating it would be inventing a
+            # rule no evidence covers, and gating a *close* would refuse an
+            # exit, which is never the safe direction.
+            if recheck:
+                if rechecked is None:
+                    intents.append(refuse(
+                        "no re-evaluation was supplied, and an unchecked "
+                        "signal is not an approved one"
+                    ))
+                    continue
+                still, why = holds(rechecked, ticker, direction, entry_confidence)
+                if not still:
+                    intents.append(refuse(why))
+                    continue
+
             gross += abs(target) * price * float(fx_rate or 1.0)
             intents.append(Intent(
                 ticker=ticker, epic=epic, direction=direction,

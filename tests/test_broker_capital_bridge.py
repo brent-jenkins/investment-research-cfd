@@ -53,6 +53,9 @@ def plan(signals, positions=None, **kwargs):
     kwargs.setdefault("exposure_per_unit_size", 4.0)
     kwargs.setdefault("rebalance_threshold", 0.25)
     kwargs.setdefault("session_open", OPEN)
+    # Off unless a test is about the gate. It is fail-closed, so leaving it
+    # on would make every one of these a test of the last look instead.
+    kwargs.setdefault("recheck", False)
     return bridge.plan_orders(
         signals, MARKETS, positions or {}, placed=positions or {}, **kwargs
     )
@@ -160,7 +163,7 @@ def test_an_unpriced_instrument_is_refused():
     report = bridge.plan_orders(
         [signal("AAPL")], {"AAPL": Market("AAPL", 0.0, 0.0)}, {}, placed={},
         balance=5_000.0, limits=LIMITS, exposure_per_unit_size=4.0,
-        rebalance_threshold=0.25, session_open=OPEN,
+        rebalance_threshold=0.25, session_open=OPEN, recheck=False,
     )
     assert only(report, "AAPL").action == "refused"
 
@@ -216,6 +219,7 @@ def test_the_gross_cap_shrinks_positions_when_it_binds():
     report = bridge.plan_orders(
         signals, MARKETS, {}, placed={}, balance=1_000.0, limits=small,
         exposure_per_unit_size=4.0, rebalance_threshold=0.25, session_open=OPEN,
+        recheck=False,
     )
 
     assert report.gross_target <= small.max_total_exposure_gbp + 1e-6
@@ -287,7 +291,7 @@ def test_a_position_nobody_opened_halts_the_bridge():
         [signal("AAPL")], MARKETS,
         {"NFLX": {"size": 0.01, "direction": "BUY"}}, placed={},
         balance=5_000.0, limits=LIMITS, exposure_per_unit_size=4.0,
-        rebalance_threshold=0.25, session_open=OPEN,
+        rebalance_threshold=0.25, session_open=OPEN, recheck=False,
     )
 
     assert report.halted
@@ -312,7 +316,7 @@ def test_a_position_the_app_thinks_it_opened_and_is_not_there_halts_it():
         [signal("AAPL")], MARKETS, {},
         placed={"AAPL": {"size": 10.0}},
         balance=5_000.0, limits=LIMITS, exposure_per_unit_size=4.0,
-        rebalance_threshold=0.25, session_open=OPEN,
+        rebalance_threshold=0.25, session_open=OPEN, recheck=False,
     )
 
     assert report.halted
@@ -325,7 +329,7 @@ def test_a_halt_lets_nothing_through():
         [signal("AAPL", size=0.05)], MARKETS,
         {"NFLX": {"size": 0.01, "direction": "BUY"}}, placed={},
         balance=5_000.0, limits=LIMITS, exposure_per_unit_size=4.0,
-        rebalance_threshold=0.25, session_open=OPEN,
+        rebalance_threshold=0.25, session_open=OPEN, recheck=False,
     )
     assert report.actionable == ()
 
@@ -358,3 +362,78 @@ def test_the_planner_cannot_place_anything():
     assert not any("dealing" in name for name in imported), imported
     assert "place_position" not in source
     assert "urllib" not in source
+
+
+# --------------------------------------------------------------------------- #
+# The last look, on real orders
+#
+# M313 an open placed on a signal that no longer holds
+# M314 the gate skipped when no re-evaluation was supplied
+# M315 the gate applied to a close, refusing an exit
+# --------------------------------------------------------------------------- #
+def _recheck(direction="long", confidence=0.9):
+    return {"AAPL": {"direction": direction, "confidence": confidence}}
+
+
+def test_an_open_needs_the_signal_to_still_hold():
+    """M313: real orders on a signal formed before the market moved.
+
+    The paper book already does this on the same evidence: requiring the
+    signal to still hold against the live price refused 197 of 2,139 round
+    trips, and those refused won 36.0% against 50.4% for the ones kept
+    (t=+4.18, p=0.000038). These are real orders, so the case is stronger.
+    """
+    held = plan([signal("AAPL")], recheck=True, rechecked=_recheck())
+    assert only(held, "AAPL").action == "open"
+
+    flipped = plan(
+        [signal("AAPL")], recheck=True, rechecked=_recheck(direction="short")
+    )
+    intent = only(flipped, "AAPL")
+    assert intent.action == "refused"
+    assert "reversed" in intent.reason
+
+    faded = plan(
+        [signal("AAPL")], recheck=True, rechecked=_recheck(confidence=0.1)
+    )
+    assert only(faded, "AAPL").action == "refused"
+
+
+def test_no_re_evaluation_means_no_open():
+    """M314: a gate that opens when it could not run.
+
+    Fail-closed, exactly as the paper book's is. An unchecked signal is not
+    an approved one.
+    """
+    report = plan([signal("AAPL")], recheck=True, rechecked=None)
+    intent = only(report, "AAPL")
+
+    assert intent.action == "refused"
+    assert "re-evaluation" in intent.reason
+    assert not report.actionable
+
+    # And an instrument missing from the re-evaluation is refused too.
+    partial = plan([signal("MSFT")], recheck=True, rechecked=_recheck())
+    assert only(partial, "MSFT").action == "refused"
+
+
+def test_the_gate_never_refuses_an_exit():
+    """M315: a close blocked by a check about entries.
+
+    Refusing an exit is never the safe direction, and the measurement was
+    about entries. A resize is left alone for the same reason: it acts on a
+    position already justified, and the hysteresis already demands a 25%
+    drift.
+    """
+    positions = {"AAPL": {"size": 10.0, "direction": "BUY", "deal_id": "D1"}}
+
+    closing = plan(
+        [signal("AAPL", "flat", 0.0)], positions,
+        recheck=True, rechecked={},        # nothing re-checked at all
+    )
+    assert only(closing, "AAPL").action == "close"
+
+    resizing = plan(
+        [signal("AAPL", size=0.10)], positions, recheck=True, rechecked={},
+    )
+    assert only(resizing, "AAPL").action == "resize"

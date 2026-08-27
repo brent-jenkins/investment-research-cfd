@@ -710,6 +710,217 @@ def _advisor_inputs(app_config, account):
     return book, prices, latest, as_of
 
 
+def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
+    """One pass of the demo account: decide, then place what survives.
+
+    The decision is :func:`cfdinvest.broker.capital.bridge.plan_orders`,
+    which is pure and takes no network. This reads what it needs, hands it
+    over, and acts on what comes back -- so the thing that decides and the
+    thing that can lose money stay separate.
+
+    Never raises. A failed pass leaves the account exactly as it was, which
+    is the whole reason the planner refuses rather than guessing.
+    """
+    from cfdinvest.advisor import livecheck
+    from cfdinvest.broker.capital import bridge
+    from cfdinvest.broker.capital import client as capital
+    from cfdinvest.broker.capital import dealing as dealing_module
+    from cfdinvest.persist import orders as order_store
+    from cfdinvest.persist import readers
+    from cfdinvest.risk import RiskLimits
+    from cfdinvest.schedule.market_calendar import describe
+
+    account_name = getattr(args, "account", None)
+    tickers = list(app_config.market.tickers or ())
+    if not tickers:
+        return EXIT_OK
+
+    settings = dealing_module.DealingConfig.from_env()
+    if not settings.broker.complete:
+        logger.debug("No Capital.com credentials; not trading")
+        return EXIT_OK
+
+    refusal = settings.refusal()
+    if refusal:
+        # Not a warning. Dealing being off is the normal, safe state, and a
+        # message every fifteen minutes about a feature nobody switched on
+        # is how a log stops being read.
+        logger.debug("Not trading: %s", refusal)
+        return EXIT_OK
+
+    session = capital.open_session(settings.broker)
+    if not session.ok:
+        logger.warning("Capital: could not authenticate: %s", session.error)
+        return EXIT_OK
+
+    account = capital.fetch_account(session, settings.broker)
+    if not account.ok:
+        logger.warning("Capital: no balance (%s); nothing can be sized", account.error)
+        return EXIT_OK
+
+    held, held_error = dealing_module.list_positions(session, settings)
+    if held_error:
+        # An unreadable book is not an empty one, and only one of those
+        # means it is safe to open more.
+        logger.warning("Capital: positions unreadable (%s); not trading", held_error)
+        return EXIT_OK
+
+    positions = {
+        p.epic: {"size": p.size, "direction": p.direction, "deal_id": p.deal_id}
+        for p in held
+    }
+    placed = order_store.open_orders(app_config, account_name)
+
+    markets = {
+        m.ticker: m
+        for m in capital.fetch_market_details(tickers, session, settings.broker)
+    }
+
+    now = pd.Timestamp.now(tz="UTC")
+    try:
+        calendar = describe(tickers, now)
+        session_open = {
+            str(i): bool(v) for i, v in calendar["is_open"].items()
+        }
+    except Exception as error:  # noqa: BLE001 - an unknown calendar is closed
+        logger.warning("Capital: no session calendar (%s); trading nothing", error)
+        session_open = {}
+
+    run_id = readers.load_latest_run(app_config, account=account_name)
+    frame = (
+        None if run_id is None
+        else readers.load_frame("signals", run_id, app_config, account_name)
+    )
+    latest: list[dict] = []
+    if frame is not None and not getattr(frame, "empty", True):
+        working = frame.reset_index() if hasattr(frame, "reset_index") else frame
+        if "timestamp" in working.columns:
+            stamps = pd.to_datetime(working["timestamp"], utc=True, errors="coerce")
+            working = working[stamps == stamps.max()]
+        latest = working.to_dict("records")
+
+    # The last look, over the instruments that might open. Priced from the
+    # broker's own mid, which is the price an order would actually meet.
+    candidates = [
+        str(row.get("ticker") or "") for row in latest
+        if str(row.get("ticker") or "") not in positions
+        and session_open.get(str(row.get("ticker") or ""), False)
+    ]
+    prices = {
+        t: (markets[t].bid + markets[t].offer) / 2
+        for t in candidates
+        if t in markets and markets[t].ok
+    }
+    rechecked = (
+        livecheck.reevaluate(candidates, prices, config=app_config, at=now)
+        if candidates else {}
+    )
+
+    fx = _capital_fx_rate(markets, account.currency)
+
+    report = bridge.plan_orders(
+        latest, markets, positions,
+        balance=account.balance,
+        limits=RiskLimits.for_balance(account.balance),
+        exposure_per_unit_size=app_config.strategy.exposure_per_unit_size,
+        rebalance_threshold=_execution_config(tickers, app_config.strategy)
+        .rebalance_threshold,
+        session_open=session_open,
+        placed=placed,
+        fx_rate=fx,
+        recheck=True,
+        rechecked=rechecked,
+        entry_confidence=app_config.strategy.entry_confidence,
+    )
+
+    order_store.record_plan(report, app_config, account_name, now=now)
+
+    if report.halted:
+        logger.warning("Capital: NOT TRADING -- %s", report.halt_reason)
+        if not getattr(args, "no_email", False):
+            _send_bridge_halt(report, smtp, transport)
+        return EXIT_OK
+
+    opened = closed = resized = 0
+    for intent in report.actionable:
+        if intent.action == "close":
+            result = dealing_module.close_position(intent.deal_id, session, settings)
+            closed += 1 if result.ok else 0
+        else:
+            result = dealing_module.place_position(
+                intent.epic,
+                "BUY" if intent.target_units > 0 else "SELL",
+                abs(intent.target_units - intent.held_units)
+                if intent.action == "resize" else abs(intent.target_units),
+                session, settings,
+            )
+            if result.ok:
+                opened += 1 if intent.action == "open" else 0
+                resized += 1 if intent.action == "resize" else 0
+        order_store.record_result(intent, result, app_config, account_name, now=now)
+        if result.error:
+            logger.warning(
+                "Capital: %s %s failed: %s", intent.action, intent.ticker, result.error
+            )
+
+    refused = sum(1 for i in report.intents if i.action == "refused")
+    logger.info(
+        "Capital: opened %d, resized %d, closed %d, refused %d, balance %.2f",
+        opened, resized, closed, refused, account.balance or 0.0,
+    )
+    return EXIT_OK
+
+
+def _capital_fx_rate(markets, account_currency: str) -> float:
+    """Account currency per unit of the instrument currency.
+
+    Read from the instruments themselves rather than assumed. Everything in
+    this universe is USD against a GBP account, and getting it upside down
+    misstates every position by the square of the rate.
+    """
+    from cfdinvest.livequotes.poller import poll_live_quotes
+
+    currencies = {
+        getattr(m, "currency", "") for m in markets.values() if getattr(m, "ok", False)
+    }
+    if not currencies or currencies <= {account_currency, ""}:
+        return 1.0
+    quotes = poll_live_quotes(["GBPUSD=X"])
+    rate = quotes.get("GBPUSD=X")
+    return 1.0 / float(rate) if rate else 1.0
+
+
+def _send_bridge_halt(report, smtp, transport) -> None:
+    """Say loudly that the account and the record disagree. Never raises."""
+    from cfdinvest.schedule import notify
+
+    try:
+        body = [
+            "The Capital.com bridge stopped opening positions.",
+            "",
+            report.halt_reason,
+            "",
+            "Existing positions were left alone. Nothing was closed and "
+            "nothing was opened. This needs a person to look before it will "
+            "trade again.",
+        ]
+        if report.unexplained:
+            body += ["", f"In the account, not in the record: "
+                         f"{', '.join(report.unexplained)}"]
+        if report.missing:
+            body += ["", f"In the record, not in the account: "
+                         f"{', '.join(report.missing)}"]
+        notify.send(
+            notify.Message(
+                subject="cfdinvest: the demo account and the record disagree",
+                body="\n".join(body),
+            ),
+            config=smtp, transport=transport,
+        )
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not send the halt alert: %s", error)
+
+
 def _command_record_spreads(args, app_config) -> int:
     """Read what a trade costs right now, and append it. Never fails a run.
 
@@ -1032,6 +1243,10 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         _command_prune_runs(_job_args(args, "prune-runs"), app_config)
     elif name == "record-spreads":
         _command_record_spreads(_job_args(args, "poll-live-quotes"), app_config)
+    elif name == "trade-capital":
+        _command_trade_capital(
+            _job_args(args, "poll-live-quotes"), app_config, smtp, transport
+        )
     elif name == "screen-universe":
         # Records what the rule says and nothing else. It cannot change the
         # traded universe -- the CLI it calls has no path that writes the
