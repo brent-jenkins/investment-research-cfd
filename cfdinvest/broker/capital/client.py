@@ -173,6 +173,12 @@ class CapitalMarket:
     currency: str = ""
     min_deal_size: float | None = None
     instrument_type: str = ""
+    #: Margin as a percentage of exposure -- 20 means 5x leverage.
+    margin_factor: float | None = None
+    #: Overnight funding per side, as the broker states it. The unit is not
+    #: documented; see the note in ``persist.spreads``.
+    funding_long: float | None = None
+    funding_short: float | None = None
     tradable: bool | None = None
     fetched_at: str = ""
     error: str = ""
@@ -445,6 +451,119 @@ def fetch_market(
         currency=str(instrument.get("currency") or ""),
         min_deal_size=_number(minimum),
         instrument_type=str(instrument.get("type") or ""),
+        tradable=(
+            None if snapshot.get("marketStatus") is None
+            else str(snapshot.get("marketStatus")) == "TRADEABLE"
+        ),
+        fetched_at=str(now or ""),
+        error=price_error,
+    )
+
+
+def fetch_market_details(
+    epics: Sequence[str],
+    session: CapitalSession,
+    config: CapitalConfig | None = None,
+    *,
+    opener=None,
+    now=None,
+) -> list[CapitalMarket]:
+    """Every instrument in one call. Never raises.
+
+    ``GET /markets?epics=a,b,c`` returns the same document per instrument as
+    the single-epic endpoint -- snapshot, instrument and dealingRules -- for
+    twenty names in about a tenth of a second. ``fetch_markets`` beside this
+    makes two calls per instrument because it resolves symbols to epics
+    first; once the epics are known, which they are after the first run,
+    this is the one to use.
+
+    That matters for a reading taken every fifteen minutes: forty calls a
+    reading against the documented ten a second is a rate limit waiting to
+    be hit, and one call is not.
+    """
+    settings = config or CapitalConfig.from_env()
+    wanted = [str(e) for e in epics if str(e)]
+    if not wanted:
+        return []
+    if not session.ok:
+        return [
+            CapitalMarket(epic=e, ticker=e, error=session.error or "no session")
+            for e in wanted
+        ]
+
+    read = opener or _read
+    query = urllib.parse.urlencode({"epics": ",".join(wanted)})
+    try:
+        document, _ = read(
+            f"{session.host}/markets?{query}",
+            headers=session.headers(settings.api_key),
+        )
+    except urllib.error.HTTPError as error:
+        return [
+            CapitalMarket(epic=e, ticker=e, error=f"HTTP {error.code}")
+            for e in wanted
+        ]
+    except Exception as error:  # noqa: BLE001
+        return [
+            CapitalMarket(epic=e, ticker=e, error=f"{type(error).__name__}: {error}")
+            for e in wanted
+        ]
+
+    found: dict[str, CapitalMarket] = {}
+    for entry in (document or {}).get("marketDetails") or []:
+        market = _market_from_details(entry, now=now)
+        if market.epic:
+            found[market.epic] = market
+
+    # Every epic asked about comes back, in order, carrying its reason if it
+    # is missing. An instrument the broker did not return is a finding.
+    return [
+        found.get(
+            epic,
+            CapitalMarket(
+                epic=epic, ticker=epic,
+                error="not in the response; the broker did not return it",
+            ),
+        )
+        for epic in wanted
+    ]
+
+
+def _market_from_details(document: Mapping[str, Any], *, now=None) -> CapitalMarket:
+    """One instrument's details document, as a row. Shared by both readers."""
+    snapshot = (document or {}).get("snapshot") or {}
+    instrument = (document or {}).get("instrument") or {}
+    rules = (document or {}).get("dealingRules") or {}
+
+    bid = _number(snapshot.get("bid"))
+    offer = _number(snapshot.get("offer"))
+    if offer is None:
+        offer = _number(snapshot.get("ofr"))
+
+    spread_points = spread_pct = None
+    price_error = ""
+    if bid is not None and offer is not None and bid > 0 and offer > 0:
+        spread_points = offer - bid
+        mid = (offer + bid) / 2.0
+        spread_pct = spread_points / mid * 100.0 if mid > 0 else None
+    else:
+        status = str(snapshot.get("marketStatus") or "unknown")
+        price_error = f"no dealing prices (market {status.lower()})"
+
+    epic = str(instrument.get("epic") or document.get("epic") or "")
+    fee = instrument.get("overnightFee") or {}
+    return CapitalMarket(
+        epic=epic,
+        ticker=str(instrument.get("symbol") or epic),
+        name=str(instrument.get("name") or ""),
+        bid=bid, offer=offer,
+        spread_points=spread_points, spread_pct=spread_pct,
+        currency=str(instrument.get("currency") or ""),
+        min_deal_size=_number((rules.get("minDealSize") or {}).get("value")),
+        instrument_type=str(instrument.get("type") or ""),
+        margin_factor=_number(instrument.get("marginFactor")),
+        funding_long=_number(fee.get("longRate")),
+        funding_short=_number(fee.get("shortRate")),
         tradable=(
             None if snapshot.get("marketStatus") is None
             else str(snapshot.get("marketStatus")) == "TRADEABLE"

@@ -97,6 +97,7 @@ JOBS: tuple[str, ...] = (
     "advisor-alert",
     "ingest-intraday",
     "run-intraday",
+    "record-spreads",
     "paper-book",
     "ingest-daily",
     "monitoring-snapshot",
@@ -203,6 +204,9 @@ def jobs_due(
         ):
             due.append("ingest-intraday")
             due.append("run-intraday")
+            # On the same tick as the run, so a reading lines up with the
+            # bar the engine decided on rather than falling between two.
+            due.append("record-spreads")
 
     if _due_daily(moment, history.get("ingest-daily"), INGEST_AT_UTC):
         due.append("ingest-daily")

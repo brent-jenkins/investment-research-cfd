@@ -710,6 +710,80 @@ def _advisor_inputs(app_config, account):
     return book, prices, latest, as_of
 
 
+def _command_record_spreads(args, app_config) -> int:
+    """Read what a trade costs right now, and append it. Never fails a run.
+
+    One call for the whole universe. The reading is taken whether or not the
+    session is open and *tagged* with which it was, because an out-of-session
+    spread is nearly twice an in-session one -- so pooling them would produce
+    a median describing trading nobody does, and discarding them would throw
+    away the evidence that says so.
+
+    Absent credentials are not an error. Most installations have none, and a
+    scheduled job that logs a failure every fifteen minutes for a feature
+    nobody configured is how a log stops being read.
+    """
+    from cfdinvest.broker.capital import client as capital
+    from cfdinvest.persist import spreads as store
+    from cfdinvest.schedule.market_calendar import describe
+
+    account = getattr(args, "account", None)
+    tickers = list(app_config.market.tickers or ())
+    if not tickers:
+        return EXIT_OK
+
+    settings = capital.CapitalConfig.from_env()
+    if not settings.complete:
+        logger.debug("No Capital.com credentials; not recording spreads")
+        return EXIT_OK
+
+    session = capital.open_session(settings)
+    if not session.ok:
+        logger.warning("Could not read spreads: %s", session.error)
+        return EXIT_OK
+
+    now = pd.Timestamp.now(tz="UTC")
+    rows = capital.fetch_market_details(tickers, session, settings, now=str(now))
+
+    try:
+        calendar = describe(tickers, now)
+        open_now = {
+            str(index): bool(value)
+            for index, value in calendar["is_open"].items()
+        }
+    except Exception as error:  # noqa: BLE001 - an unknown calendar is not fatal
+        logger.warning("Could not read the session calendar: %s", error)
+        open_now = {}
+
+    observations = []
+    for row in rows:
+        observations.append({
+            "at": str(now),
+            "ticker": row.ticker,
+            "epic": row.epic,
+            "bid": row.bid,
+            "offer": row.offer,
+            "spread_bp": None if row.spread_pct is None else row.spread_pct * 100,
+            "min_deal_size": row.min_deal_size,
+            "margin_factor": row.margin_factor,
+            # Raw and unconverted; the unit is not documented. See the note
+            # in persist.spreads.
+            "funding_long_raw": row.funding_long,
+            "funding_short_raw": row.funding_short,
+            "market_status": row.tradable,
+            "session_open": open_now.get(row.ticker),
+            "error": row.error,
+        })
+
+    written = store.record_spreads(observations, app_config, account)
+    priced = sum(1 for row in rows if row.ok)
+    logger.info(
+        "Spreads: recorded %d reading(s), %d priced of %d",
+        written, priced, len(rows),
+    )
+    return EXIT_OK
+
+
 def _command_prune_runs(args, app_config) -> int:
     """Remove old run artefacts. Never fails the caller."""
     from cfdinvest.persist import retention
@@ -956,6 +1030,8 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         )
     elif name == "prune-runs":
         _command_prune_runs(_job_args(args, "prune-runs"), app_config)
+    elif name == "record-spreads":
+        _command_record_spreads(_job_args(args, "poll-live-quotes"), app_config)
     elif name == "screen-universe":
         # Records what the rule says and nothing else. It cannot change the
         # traded universe -- the CLI it calls has no path that writes the
