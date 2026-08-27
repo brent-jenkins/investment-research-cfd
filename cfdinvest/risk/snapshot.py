@@ -8,6 +8,33 @@ loading and hands them over.
 **No artefact is required.** A lake with a run but no analysis panels gives
 position units and no exposure; one with no runs at all gives a snapshot that
 says so. Every absence is named in ``unavailable`` rather than filled in.
+
+**The positions come from a real book, never from the backtest.** This is
+the correction of a defect that made the page useless: it read
+``positions.parquet`` from the newest run -- a simulation whose equity had
+compounded for two years -- and measured it against the limits of a £2,000
+account. On 2026-08-27 that reported gross exposure of £810,945 against a
+£3,000 limit, five breaches, critical. Nothing anybody held was involved.
+The figure had also never been converted: units times a dollar close,
+labelled GBP.
+
+A limit that is breached every day is a limit nobody reads, so a real breach
+would have arrived on a page that was already red -- while the monitoring
+snapshot said green in the same minute.
+
+The order is confirmed book, then paper book, then nothing:
+
+* **confirmed** -- what you recorded actually placing. The real account, so
+  it wins whenever any confirmation exists at all.
+* **paper:<arm>** -- the forward simulation's baseline arm, at £1,000 of
+  notional per position. Not what you hold, but the same size as what you
+  would hold, which is what makes it comparable to the limits.
+* **nothing** -- reported absent. Not flat: "no book was found" and "the
+  book is flat" are different statements and only one of them is calm.
+
+Marks are converted to sterling from the rate the position was opened at,
+which each book records. A stale rate is a small error; no rate at all is a
+figure that is wrong by the exchange rate and looks right.
 """
 
 from __future__ import annotations
@@ -22,32 +49,7 @@ from cfdinvest.risk.scheduler_status import compute_scheduler_status
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["snapshot_from_disk", "limits_from_execution_metadata"]
-
-
-def limits_from_execution_metadata(
-    metadata: Mapping[str, Any] | None, limits: RiskLimits | None = None
-) -> RiskLimits:
-    """Fill the account balance from what the run recorded, if it recorded it.
-
-    The balance is the denominator of leverage and margin usage, so a stale
-    one makes both wrong in the direction that flatters the book. A run's own
-    ``initial_equity`` is at least a figure the run stood behind; an explicit
-    :class:`RiskLimits` always wins over it.
-    """
-    if limits is not None:
-        return limits
-
-    from dataclasses import replace
-
-    base = RiskLimits()
-    try:
-        equity = float((metadata or {}).get("initial_equity"))
-    except (TypeError, ValueError):
-        return base
-    if equity <= 0:
-        return base
-    return replace(base, account_balance_gbp=equity)
+__all__ = ["snapshot_from_disk"]
 
 
 def _currencies(metadata: Mapping[str, Any] | None) -> dict[str, str]:
@@ -60,6 +62,103 @@ def _currencies(metadata: Mapping[str, Any] | None) -> dict[str, str]:
     """
     mapping = (metadata or {}).get("instrument_currencies")
     return dict(mapping) if isinstance(mapping, Mapping) else {}
+
+
+def _confirmed_book(config, account: str | None):
+    """Signed units per instrument from the confirmations, or ``None``.
+
+    ``None`` means no confirmation has ever been recorded. An empty dict
+    means every confirmed position has been closed, which is a flat book and
+    a different thing.
+    """
+    try:
+        from cfdinvest.persist import confirm
+
+        recorded = confirm.load_confirmations(config, account)
+        if not recorded:
+            return None
+        return {
+            ticker: dict(position)
+            for ticker, position in confirm.confirmed_positions(recorded).items()
+        }
+    except Exception as error:  # noqa: BLE001 - a risk page never raises
+        logger.warning("Could not read the confirmed book: %s", error)
+        return None
+
+
+def _paper_book(config, account: str | None):
+    """Signed units per instrument from the paper book's baseline arm.
+
+    The baseline arm rather than all four: the arms are independent
+    experiments, and summing them would report four times the exposure of a
+    book anybody would trade.
+    """
+    try:
+        from cfdinvest.advisor.papertrade import load_book, open_positions
+        from cfdinvest.advisor.papertrade_run import cohorts_for
+
+        events = load_book(config, account)
+        if not events:
+            return None, None
+        arm = cohorts_for(getattr(config, "strategy", None))[0][0]
+        positions = {}
+        for ticker, row in open_positions(events, cohort=arm).items():
+            quantity = float(row.get("quantity") or 0.0)
+            if str(row.get("direction") or "").lower() == "short":
+                quantity = -quantity
+            positions[ticker] = {**row, "quantity": quantity}
+        return positions, f"paper:{arm}"
+    except Exception as error:  # noqa: BLE001 - a risk page never raises
+        logger.warning("Could not read the paper book: %s", error)
+        return None, None
+
+
+def _positions_frame(positions: Mapping[str, Mapping[str, Any]], now):
+    """One row of signed units, stamped with the latest event in the book."""
+    stamps = [
+        stamp
+        for stamp in (pd.Timestamp(p["at"]) for p in positions.values() if p.get("at"))
+        if stamp is not pd.NaT
+    ]
+    as_of = max(stamps) if stamps else (pd.Timestamp(now) if now is not None else None)
+    if as_of is None:
+        as_of = pd.Timestamp.now(tz="UTC")
+    as_of = as_of.tz_localize("UTC") if as_of.tz is None else as_of.tz_convert("UTC")
+    return pd.DataFrame(
+        [{t: float(p.get("quantity") or 0.0) for t, p in positions.items()}],
+        index=pd.DatetimeIndex([as_of], name="timestamp"),
+    )
+
+
+def _sterling_marks(positions: Mapping[str, Mapping[str, Any]], analysis_frame):
+    """Current close per instrument, converted at the rate it was opened at.
+
+    An instrument whose rate was not recorded gets no mark, so its exposure
+    is reported absent rather than quoted in the wrong currency. That is the
+    bug this whole function exists to stop repeating: the old figure was
+    units times a dollar close and was labelled GBP.
+    """
+    from cfdinvest.risk.model import _latest_prices
+
+    closes = _latest_prices(analysis_frame)
+    if closes is None or len(closes) == 0:
+        return None
+
+    marks: dict[str, float] = {}
+    for ticker, position in positions.items():
+        close = closes.get(ticker)
+        rate = position.get("fx_rate")
+        try:
+            rate = float(rate) if rate is not None else 1.0
+        except (TypeError, ValueError):
+            continue
+        if close is None or rate <= 0:
+            continue
+        try:
+            marks[ticker] = float(close) * rate
+        except (TypeError, ValueError):
+            continue
+    return pd.Series(marks, dtype="float64") if marks else None
 
 
 def snapshot_from_disk(
@@ -90,8 +189,20 @@ def snapshot_from_disk(
         scheduler_state.load_scheduler_state(config, account), now=now
     )
 
+    # The book first, because it does not depend on a run having happened.
+    # A confirmed position is real whether or not the pipeline ran today.
+    confirmed = _confirmed_book(config, account)
+    if confirmed is not None:
+        positions, source = confirmed, "confirmed"
+    else:
+        positions, source = _paper_book(config, account)
+
     if chosen is None:
         return build_risk_snapshot(
+            positions_frame=(
+                None if positions is None else _positions_frame(positions, now)
+            ),
+            book=source,
             scheduler_status=status,
             limits=limits or RiskLimits(),
             now=now,
@@ -105,16 +216,22 @@ def snapshot_from_disk(
             return None
 
     execution_metadata = read("execution_metadata") or {}
-    parts = readers.load_execution_frame(chosen, config, account)
+    analysis_frame = read("analysis_frame")
 
     return build_risk_snapshot(
-        positions_frame=parts.get("positions"),
+        positions_frame=(
+            None if positions is None else _positions_frame(positions, now)
+        ),
+        prices=(
+            None if not positions else _sterling_marks(positions, analysis_frame)
+        ),
+        book=source,
         regime_frame=read("regime_frame"),
         pnl_frame=read("pnl_frame"),
-        analysis_frame=read("analysis_frame"),
+        analysis_frame=analysis_frame,
         assessments_frame=_assessments(config, account),
         scheduler_status=status,
-        limits=limits_from_execution_metadata(execution_metadata, limits),
+        limits=limits or RiskLimits(),
         run_id=chosen,
         run_initial_equity=_initial_equity(execution_metadata),
         instrument_currencies=_currencies(execution_metadata),

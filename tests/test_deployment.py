@@ -957,7 +957,13 @@ def test_the_daemon_owns_every_scheduled_job():
 
     assert "prune-runs" in daemon.JOBS, "nothing would bound the artefact store"
     assert "paper-book" in daemon.JOBS, "the forward record would stop"
-    assert "run-daily" in daemon.JOBS and "ingest-daily" in daemon.JOBS
+    assert "ingest-daily" in daemon.JOBS, "the daily lake would go stale"
+    # The only job that produces a run. ``run-daily`` was retired on
+    # 2026-08-27: a US-only universe is closed at 03:05 UTC, so it skipped
+    # every day and produced nothing, while this one had already been doing
+    # the same work every fifteen minutes.
+    assert "run-intraday" in daemon.JOBS, "nothing would produce signals"
+    assert "run-daily" not in daemon.JOBS, "a job that can never do anything"
 
     # Pruning runs only after the snapshots that describe a run, so a run is
     # never pruned before everything about it has been written.

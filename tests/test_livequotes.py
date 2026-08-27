@@ -292,7 +292,7 @@ def test_nothing_is_owed_twice_in_one_day():
     last = {
         "poll-live-quotes": pd.Timestamp("2026-08-25 03:58", tz="UTC"),
         "ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
-        "run-daily": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
     }
     assert daemon.jobs_due(pd.Timestamp("2026-08-25 04:00", tz="UTC"), last) == []
 
@@ -306,7 +306,7 @@ def test_a_restart_after_the_daily_slot_does_not_run_it_again():
     last = {
         "poll-live-quotes": pd.Timestamp("2026-08-25 03:28", tz="UTC"),
         "ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
-        "run-daily": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
     }
     assert daemon.jobs_due(pd.Timestamp("2026-08-25 03:30", tz="UTC"), last) == []
 
@@ -314,33 +314,42 @@ def test_a_restart_after_the_daily_slot_does_not_run_it_again():
 def test_the_daily_work_comes_round_again_the_next_day():
     last = {
         "ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
-        "run-daily": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
     }
     due = daemon.jobs_due(pd.Timestamp("2026-08-26 03:06", tz="UTC"), last)
-    assert "ingest-daily" in due and "run-daily" in due
+    assert "ingest-daily" in due and "monitoring-snapshot" in due
 
 
-def test_ingestion_is_ordered_before_the_run_that_reads_it():
+def test_ingestion_is_ordered_before_what_reads_it():
     due = daemon.jobs_due(pd.Timestamp("2026-08-25 04:00", tz="UTC"), {})
-    assert due.index("ingest-daily") < due.index("run-daily")
-    # And the snapshots describe the run, so they come after it.
-    assert due.index("run-daily") < due.index("monitoring-snapshot")
-    assert due.index("run-daily") < due.index("risk-snapshot")
+    # The snapshots describe a lake ingestion has finished writing, and the
+    # prune must not remove a run before they have described it.
+    assert due.index("ingest-daily") < due.index("monitoring-snapshot")
+    assert due.index("monitoring-snapshot") < due.index("risk-snapshot")
+    assert due.index("risk-snapshot") < due.index("prune-runs")
 
 
-def test_the_snapshots_are_owed_only_when_the_pipeline_ran():
-    """They describe a run. On their own they describe nothing."""
+def test_the_snapshots_are_owed_once_a_day_and_not_again():
+    """M222: the snapshots back on the cadence of whatever triggers them.
+
+    They used to hang off the daily pipeline run. That run was retired on
+    2026-08-27 because a US-only universe is always closed at 03:05, so it
+    could never do anything -- and hanging the snapshots off the *intraday*
+    run instead would have produced ninety operational records a session,
+    each describing the same day.
+    """
     last = {"ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
-            "run-daily": pd.Timestamp("2026-08-25 03:05", tz="UTC")}
+            "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC")}
     due = daemon.jobs_due(pd.Timestamp("2026-08-25 04:00", tz="UTC"), last)
     assert "monitoring-snapshot" not in due
     assert "risk-snapshot" not in due
+    assert "prune-runs" not in due
 
 
 def test_quotes_are_owed_every_five_minutes():
     last = {"poll-live-quotes": pd.Timestamp("2026-08-25 04:00", tz="UTC"),
             "ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
-            "run-daily": pd.Timestamp("2026-08-25 03:05", tz="UTC")}
+            "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC")}
     at = lambda m: pd.Timestamp("2026-08-25 04:00", tz="UTC") + pd.Timedelta(minutes=m)
 
     assert daemon.jobs_due(at(4), last) == []
@@ -770,7 +779,6 @@ def test_the_daemon_prunes_after_the_snapshots_not_before():
     due = daemon.jobs_due(pd.Timestamp("2026-08-25 04:00", tz="UTC"), {})
 
     assert "prune-runs" in due
-    assert due.index("prune-runs") > due.index("run-daily")
     assert due.index("prune-runs") > due.index("monitoring-snapshot")
     assert due.index("prune-runs") > due.index("risk-snapshot")
 

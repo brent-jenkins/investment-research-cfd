@@ -2322,22 +2322,24 @@ def test_a_restart_does_not_make_every_job_due_at_once(tmp_path, monkeypatch):
     now = pd.Timestamp("2026-08-26T14:00:00Z")
     # Nothing remembered: the daily jobs are due, which is right on a cold
     # start and wrong on a restart twenty minutes after they ran.
-    assert "run-daily" in daemon.jobs_due(now, {})
+    assert "monitoring-snapshot" in daemon.jobs_due(now, {})
 
-    scheduler_state.record_job("run-daily", pd.Timestamp("2026-08-26T03:05:00Z"))
+    scheduler_state.record_job(
+        "monitoring-snapshot", pd.Timestamp("2026-08-26T03:05:00Z")
+    )
     scheduler_state.record_job("ingest-daily", pd.Timestamp("2026-08-26T03:00:00Z"))
 
     remembered = scheduler_state.last_job_runs()
-    assert "run-daily" in remembered, "the job was not persisted"
+    assert "monitoring-snapshot" in remembered, "the job was not persisted"
 
-    # Seeded from disk, today's run is not owed again.
-    assert "run-daily" not in daemon.jobs_due(now, remembered)
+    # Seeded from disk, today's work is not owed again.
+    assert "monitoring-snapshot" not in daemon.jobs_due(now, remembered)
     assert "ingest-daily" not in daemon.jobs_due(now, remembered)
 
     # And tomorrow it is owed once more -- this must not become a job that
     # never runs again.
     tomorrow = pd.Timestamp("2026-08-27T14:00:00Z")
-    assert "run-daily" in daemon.jobs_due(tomorrow, remembered)
+    assert "monitoring-snapshot" in daemon.jobs_due(tomorrow, remembered)
 
 
 def test_signals_are_refreshed_during_the_session_not_once_a_day():
@@ -2353,7 +2355,7 @@ def test_signals_are_refreshed_during_the_session_not_once_a_day():
 
     ran_at_three = {
         "ingest-daily": "2026-08-26T03:00:00Z",
-        "run-daily": "2026-08-26T03:05:00Z",
+        "monitoring-snapshot": "2026-08-26T03:05:00Z",
         "poll-live-quotes": "2026-08-26T14:59:00Z",
     }
     midday = "2026-08-26T15:00:00Z"
@@ -2383,7 +2385,7 @@ def test_nothing_intraday_runs_while_the_market_is_shut():
 
     history = {
         "ingest-daily": "2026-08-26T03:00:00Z",
-        "run-daily": "2026-08-26T03:05:00Z",
+        "monitoring-snapshot": "2026-08-26T03:05:00Z",
         "poll-live-quotes": "2026-08-26T02:00:00Z",
     }
     for state in (False, None):
@@ -2392,7 +2394,7 @@ def test_nothing_intraday_runs_while_the_market_is_shut():
         assert "ingest-intraday" not in due
 
 
-def test_the_snapshots_stay_on_the_daily_run():
+def test_the_snapshots_stay_daily():
     """M150: ninety operational records a session, all saying the same thing.
 
     The snapshots and the prune describe a day. Tied to the intraday run
@@ -2404,7 +2406,7 @@ def test_the_snapshots_stay_on_the_daily_run():
     intraday_only = daemon.jobs_due(
         "2026-08-26T15:00:00Z",
         {"ingest-daily": "2026-08-26T03:00:00Z",
-         "run-daily": "2026-08-26T03:05:00Z",
+         "monitoring-snapshot": "2026-08-26T03:05:00Z",
          "poll-live-quotes": "2026-08-26T14:59:00Z"},
         market_open=True,
     )
@@ -2412,9 +2414,10 @@ def test_the_snapshots_stay_on_the_daily_run():
     for job in ("monitoring-snapshot", "risk-snapshot", "prune-runs"):
         assert job not in intraday_only, f"{job} fired on the intraday cadence"
 
-    # They still follow the daily run.
+    # They come round once a day, with no market open and no run needed --
+    # they describe the newest run rather than cause one.
     daily = daemon.jobs_due("2026-08-27T03:10:00Z", {}, market_open=False)
-    assert "run-daily" in daily
+    assert "run-intraday" not in daily
     for job in ("monitoring-snapshot", "risk-snapshot", "prune-runs"):
         assert job in daily
 
@@ -2533,16 +2536,15 @@ def test_a_position_that_cannot_be_priced_is_still_shown(
     assert marks[0]["value_gbp"] is None, "an unvalued position must not show a value"
 
 
-def test_the_daily_run_is_not_dated_by_the_intraday_one():
+def test_the_daily_housekeeping_is_not_judged_against_the_intraday_run():
     """M161: two false warnings for a scheduler doing as it was told.
 
-    run-daily and run-intraday both write a run directory, so the newest
-    directory cannot say which of them made it. Dating run-daily by it put
-    the intraday run's time under the daily row, and then marked the
-    snapshots that correctly follow the daily run as "older than the most
-    recent run" -- risk-snapshot and prune-runs both reported behind
-    schedule while the daemon's own record showed them running seconds
-    after run-daily, exactly as designed.
+    The snapshots and the prune were timed against the daily pipeline run --
+    older than the newest run meant the run had finished and the snapshot had
+    not followed. That test stopped working the moment signals moved to a
+    fifteen-minute cadence, because a once-a-day snapshot is then *always*
+    older than the newest run, and it went on failing after the daily run was
+    retired for being unable to do anything at all.
 
     A status table that cries wolf is worse than no status table.
     """
@@ -2550,13 +2552,12 @@ def test_the_daily_run_is_not_dated_by_the_intraday_one():
 
     from cfdinvest.ui import vitals
 
-    # The daily run and its snapshots at 03:05; an intraday run since.
+    # The daily housekeeping at 03:05; intraday runs all afternoon since.
     evidence = {
         "poll-live-quotes": "2026-08-26T17:20:00Z",
         "advisor-alert": "2026-08-26T17:20:00Z",
         "paper-book": "2026-08-26T17:20:00Z",
         "ingest-daily": "2026-08-26T03:00:00Z",
-        "run-daily": "2026-08-26T03:05:00Z",
         "ingest-intraday": "2026-08-26T17:10:00Z",
         "run-intraday": "2026-08-26T17:10:00Z",
         "monitoring-snapshot": "2026-08-26T03:05:30Z",
@@ -2575,10 +2576,9 @@ def test_the_daily_run_is_not_dated_by_the_intraday_one():
             f"{job} reported {rows[job].status}: {rows[job].detail}"
         )
 
-    # And a snapshot that genuinely lags its own daily run is still caught.
-    stale = dict(evidence, risk_snapshot=None)
-    stale["risk-snapshot"] = "2026-08-25T03:05:31Z"
-    stale["run-daily"] = "2026-08-26T03:05:00Z"
+    # And a job that has genuinely missed its slot is still caught: a day and
+    # a half, so a late finish is not called a failure and a missed day is.
+    stale = dict(evidence, **{"risk-snapshot": "2026-08-24T03:05:31Z"})
     lagging = {
         row.name: row
         for row in vitals.job_report(
@@ -2586,43 +2586,43 @@ def test_the_daily_run_is_not_dated_by_the_intraday_one():
         )
     }
     assert lagging["risk-snapshot"].status == "warning", (
-        "a snapshot older than its own daily run must still be flagged"
+        "a snapshot that skipped a day must still be flagged"
     )
 
 
-def test_the_daily_run_row_is_dated_by_the_daemon_not_the_run_directory(monkeypatch):
+def test_a_job_row_is_dated_by_the_daemon_not_by_an_artefact(monkeypatch):
     """The seam the previous test missed.
 
     Asserting on job_report with hand-fed evidence proved the *reporting*
     logic was sound while leaving the actual defect untouched -- it lived in
-    gather_evidence, which chose the wrong source. The first version of this
+    gather_evidence, which chose the wrong source. The first version of that
     test passed happily against the mutation that reintroduced it.
+
+    What is being asked is "did the job run", and only the daemon's own
+    record answers that. An artefact answers "does output exist", which is a
+    different question with a different wrong answer each time.
     """
     import pandas as pd
 
     from cfdinvest.persist import readers, scheduler_state
     from cfdinvest.ui import vitals
 
-    # A run directory stamped by the most recent *intraday* run.
+    # A run directory a full hour newer than the run the daemon recorded --
+    # left behind by a hand-run pipeline, a resumed job, anything at all.
     monkeypatch.setattr(
-        readers, "load_latest_run", lambda *a, **k: "20260826T171000Z"
+        readers, "load_latest_run", lambda *a, **k: "20260826T181000Z"
     )
     monkeypatch.setattr(
         scheduler_state, "last_job_runs",
-        lambda *a, **k: {
-            "run-daily": "2026-08-26T03:05:00Z",
-            "run-intraday": "2026-08-26T17:10:00Z",
-        },
+        lambda *a, **k: {"run-intraday": "2026-08-26T17:10:00Z"},
     )
 
     evidence = vitals.gather_evidence(None)
 
-    daily = pd.Timestamp(evidence["run-daily"])
-    assert daily.hour == 3, (
-        f"run-daily dated {daily} -- that is the intraday run's directory, "
-        "not the daily job"
+    assert pd.Timestamp(evidence["run-intraday"]).hour == 17, (
+        f"run-intraday dated {evidence['run-intraday']} -- that is a run "
+        "directory, not the daemon's record of the job"
     )
-    assert pd.Timestamp(evidence["run-intraday"]).hour == 17
 
 
 def test_the_signals_page_leads_with_what_is_actionable(populated):

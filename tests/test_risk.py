@@ -954,3 +954,242 @@ def test_a_zero_interval_is_refused():
 
     with pytest.raises(ValueError, match="busy loop"):
         RiskMonitorConfig(interval_minutes=0)
+
+
+# --------------------------------------------------------------------------- #
+# Which book the exposure describes
+#
+# M214 the backtest's positions read as the book
+# M215 no book at all reported as a flat one
+# M216 the paper book preferred over what was actually confirmed
+# M217 a closed confirmed book falling through to the simulation
+# M218 the arms summed into one exposure
+# M219 a short carried as a long
+# M220 a dollar mark labelled sterling
+# M221 the account balance taken from the run's initial equity
+# --------------------------------------------------------------------------- #
+PAPER_FX = 0.75
+
+
+def _paper_event(ticker, *, cohort, direction="long", quantity=10.0, price=100.0,
+                 event="open", at="2026-08-26T16:00:00+00:00"):
+    return {
+        "at": at, "cohort": cohort, "event": event, "ticker": ticker,
+        "direction": direction, "quantity": quantity, "price": price,
+        "fx_rate": PAPER_FX, "notional_gbp": quantity * price * PAPER_FX,
+    }
+
+
+def _write_paper_book(config, events):
+    import json
+
+    from cfdinvest.persist.storage import account_root
+
+    path = Path(account_root(config, None)) / "paper" / "book.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8"
+    )
+
+
+def _baseline_arm(config):
+    from cfdinvest.advisor.papertrade_run import cohorts_for
+
+    return cohorts_for(getattr(config, "strategy", None))[0][0]
+
+
+def test_the_book_is_the_paper_book_not_the_backtests_positions(recorded_lake):
+    """M214: the defect this replaced.
+
+    The snapshot read ``positions.parquet`` from the newest run -- a
+    simulation whose equity had compounded for two years -- and measured it
+    against a 2,000 pound account's limits. It reported 810,945 of gross
+    exposure against a 3,000 limit and went critical every single day, on
+    positions nobody held. A limit breached every day is a limit nobody reads.
+    """
+    config, _ = recorded_lake
+    arm = _baseline_arm(config)
+    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=4.0)])
+
+    result = snapshot_from_disk(config)
+    stored = pd.read_parquet(
+        Path(config.paths.data_root) / "runs" / result.run_id / "positions.parquet"
+    )
+
+    assert result.book == f"paper:{arm}"
+    assert set(result.exposure_metrics["units"]) == {"SPY"}
+    # The run really does hold other instruments -- so this is not passing
+    # because there was nothing else to read.
+    assert set(stored.columns) - {"SPY"}
+
+
+def test_no_book_at_all_is_absent_rather_than_flat(recorded_lake):
+    """M215: silence read as "you are carrying nothing".
+
+    No confirmation and no paper book means nobody knows what is held. That
+    is a warning, not the calm of a flat account.
+    """
+    config, _ = recorded_lake
+
+    result = snapshot_from_disk(config)
+
+    assert result.book is None
+    assert "positions" in result.unavailable
+    assert result.severity == "warning"
+
+
+def test_a_confirmed_position_wins_over_the_simulation(recorded_lake):
+    """M216: the real account losing to the paper one.
+
+    A confirmation is what you recorded actually placing. Once one exists it
+    is the book, whatever the simulation believes.
+    """
+    from cfdinvest.persist.confirm import Confirmation, write_confirmation
+
+    config, _ = recorded_lake
+    arm = _baseline_arm(config)
+    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=4.0)])
+    write_confirmation(
+        Confirmation(
+            ticker="TLT", action="open", quantity=3.0, price=100.0,
+            timestamp=pd.Timestamp("2026-08-26 17:00", tz="UTC"), fx_rate=PAPER_FX,
+        ),
+        config,
+    )
+
+    result = snapshot_from_disk(config)
+
+    assert result.book == "confirmed"
+    assert set(result.exposure_metrics["units"]) == {"TLT"}
+
+
+@pytest.mark.parametrize(
+    "recorded, holding",
+    [
+        # Opened and then closed: the replay leaves a zero-quantity entry.
+        ((("open", 3.0, 17), ("close", 0.0, 18)), "sold"),
+        # Only decisions not to trade: the replay leaves *nothing at all*,
+        # which is the case that separates "no confirmations exist" from
+        # "the confirmations say you hold nothing". Getting it wrong reads
+        # the paper book instead and reports positions you never took.
+        ((("ignore", 0.0, 17),), "declined"),
+    ],
+    ids=["closed", "ignored"],
+)
+def test_a_confirmed_book_holding_nothing_is_still_the_book(
+    recorded_lake, recorded, holding
+):
+    """M217: a real account that went flat falling back to the simulation.
+
+    Having closed everything -- or having decided not to trade at all -- is a
+    fact about the real book, not an absence of one. Reporting the paper
+    book's positions instead would say you are carrying something you never
+    bought.
+    """
+    from cfdinvest.persist.confirm import Confirmation, write_confirmation
+
+    config, _ = recorded_lake
+    arm = _baseline_arm(config)
+    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=4.0)])
+    for action, quantity, hour in recorded:
+        write_confirmation(
+            Confirmation(
+                ticker="TLT", action=action, quantity=quantity,
+                price=None if action == "ignore" else 100.0,
+                timestamp=pd.Timestamp(f"2026-08-26 {hour}:00", tz="UTC"),
+                fx_rate=PAPER_FX,
+            ),
+            config,
+        )
+
+    result = snapshot_from_disk(config)
+
+    assert result.book == "confirmed", holding
+    assert "SPY" not in (result.exposure_metrics["units"] or {})
+
+
+def test_only_the_baseline_arm_counts(recorded_lake):
+    """M218: four independent experiments added together.
+
+    The arms are the same signals at four thresholds. Summing them reports
+    the exposure of a book that trades every threshold at once, which is
+    nobody's book and four times too big.
+    """
+    config, _ = recorded_lake
+    arm = _baseline_arm(config)
+    _write_paper_book(config, [
+        _paper_event("SPY", cohort=arm, quantity=4.0),
+        _paper_event("TLT", cohort="c70", quantity=9.0),
+    ])
+
+    result = snapshot_from_disk(config)
+
+    assert set(result.exposure_metrics["units"]) == {"SPY"}
+
+
+def test_a_short_is_carried_short(recorded_lake):
+    """M219: the paper book records size unsigned and direction separately.
+
+    Reading the quantity without the direction makes every short a long, so
+    net exposure comes out at gross and a hedged book looks like a doubled
+    one.
+    """
+    config, _ = recorded_lake
+    arm = _baseline_arm(config)
+    _write_paper_book(config, [
+        _paper_event("SPY", cohort=arm, direction="short", quantity=4.0),
+    ])
+
+    result = snapshot_from_disk(config)
+    metrics = result.exposure_metrics
+
+    assert metrics["units"]["SPY"] < 0
+    assert metrics["net_exposure_gbp"] < 0
+    assert metrics["gross_exposure_gbp"] == pytest.approx(
+        abs(metrics["net_exposure_gbp"])
+    )
+
+
+def test_the_mark_is_converted_to_sterling(recorded_lake):
+    """M220: units times a dollar close, labelled GBP.
+
+    The old figure was never converted -- which on a US universe overstated
+    every exposure by the exchange rate, in the direction that breaches
+    limits. Each book records the rate its position was struck at; a stale
+    rate is a small error, no rate is a wrong number that looks right.
+    """
+    config, _ = recorded_lake
+    arm = _baseline_arm(config)
+    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=4.0)])
+
+    result = snapshot_from_disk(config)
+    analysis_frame = pd.read_parquet(
+        Path(config.paths.data_root) / "runs" / result.run_id / "analysis.parquet"
+    )
+    spy = analysis_frame[
+        (analysis_frame["panel"].astype(str) == "prices.close")
+        & (analysis_frame["series"].astype(str) == "SPY")
+    ]
+    close = float(spy.iloc[-1]["value"])
+
+    assert result.exposure_metrics["gross_exposure_gbp"] == pytest.approx(
+        4.0 * close * PAPER_FX
+    )
+
+
+def test_the_balance_is_the_accounts_not_the_runs(recorded_lake):
+    """M221: leverage measured against the simulation's starting equity.
+
+    The balance is the denominator of leverage and margin usage. Taking it
+    from the run made a real book's leverage a statement about a backtest --
+    the same mismatch as the positions, moved into the denominator.
+    """
+    config, _ = recorded_lake
+    arm = _baseline_arm(config)
+    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=4.0)])
+
+    result = snapshot_from_disk(config)
+    gross = result.exposure_metrics["gross_exposure_gbp"]
+    leverage = result.leverage_metrics["effective_leverage"]
+
+    assert leverage == pytest.approx(gross / RiskLimits().account_balance_gbp)

@@ -22,8 +22,14 @@ Every fifteen minutes while a US market is open, a resident daemon:
 6. **updates the paper book** — four arms at different confidence bars
 7. **emails you** anything it opened or closed
 
-Once a day it also refreshes the full history, takes health and risk
-snapshots, and prunes old artefacts.
+Once a day, at 03:00 and 03:05 UTC, it refreshes the full daily history
+and the macro series, then takes health and risk snapshots and prunes old
+artefacts. There is no daily *pipeline* run: signals come from the intraday
+job above, which is the only thing that produces one.
+
+The risk snapshot describes a real book — the trades you confirmed placing
+if any exist, otherwise the paper book's baseline arm at £1,000 of notional
+per position, and otherwise nothing at all, reported as nothing.
 
 You read the dashboard, take the emails, and place a selection by hand.
 
@@ -278,7 +284,7 @@ two minutes. Coverage is 88%.
 - Spread is estimated per asset class, not measured per instrument. It is the
   largest single cost line.
 - Real slippage is unmeasured, and the edge breaks even near 6bp.
-- `schedule/app.py` is 44% covered — the daemon dispatch, where several
+- `schedule/app.py` is 73% covered — the daemon dispatch, where several
   defects have hidden.
 
 The root of all of these is the same: the system has never traded. The

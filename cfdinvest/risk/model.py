@@ -102,6 +102,12 @@ class RiskSnapshot:
 
     as_of: pd.Timestamp | None = None
     run_id: str | None = None
+    #: Which book the exposure describes: ``"confirmed"`` for trades you
+    #: recorded placing, ``"paper:<arm>"`` for the forward simulation, and
+    #: ``None`` when no book could be read. Never a backtest — its positions
+    #: are the simulation's compounded equity and comparing them to a real
+    #: account's limits produces a breach every day and means nothing.
+    book: str | None = None
     exposure_metrics: dict[str, Any] = field(default_factory=dict)
     leverage_metrics: dict[str, Any] = field(default_factory=dict)
     margin_metrics: dict[str, Any] = field(default_factory=dict)
@@ -729,6 +735,8 @@ def _flags(
 def build_risk_snapshot(
     *,
     positions_frame=None,
+    prices=None,
+    book: str | None = None,
     regime_frame=None,
     pnl_frame=None,
     analysis_frame=None,
@@ -753,6 +761,7 @@ def build_risk_snapshot(
     exposure = compute_current_risk(
         positions_frame,
         bounds,
+        prices=prices,
         analysis_frame=analysis_frame,
         instrument_currencies=instrument_currencies,
         asset_classes=asset_classes,
@@ -789,6 +798,7 @@ def build_risk_snapshot(
         as_of=exposure.get("as_of")
         or (pd.Timestamp(now) if now is not None else None),
         run_id=run_id,
+        book=book,
         exposure_metrics=exposure,
         leverage_metrics=leverage,
         margin_metrics=margin,

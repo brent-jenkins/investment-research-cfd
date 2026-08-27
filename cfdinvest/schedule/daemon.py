@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "QUOTE_INTERVAL_MINUTES",
     "INGEST_AT_UTC",
-    "RUN_AT_UTC",
+    "SNAPSHOT_AT_UTC",
     "JOBS",
     "jobs_due",
 ]
@@ -39,15 +39,28 @@ __all__ = [
 #: Every five minutes, matching the poller's own cadence.
 QUOTE_INTERVAL_MINUTES = 5
 
-#: Daily, in UTC, and in this order. The gap is deliberate: the pipeline must
-#: read a lake that ingestion has finished writing.
-#:
-#: These remain even though the engine now runs on hourly bars, because they
-#: do something the intraday pass does not: top up the full history and
-#: refresh the macro series. They are the once-a-day baseline, not the
-#: trading cadence.
+#: The daily top-up, in UTC. It remains even though the engine runs on hourly
+#: bars, because it does something the intraday pass does not: refresh the
+#: full daily history and the macro series. It is the once-a-day baseline,
+#: not the trading cadence.
 INGEST_AT_UTC = (3, 0)
-RUN_AT_UTC = (3, 5)
+
+#: The daily housekeeping: the two snapshots and the prune, five minutes
+#: later so they describe a lake ingestion has finished writing.
+#:
+#: There used to be a ``run-daily`` here, a full pipeline run at 03:05, and
+#: it was retired on 2026-08-27 because it could no longer do anything. A run
+#: skips when every market in the universe is closed, and once the universe
+#: became US-only, 03:05 UTC was always closed -- so it took 138ms, produced
+#: nothing, and had been doing that since the universe narrowed. It was
+#: redundant besides: ``run-intraday`` calls the identical command every
+#: fifteen minutes while a market is open, and every run directory on the
+#: server came from it.
+#:
+#: The snapshots stay daily. They describe a run rather than trigger one, and
+#: taken on the intraday cadence they would be ninety operational records a
+#: session saying the same thing.
+SNAPSHOT_AT_UTC = (3, 5)
 
 #: How often the lake and the signals are refreshed while a market is open.
 #:
@@ -72,7 +85,6 @@ JOBS: tuple[str, ...] = (
     "run-intraday",
     "paper-book",
     "ingest-daily",
-    "run-daily",
     "monitoring-snapshot",
     "risk-snapshot",
     "prune-runs",
@@ -116,10 +128,10 @@ def jobs_due(
     Pure. ``last_run`` maps a job name to when it last completed; a job
     absent from it has never run, which makes it due.
 
-    The two snapshots are owed only when the pipeline has just run, because
-    they describe a run. Asking for a monitoring snapshot on a schedule of
-    its own is what the superseded monitor timer did, and it produced
-    snapshots describing nothing in particular.
+    The two snapshots and the prune are owed once a day, together and in
+    that order. They describe the newest run rather than cause one, so they
+    do not need a run of their own to hang off -- which is what they used to
+    do, until the run they hung off stopped being able to happen.
     """
     moment = _utc(now)
     if moment is None:
@@ -157,14 +169,14 @@ def jobs_due(
 
     if _due_daily(moment, history.get("ingest-daily"), INGEST_AT_UTC):
         due.append("ingest-daily")
-    if _due_daily(moment, history.get("run-daily"), RUN_AT_UTC):
-        due.append("run-daily")
 
-    # Deliberately the daily run only, not the intraday one. The snapshots
-    # and the prune describe a day: taken every fifteen minutes they would
-    # be ninety operational records a session saying the same thing, and a
-    # prune that runs before the run it would prune is worse than useless.
-    if "run-daily" in due:
+    # Once a day, not on the intraday cadence: the snapshots and the prune
+    # describe a day, and taken every fifteen minutes they would be ninety
+    # operational records a session saying the same thing. Keyed on the
+    # monitoring snapshot because it is the first of the three -- and
+    # because a prune that runs before the run it would prune is worse
+    # than useless.
+    if _due_daily(moment, history.get("monitoring-snapshot"), SNAPSHOT_AT_UTC):
         due.append("monitoring-snapshot")
         due.append("risk-snapshot")
         # After the snapshots, so a run is only ever pruned once everything

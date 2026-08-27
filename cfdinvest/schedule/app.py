@@ -840,7 +840,7 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         runner_module._refresh(
             DataRepository(app_config), backtest.tickers or [], backtest
         )
-    elif name in ("run-daily", "run-intraday"):
+    elif name == "run-intraday":
         _command_run_once(
             _job_args(args, "run-once", refresh=False),
             app_config, smtp, transport,
@@ -899,10 +899,13 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
 
     print(
         "cfdinvest scheduler daemon. Quotes every "
-        f"{daemon_module.QUOTE_INTERVAL_MINUTES} minutes; ingestion "
+        f"{daemon_module.QUOTE_INTERVAL_MINUTES} minutes; signals every "
+        f"{daemon_module.INTRADAY_MINUTES} minutes while a market is open; "
+        "daily top-up "
         f"{daemon_module.INGEST_AT_UTC[0]:02d}:{daemon_module.INGEST_AT_UTC[1]:02d} "
-        f"UTC; pipeline "
-        f"{daemon_module.RUN_AT_UTC[0]:02d}:{daemon_module.RUN_AT_UTC[1]:02d} UTC."
+        "UTC; snapshots "
+        f"{daemon_module.SNAPSHOT_AT_UTC[0]:02d}:"
+        f"{daemon_module.SNAPSHOT_AT_UTC[1]:02d} UTC."
     )
     try:
         while args.max_ticks is None or ticks < args.max_ticks:
@@ -1066,9 +1069,14 @@ def _print_risk(observation) -> None:
     """One observation, as the operator reads it."""
     snapshot = observation.snapshot
     marks = {"ok": "OK", "warning": "CHECK", "critical": "BREACH"}
+    # Which book, always. A reading of the paper simulation and a reading of
+    # the account you actually traded are different statements, and a line
+    # that does not say which invites the reader to assume the worrying one.
+    book = snapshot.book or "no book recorded"
     print(
         f"{observation.at:%Y-%m-%d %H:%M} UTC  "
         f"[{marks.get(snapshot.severity, snapshot.severity)}]  {snapshot.message}"
+        f"  ({book})"
     )
     for flag in snapshot.flags:
         print(f"  ! {flag}")

@@ -166,6 +166,10 @@ def load_risk_history(
         rows.append(
             {
                 "timestamp": document.get("timestamp"),
+                # Which book each reading described. Without it a history
+                # silently compares a confirmed account against a simulated
+                # one and calls the difference a change in exposure.
+                "book": snapshot.get("book"),
                 "gross_exposure_gbp": exposure.get("gross_exposure_gbp"),
                 "open_positions": exposure.get("open_positions"),
                 "effective_leverage": leverage.get("effective_leverage"),

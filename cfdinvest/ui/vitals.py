@@ -58,10 +58,9 @@ SCHEDULES: tuple[tuple[str, str, str], ...] = (
     ("run-intraday", "session", "Fresh signals every quarter hour while open"),
     ("paper-book", "cadence", "Open and close the three forward arms"),
     ("ingest-daily", "daily", "Top up the lake from the vendors"),
-    ("run-daily", "daily", "Signals, execution and P&L over the lake"),
-    ("monitoring-snapshot", "after-run", "Operational health, recorded"),
-    ("risk-snapshot", "after-run", "The book's risk, recorded"),
-    ("prune-runs", "after-run", "Bound the artefact store"),
+    ("monitoring-snapshot", "daily", "Operational health, recorded"),
+    ("risk-snapshot", "daily", "The book's risk, recorded"),
+    ("prune-runs", "daily", "Bound the artefact store"),
 )
 
 
@@ -182,9 +181,18 @@ def job_report(
                     + ("" if status == "pass" else f" Expected within {limit:.0f}.")
                 )
 
-        elif kind == "daily":
+        else:  # daily
+            # The snapshots and the prune used to be timed against the daily
+            # pipeline run: older than the newest run meant the run finished
+            # and the snapshot did not follow. That test died with the job it
+            # keyed on -- signals now refresh every fifteen minutes, so a
+            # once-a-day snapshot is *always* older than the newest run and
+            # the check would warn every session about a scheduler doing
+            # exactly what it was told.
             at = (
-                daemon.INGEST_AT_UTC if name == "ingest-daily" else daemon.RUN_AT_UTC
+                daemon.INGEST_AT_UTC
+                if name == "ingest-daily"
+                else daemon.SNAPSHOT_AT_UTC
             )
             schedule = f"Daily at {at[0]:02d}:{at[1]:02d} UTC"
             next_due = _next_daily(moment, at)
@@ -196,21 +204,6 @@ def job_report(
                 # run finishing late is not called a failure.
                 status = "pass" if hours <= 36 else "warning"
                 detail = f"Last ran {hours:.0f} hours ago."
-
-        else:  # after-run
-            schedule = "After each pipeline run"
-            next_due = None
-            produced = _utc(evidence.get("run-daily"))
-            if last is None:
-                status, detail = "unchecked", "Nothing recorded yet."
-            elif produced is not None and last < produced:
-                # The snapshot describes a run. Older than the newest run
-                # means the run finished and the snapshot did not follow.
-                status = "warning"
-                detail = "Older than the most recent run."
-            else:
-                status = "pass"
-                detail = f"Recorded {components_age(moment, last)}."
 
         rows.append(JobRow(name, schedule, last, next_due, status, detail))
 
@@ -282,13 +275,12 @@ def gather_evidence(config=None, account: str | None = None) -> dict[str, Any]:
     guarded("monitoring-snapshot", newest_monitoring)
     guarded("risk-snapshot", newest_risk)
 
-    # run-daily and run-intraday both write a run directory, so the newest
-    # directory cannot say which of them made it. Dating run-daily by it
-    # reported the intraday run's time under the daily row, and then marked
-    # the snapshots that correctly follow the daily run as "older than the
-    # most recent run" -- two false warnings for a scheduler doing exactly
-    # what it was told. Where an artefact cannot distinguish the jobs, the
-    # daemon's own record is the only thing that can.
+    # The intraday run writes a run directory, but so did the daily one
+    # while it existed, and the newest directory could not say which made
+    # it -- which reported the intraday run's time under the daily row. The
+    # daily run is retired, so only one job writes runs now; it is still
+    # dated by the daemon's record rather than by the directory, because
+    # what is being asked is "did the job run", not "does an artefact exist".
 
     # The rest have no artefact of their own to date. The paper book writes a
     # file only when it opens something, and "decided not to open" is a run
@@ -305,8 +297,7 @@ def gather_evidence(config=None, account: str | None = None) -> dict[str, Any]:
 
         return read
 
-    for job in ("run-daily", "run-intraday"):
-        guarded(job, recorded(job))
+    guarded("run-intraday", recorded("run-intraday"))
 
     # Everything else falls back to the daemon's record only when it wrote
     # no artefact to be dated by -- the paper book writes a file solely when

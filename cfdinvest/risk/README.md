@@ -42,6 +42,45 @@ dashboard is only worth trusting if it is downstream of everything.
 
 ---
 
+## Which book, and never the backtest
+
+The positions come from a real book. Until 2026-08-27 they came from
+`positions.parquet` in the newest run — a simulation whose equity had
+compounded for two years — measured against a £2,000 account's limits. That
+morning it reported **gross exposure of £810,945 against a £3,000 limit**,
+five breaches, critical. Nothing anybody held was involved, and the figure
+had never been converted out of dollars either.
+
+A limit breached every day is a limit nobody reads. A real breach would have
+arrived on a page that was already red, while the monitoring snapshot said
+green in the same minute — the two-owners split this project is otherwise
+careful about.
+
+| Source | When it is used | What it is |
+| --- | --- | --- |
+| `confirmed` | any confirmation has ever been recorded | the real account, replayed |
+| `paper:<arm>` | otherwise, if the paper book exists | the baseline arm, £1,000 notional a position |
+| absent | neither | reported absent, not flat |
+
+The baseline arm only. The four arms are independent experiments at
+different confidence bars; adding them together describes a book that trades
+every threshold at once, which is nobody's and four times too big.
+
+A confirmed book that holds nothing is still the confirmed book. Having
+closed everything — or having recorded only decisions *not* to trade — is a
+fact about the real account, and falling back to the simulation there would
+report positions that were never taken.
+
+Marks are converted to sterling at the rate the position was struck at,
+which both books record. A stale rate is a small error; no rate is a number
+that is wrong by the exchange rate and looks right.
+
+The balance is the account's, never the run's. It is the denominator of
+leverage and margin usage, so taking it from a backtest would put the same
+mismatch back in the denominator after removing it from the numerator.
+
+---
+
 ## The rule that shapes everything here
 
 **Nothing is inferred. What could not be read is named.**
@@ -252,7 +291,7 @@ missing one artefact at a time, but not usefully missing eleven.
 python -m pytest tests/test_risk.py -q
 ```
 
-75 tests. Beyond the metric arithmetic, they pin:
+83 tests. Beyond the metric arithmetic, they pin:
 
 - **The drawdown matches `cfdinvest.analytics`** on a real run, computed two
   different ways.
@@ -264,4 +303,9 @@ python -m pytest tests/test_risk.py -q
 
 The suite was mutation-checked: reintroducing the drawdown-denominator bug,
 collapsing "started and died" into `OK`, defaulting a missing price to 1.0, and
-grouping unsafe reasons on prose each make it fail.
+grouping unsafe reasons on prose each make it fail. So does every one of the
+eight ways to get the book wrong listed above — reading the backtest again,
+reporting an unknown book as flat, preferring the simulation to a
+confirmation, dropping a confirmed book that holds nothing, summing the arms,
+losing the sign of a short, leaving the mark in dollars, and taking the
+balance from the run.
