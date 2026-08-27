@@ -2,11 +2,54 @@
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from cfdinvest.config import AppConfig, MacroDataConfig, MarketDataConfig, PathConfig
+
+#: Broker credentials and switches, neutralised for the whole test session.
+#:
+#: ``load_dotenv`` exports the real ``.env`` into ``os.environ``, and
+#: ``load_config`` calls it by default -- so the moment any test loaded a
+#: config, live API credentials were in the process, and with them
+#: ``CFD_CAPITAL_DEALING_ENABLED=1``. Checked directly: after
+#: ``load_config()`` the dealing gate returned no refusal at all. Nothing in
+#: the suite calls ``place_position`` without an explicit config, so nothing
+#: has traded -- but that is luck rather than design, and the suite is meant
+#: to be offline by construction.
+#:
+#: Pre-set rather than deleted, and empty rather than absent: ``load_dotenv``
+#: only writes a key that is *missing*, so a name already present -- even
+#: with an empty value -- survives the export. Every reader treats an empty
+#: string as unset.
+BROKER_ENVIRONMENT = (
+    "CFD_CAPITAL_API_KEY",
+    "CFD_CAPITAL_IDENTIFIER",
+    "CFD_CAPITAL_PASSWORD",
+    "CFD_CAPITAL_ENV",
+    "CFD_CAPITAL_DEALING_ENABLED",
+    "CFD_CAPITAL_ALLOW_LIVE",
+    "CFD_IG_API_KEY",
+    "CFD_IG_USERNAME",
+    "CFD_IG_PASSWORD",
+    "CFD_IG_ENV",
+    "CFD_IG_DEALING_ENABLED",
+    "CFD_IG_ALLOW_LIVE",
+)
+
+
+def pytest_configure(config):
+    """Disarm before collection, not before the first test.
+
+    A test module that calls ``load_config()`` at import time -- and one
+    does -- would otherwise export the credentials during collection, before
+    any fixture could run.
+    """
+    for name in BROKER_ENVIRONMENT:
+        os.environ[name] = ""
 
 
 @pytest.fixture

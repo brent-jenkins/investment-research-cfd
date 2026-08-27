@@ -217,7 +217,7 @@ prevents.
 | `confirm/` `journal/` `insights/` `bias/` | What you did, and what it says |
 | `simulate/` `metastrategy/` | Rehearsal; risk posture |
 | `accounts/` | Registry and router |
-| `ui/` | Three Streamlit pages. Optional install. |
+| `ui/` | Four Streamlit pages. Optional install. |
 
 **Computed once, read everywhere:** expectancy in `analytics/`, regime
 labels in `risk.compute_regime_risk`, scheduler status in
@@ -227,7 +227,7 @@ labels in `risk.compute_regime_risk`, scheduler status in
 
 ## The dashboard
 
-Three pages, deliberately. It carried twenty-three and almost none were
+Four pages, deliberately. It carried twenty-three and almost none were
 read.
 
 - **Dashboard** — what the paper book has done: the four arms as one

@@ -341,3 +341,49 @@ def test_the_session_calendar_is_the_thing_that_says_when():
 
     during = describe(["AAPL", "JNJ"], pd.Timestamp("2026-08-27 15:00", tz="UTC"))
     assert during["is_open"].all(), "the calendar thinks the session is shut"
+
+
+# --------------------------------------------------------------------------- #
+# M301 the test suite itself armed to trade
+# --------------------------------------------------------------------------- #
+def test_the_suite_cannot_deal_even_after_loading_a_config():
+    """M301: the gate open inside every test process.
+
+    ``load_dotenv`` exports the real .env into ``os.environ`` and
+    ``load_config`` calls it by default, so once any test loaded a config the
+    live credentials were in the process -- and with them
+    CFD_CAPITAL_DEALING_ENABLED=1. Measured directly: the dealing gate then
+    returned no refusal at all.
+
+    Nothing in the suite calls place_position without an explicit config, so
+    nothing traded. That is luck, not design, and a suite one careless test
+    away from placing a real order is not offline.
+    """
+    from cfdinvest.config import load_config
+
+    load_config()
+
+    from cfdinvest.broker.capital.client import CapitalConfig
+    from cfdinvest.broker.capital.dealing import DealingConfig
+
+    assert not CapitalConfig.from_env().complete, (
+        "live broker credentials are readable inside the test suite"
+    )
+    assert DealingConfig.from_env().refusal(), (
+        "the dealing gate is OPEN inside the test suite"
+    )
+
+
+def test_a_default_configured_order_is_refused_in_the_suite():
+    """The property that matters, exercised rather than inferred.
+
+    Calling place_position with no config at all -- the way a careless test
+    or a stray script would -- must refuse rather than reach the network.
+    """
+    from cfdinvest.broker.capital.client import CapitalSession
+
+    result = dealing.place_position(
+        "AAPL", "BUY", 1.0, CapitalSession(cst="c", security_token="t")
+    )
+    assert not result.ok
+    assert dealing.DEALING_VAR in result.error

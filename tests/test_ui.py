@@ -950,7 +950,7 @@ def test_the_pages_directory_matches_the_specified_layout():
     what the model wants today. Everything else was removed rather than
     left to rot behind a nav item, and git holds it if it is wanted back.
     """
-    expected = {"00_Dashboard.py", "01_Status.py", "02_Signals.py"}
+    expected = {"00_Dashboard.py", "01_Status.py", "02_Signals.py", "03_Broker.py"}
     assert {p.name for p in (UI / "views").glob("*.py")} == expected
 
 
@@ -3006,3 +3006,80 @@ def test_the_arms_shown_are_the_arms_that_run():
         assert f'"{arm}"' not in page, (
             f"{arm} is named in the page; the arms must come from the book"
         )
+
+
+# --------------------------------------------------------------------------- #
+# The broker page, kept apart from the paper book
+#
+# M297 the two books pooled into one figure
+# M298 an unreadable account rendered as an empty one
+# M299 a live page cached long enough to be wrong
+# M300 the page reaching a live account
+# --------------------------------------------------------------------------- #
+def test_the_broker_page_renders(populated):
+    """It must render with no credentials configured, which is the norm."""
+    result = render("views/03_Broker.py")
+    assert not result.exception, f"broker page raised: {result.exception}"
+
+
+def test_the_broker_page_never_pools_the_two_books():
+    """M297: the one measurement they jointly make, destroyed.
+
+    The paper book is a simulation at a fixed stake with modelled fills; the
+    demo account holds orders a broker confirmed. The gap between them is
+    how wrong the simulation is, and a page that added them together would
+    leave nothing able to say so.
+    """
+    page = (UI / "views" / "03_Broker.py").read_text(encoding="utf-8")
+
+    assert "papertrade" not in page, "the broker page reads the paper book"
+    assert "cohort" not in page, "the broker page knows about the arms"
+    # And it says which book it is showing, in the page itself.
+    assert "paper book" in page.lower()
+
+
+def test_an_unreadable_account_is_not_shown_as_an_empty_one():
+    """M298: an unanswered question rendered as calm.
+
+    An account holding nothing and an account that could not be read look
+    identical on a page that only draws a table, and only one of them means
+    it is safe to open more.
+    """
+    page = (UI / "views" / "03_Broker.py").read_text(encoding="utf-8")
+
+    assert "positions_error" in page, "the read failure is not carried"
+    body = page[page.index("Open positions"):]
+    assert "could not be read" in body
+    assert "not an empty account" in body
+
+
+def test_the_broker_page_is_read_live_and_barely_cached():
+    """M299: a position is a fact about now.
+
+    A cached one is a claim about a moment that has passed. Thirty seconds
+    stops a refresh hammering the API and is short enough that the page
+    still means what it says.
+    """
+    page = (UI / "views" / "03_Broker.py").read_text(encoding="utf-8")
+
+    assert "ttl=30" in page, "the live read is cached for too long, or forever"
+    # The bundle it caches must hold no callable: a lambda in a cached
+    # payload fails to pickle and takes the rest of the page down with it,
+    # and the symptom is a *different* page rendering blank.
+    assert "lambda" not in page[page.index("@st.cache_data"):page.index("broker = ")]
+
+
+def test_the_broker_page_cannot_reach_a_live_account():
+    """M300: a page that reads is still a page that authenticates.
+
+    It has no dealing import and no way to place anything, and the
+    environment decides which account it reaches -- demo unless `live` is
+    spelled out, which this page never does.
+    """
+    page = (UI / "views" / "03_Broker.py").read_text(encoding="utf-8")
+
+    assert "place_position" not in page
+    assert "close_position" not in page
+    assert '"live"' not in page and "'live'" not in page
+    # It may list positions, which is a read.
+    assert "list_positions" in page

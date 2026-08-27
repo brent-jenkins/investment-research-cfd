@@ -1068,9 +1068,17 @@ def test_the_readme_matches_the_shipped_configuration():
     for name, _ in cohorts_for(strategy):
         assert name in readme, f"the README does not mention the {name} arm"
 
-    # And the dashboard page count.
+    # And the dashboard page count, in whichever way English spells it.
+    #
+    # This used to hardcode "Three" with the numeral as a fallback, so adding
+    # a fourth page failed on the spelling rather than on the count -- the
+    # test pinned how the sentence reads instead of whether it is true.
     pages = len(list(Path("cfdinvest/ui/views").glob("*.py")))
-    assert f"{'Three' if pages == 3 else pages} pages" in readme
+    words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six"}
+    spellings = {f"{pages} pages", f"{words.get(pages, pages)} pages"}
+    assert any(spelling in readme for spelling in spellings), (
+        f"the README does not say there are {pages} pages"
+    )
 
 
 def test_the_readme_never_quotes_a_return_without_its_benchmark():
