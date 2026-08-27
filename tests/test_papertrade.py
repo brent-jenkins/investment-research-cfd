@@ -935,7 +935,7 @@ def test_a_signal_that_no_longer_holds_is_not_opened(tmp_path, monkeypatch):
     assert result["opened"] == 1
     book = papertrade.load_book()
     assert [row["ticker"] for row in book] == ["KEEP"]
-    assert result["skipped"].get("direction changed since the signal") == 1
+    assert result["skipped"].get("direction reversed since the signal") == 1
     assert result["skipped"].get("no longer clears the bar") == 1
 
 

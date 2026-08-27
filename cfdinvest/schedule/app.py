@@ -303,6 +303,44 @@ LAKE_FX_PAIRS: dict[str, object] = {
 }
 
 
+def fx_support_tickers() -> tuple[str, ...]:
+    """Every currency pair :data:`LAKE_FX_PAIRS` names, deduplicated.
+
+    Ingested but never traded. The universe is twenty US shares; the pairs
+    exist so the engine can convert a dollar price into sterling, and an
+    instrument that is only there to be read must not also be offered as a
+    position.
+
+    Derived from the map rather than listed again. The map is the one owner
+    of which pairs matter, and a second list would be right until the day it
+    was not -- which is exactly how this failed the second time.
+
+    That second failure is why this exists. The map was correct and the
+    warning was explicit -- "no USD series for NVDA in the lake ... using the
+    configured rate 1" -- but the pairs had stopped being *fetched* when the
+    universe narrowed to US shares and dropped them from the ticker list. So
+    every intraday run on the server marked a $150 share at £150, twenty
+    warnings a run, into a log nobody reads.
+    """
+    found: list[str] = []
+    for value in LAKE_FX_PAIRS.values():
+        legs = value if isinstance(value, list) else [value]
+        for leg in legs:
+            ticker = leg[0] if isinstance(leg, tuple) else leg
+            if isinstance(ticker, str) and ticker and ticker not in found:
+                found.append(ticker)
+    return tuple(found)
+
+
+def _with_fx_support(tickers) -> list[str]:
+    """The universe, plus the pairs needed to price it in sterling."""
+    wanted = list(tickers or [])
+    for pair in fx_support_tickers():
+        if pair not in wanted:
+            wanted.append(pair)
+    return wanted
+
+
 def _execution_config(tickers, strategy=None):
     """The cost model, built from what the broker actually charges.
 
@@ -802,7 +840,9 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         # would put that ordering back inside one command.
         backtest = _backtest_config(args, app_config)
         repository = DataRepository(app_config)
-        runner_module._refresh(repository, backtest.tickers or [], backtest)
+        runner_module._refresh(
+            repository, _with_fx_support(backtest.tickers), backtest
+        )
 
         # And the daily bars, whatever interval the engine trades on.
         #
@@ -827,7 +867,7 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
                 import dataclasses as _dc
 
                 runner_module._refresh(
-                    repository, backtest.tickers or [],
+                    repository, _with_fx_support(backtest.tickers),
                     _dc.replace(backtest, interval=_SCREENING_INTERVAL),
                 )
             except Exception as error:  # noqa: BLE001
@@ -841,7 +881,7 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         # history and the macro series.
         backtest = _backtest_config(args, app_config)
         runner_module._refresh(
-            DataRepository(app_config), backtest.tickers or [], backtest
+            DataRepository(app_config), _with_fx_support(backtest.tickers), backtest
         )
     elif name == "run-intraday":
         _command_run_once(

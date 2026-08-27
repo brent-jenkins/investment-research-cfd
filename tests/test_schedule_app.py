@@ -584,3 +584,113 @@ def test_the_advisor_says_nothing_when_there_is_nothing_new(
     )
     assert code == app.EXIT_OK
     assert not sent, "an alert was sent with nothing new to say"
+
+
+# --------------------------------------------------------------------------- #
+# M240 the conversion pairs named but never fetched
+# M241 a faded signal and a reversed one reported as one thing
+# --------------------------------------------------------------------------- #
+def test_every_conversion_pair_the_engine_names_is_also_ingested():
+    """M240: the map is right and the lake is empty.
+
+    The engine reads its rates from the lake, and ``LAKE_FX_PAIRS`` says
+    which series to read. The pairs were dropped from the ingest list when
+    the universe narrowed to twenty US shares -- so the map went on naming
+    GBPUSD=X and nothing went on fetching it, and every intraday run marked
+    a $150 share at £150.
+
+    It announced itself, too: twenty warnings a run, one per instrument,
+    into a log nobody was reading. The fix is not another list -- it is
+    deriving the ingest set from the map, so the two cannot disagree.
+    """
+    from cfdinvest.schedule.app import (
+        LAKE_FX_PAIRS, _with_fx_support, fx_support_tickers,
+    )
+
+    named = set()
+    for value in LAKE_FX_PAIRS.values():
+        legs = value if isinstance(value, list) else [value]
+        for leg in legs:
+            named.add(leg[0] if isinstance(leg, tuple) else leg)
+
+    assert named, "the engine names no pairs at all"
+    assert named <= set(fx_support_tickers()), (
+        f"named but never fetched: {sorted(named - set(fx_support_tickers()))}"
+    )
+
+    universe = ["NVDA", "AAPL"]
+    wanted = _with_fx_support(universe)
+    assert set(universe) <= set(wanted), "the universe was dropped"
+    assert named <= set(wanted)
+    assert len(wanted) == len(set(wanted)), "a ticker was fetched twice"
+
+
+@pytest.mark.parametrize("job", ["ingest-daily", "ingest-intraday"])
+def test_the_ingest_jobs_actually_ask_for_the_pairs(job, tmp_path, monkeypatch):
+    """M240: the seam the previous test missed.
+
+    Asserting that ``_with_fx_support`` returns the right list proves the
+    helper works while leaving the defect untouched -- it lived in the call
+    sites, which were passing the bare universe. The first version of this
+    test passed happily against the mutation that put that back, which is
+    the same way an earlier bug in this project survived its own test.
+    """
+    from cfdinvest.schedule import runner as runner_module
+    from cfdinvest.schedule.app import fx_support_tickers
+
+    asked: list[list[str]] = []
+    monkeypatch.setattr(
+        runner_module, "_refresh",
+        lambda repository, tickers, settings: asked.append(list(tickers)),
+    )
+
+    app.run_daemon_job(job, parsed("run-once"), config_for(tmp_path))
+
+    assert asked, f"{job} fetched nothing at all"
+    for request in asked:
+        assert set(fx_support_tickers()) <= set(request), (
+            f"{job} asked for {request} -- the conversion pairs are missing, "
+            "so every dollar price will be marked as sterling"
+        )
+        assert {"AAPL", "MSFT"} <= set(request), "the universe was dropped"
+
+
+def test_the_support_pairs_are_fetched_but_never_traded():
+    """Read, not held. A pair is an input to pricing, not a position.
+
+    Adding them to the traded universe instead would put five currency
+    positions in a book that exists to measure twenty US shares.
+    """
+    from cfdinvest.config import load_config
+    from cfdinvest.schedule.app import fx_support_tickers
+
+    traded = set(load_config().market.tickers)
+    assert not (traded & set(fx_support_tickers())), (
+        "a conversion pair is in the traded universe"
+    )
+
+
+def test_a_faded_signal_and_a_reversed_one_are_told_apart():
+    """M241: two different events under one label.
+
+    A re-check returning flat means the signal faded on fresh data -- often
+    because the bar in progress has barely moved, which dilutes momentum. A
+    re-check returning the opposite side means the trend turned overnight.
+    Both refuse, and both should. But the first session with this gate
+    running refused five entries under "direction changed since the signal",
+    and there was no way to tell how many were reversals and how many were
+    marginal signals falling under their own bar.
+    """
+    from cfdinvest.advisor.livecheck import holds
+
+    faded = {"AAPL": {"direction": "flat", "confidence": 0.0}}
+    reversed_ = {"AAPL": {"direction": "short", "confidence": 0.9}}
+
+    ok, why_faded = holds(faded, "AAPL", "long", 0.35)
+    assert ok is False
+    ok, why_reversed = holds(reversed_, "AAPL", "long", 0.35)
+    assert ok is False
+
+    assert why_faded != why_reversed, "a fade and a reversal read the same"
+    assert "flat" not in why_faded, "the reason should read as prose, not state"
+    assert "revers" in why_reversed

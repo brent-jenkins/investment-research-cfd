@@ -236,8 +236,20 @@ def holds(
     reading = (checked or {}).get(ticker)
     if not reading:
         return False, "not re-checked"
-    if str(reading.get("direction") or "").lower() != str(direction).lower():
-        return False, "direction changed since the signal"
+
+    now_direction = str(reading.get("direction") or "").lower()
+    wanted = str(direction).lower()
+    if now_direction != wanted:
+        # Two different events, and they were reported as one. "Flat" means
+        # the signal faded on fresh data -- often because the bar in
+        # progress has barely moved, which dilutes momentum. "Short where
+        # the book wanted long" means the trend actually turned overnight.
+        # Both refuse, and both should; but a week of skip counts that
+        # cannot tell them apart cannot say whether the gate is catching
+        # reversals or just declining marginal signals.
+        if now_direction in ("", "flat"):
+            return False, "no longer a signal"
+        return False, "direction reversed since the signal"
     try:
         now = float(reading.get("confidence"))
     except (TypeError, ValueError):
