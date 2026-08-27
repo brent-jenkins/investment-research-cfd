@@ -1,0 +1,291 @@
+"""The Capital.com client: read-only by construction, and measuring spread.
+
+The point of this broker is that the number that matters can be read without
+dealing. IG would not quote share prices to that account, so its spread had
+to be discovered by placing orders and reading the fills -- which is how the
+222bp round-trip commission was found, expensively. Capital.com returns bid
+and offer, so nothing here needs to trade.
+
+M267 a dealing endpoint added to a read-only client
+M268 any l-word treated as live
+M269 the API key or password in a repr
+M270 a fuzzy search match accepted as the instrument
+M271 an instrument that failed dropped from the table
+M272 spread compared in points across instruments of different price
+M273 the session tokens read from the body instead of the headers
+"""
+
+from __future__ import annotations
+
+import ast
+import json
+from pathlib import Path
+
+import pytest
+
+from cfdinvest.broker.capital import client as capital
+
+SOURCE = Path("cfdinvest/broker/capital/client.py").read_text(encoding="utf-8")
+
+CONFIG = capital.CapitalConfig(
+    api_key="key-value", identifier="someone@example.com",
+    password="secret-value", environment="demo",
+)
+SESSION = capital.CapitalSession(
+    cst="cst-value", security_token="token-value", host=capital.DEMO_HOST,
+    account_id="ACC1", currency="GBP",
+)
+
+
+# --------------------------------------------------------------------------- #
+# It cannot trade
+# --------------------------------------------------------------------------- #
+def test_the_client_has_no_way_to_deal():
+    """M267: the failure is not "an order is placed".
+
+    It is an order placed by code nobody thought could trade. So the dealing
+    endpoints are absent rather than disabled -- there is nothing to switch
+    on by accident, and nothing a caller could reach by passing an unusual
+    argument.
+    """
+    for endpoint in ("/positions", "/workingorders", "/confirms"):
+        assert endpoint not in SOURCE, f"{endpoint} appears in a read-only client"
+
+    tree = ast.parse(SOURCE)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            assert not any(
+                word in node.name.lower()
+                for word in ("place", "deal", "open_position", "close_position",
+                             "buy", "sell", "amend", "cancel")
+            ), f"{node.name} sounds like it deals"
+
+
+def test_the_only_write_is_the_session():
+    """Authenticating is a POST. Nothing else may be."""
+    posts = SOURCE.count('method="POST"')
+    assert posts == 1, f"{posts} POSTs in a read-only client"
+    assert 'method="PUT"' not in SOURCE
+    assert 'method="DELETE"' not in SOURCE
+
+
+# --------------------------------------------------------------------------- #
+# Which account it reaches
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "value", ["", "demo", "Demo", "LIVE ", "liv", "live-ish", "production", "1", "l"]
+)
+def test_only_the_exact_word_live_reaches_the_live_host(value):
+    """M268: a typo selecting a funded account.
+
+    Everything that is not exactly ``live`` resolves to demo, including
+    "liv" and "live-ish". A misspelt environment silently reaching the real
+    account is the worst possible way to learn about a typo.
+    """
+    config = capital.CapitalConfig.from_env({capital.ENVIRONMENT_VAR: value})
+    if value.strip().lower() == "live":
+        assert config.is_live and config.host == capital.LIVE_HOST
+    else:
+        assert not config.is_live
+        assert config.host == capital.DEMO_HOST
+
+
+def test_live_is_reachable_when_it_is_spelled_out():
+    """The test above must not pass by nothing ever being live."""
+    config = capital.CapitalConfig.from_env({capital.ENVIRONMENT_VAR: "live"})
+    assert config.is_live and config.host == capital.LIVE_HOST
+
+
+def test_no_secret_appears_in_a_repr():
+    """M269: these objects reach debug output and exception context.
+
+    A broker key is not a FRED key. The blast radius of leaking one is a
+    funded account rather than a rate limit.
+    """
+    for text in (repr(CONFIG), repr(SESSION)):
+        for secret in ("key-value", "secret-value", "cst-value", "token-value"):
+            assert secret not in text, f"{secret} leaked into a repr"
+
+
+def test_missing_credentials_are_named_without_their_values():
+    session = capital.open_session(capital.CapitalConfig(api_key="k"))
+
+    assert not session.ok
+    assert capital.IDENTIFIER_VAR in session.error
+    assert capital.PASSWORD_VAR in session.error
+    assert "k" not in session.error.replace(capital.KEY_VAR, "")
+
+
+# --------------------------------------------------------------------------- #
+# The session
+# --------------------------------------------------------------------------- #
+def test_the_tokens_are_read_from_the_response_headers():
+    """M273: Capital.com returns them as headers, not in the body.
+
+    A reader that only parsed the document would authenticate successfully
+    and then fail on every subsequent call, which reads as an entitlement
+    problem rather than as a bug here.
+    """
+    def opener(url, data=None, headers=None, method=None):
+        assert method == "POST"
+        assert headers["X-CAP-API-KEY"] == "key-value"
+        body = json.loads(data.decode("utf-8"))
+        assert body == {
+            "identifier": "someone@example.com", "password": "secret-value"
+        }
+        return (
+            {"currentAccountId": "ACC1",
+             "accounts": [{"accountId": "ACC1", "currency": "GBP"}]},
+            {"CST": "cst-1", "X-SECURITY-TOKEN": "tok-1"},
+        )
+
+    session = capital.open_session(CONFIG, opener=opener)
+    assert session.ok
+    assert session.account_id == "ACC1" and session.currency == "GBP"
+    assert session.headers("key-value")["CST"] == "cst-1"
+
+
+def test_header_casing_does_not_decide_whether_it_worked():
+    """Proxies normalise header case; the tokens must survive it."""
+    def opener(url, data=None, headers=None, method=None):
+        return ({}, {"cst": "cst-1", "x-security-token": "tok-1"})
+
+    assert capital.open_session(CONFIG, opener=opener).ok
+
+
+def test_a_session_without_tokens_is_a_failure_not_a_success():
+    """A 200 with no tokens is not an authenticated session."""
+    def opener(url, data=None, headers=None, method=None):
+        return ({"currentAccountId": "ACC1"}, {})
+
+    session = capital.open_session(CONFIG, opener=opener)
+    assert not session.ok
+    assert "CST" in session.error
+
+
+# --------------------------------------------------------------------------- #
+# Resolving instruments
+# --------------------------------------------------------------------------- #
+def test_only_an_exact_symbol_match_resolves():
+    """M270: dealing on the wrong instrument because a search was close.
+
+    "AAPL" must not resolve to "AAPL34" or "Apple Inc CFD (mini)". The
+    failure has no upper bound, and refusing costs one line in a report.
+    """
+    def opener(url, data=None, headers=None, method=None):
+        return ({"markets": [
+            {"symbol": "AAPL34", "epic": "AAPL34"},
+            {"symbol": "AAPLX", "epic": "AAPLX"},
+        ]}, {})
+
+    epic, error = capital.find_epic("AAPL", SESSION, CONFIG, opener=opener)
+    assert epic == ""
+    assert "no exact symbol match" in error
+
+
+def test_an_exact_match_is_found_among_others():
+    def opener(url, data=None, headers=None, method=None):
+        return ({"markets": [
+            {"symbol": "AAPL34", "epic": "wrong"},
+            {"symbol": "aapl", "epic": "AAPL"},
+        ]}, {})
+
+    epic, error = capital.find_epic("AAPL", SESSION, CONFIG, opener=opener)
+    assert epic == "AAPL" and not error
+
+
+# --------------------------------------------------------------------------- #
+# The measurement
+# --------------------------------------------------------------------------- #
+def _details(bid, offer, **extra):
+    document = {
+        "instrument": {"name": "Apple", "currency": "USD", "type": "SHARES"},
+        "dealingRules": {"minDealSize": {"value": 1.0}},
+        "snapshot": {"bid": bid, "offer": offer, "marketStatus": "TRADEABLE"},
+    }
+    document["snapshot"].update(extra)
+    return document
+
+
+def test_the_spread_is_reported_as_a_share_of_the_mid():
+    """M272: points are not comparable across a $40 share and a $400 one.
+
+    Comparing them is exactly the mistake a single per-class constant was
+    already making, and the reason the cost model's largest line is a guess.
+    """
+    def opener(url, data=None, headers=None, method=None):
+        return (_details(199.0, 201.0), {})
+
+    market = capital.fetch_market("AAPL", SESSION, CONFIG, ticker="AAPL", opener=opener)
+
+    assert market.ok
+    assert market.spread_points == pytest.approx(2.0)
+    assert market.spread_pct == pytest.approx(1.0)      # 2 / 200
+    assert market.min_deal_size == pytest.approx(1.0)
+    assert market.currency == "USD"
+
+
+def test_the_ask_is_read_under_either_spelling():
+    """Capital.com spells it ``offer`` in places and ``ofr`` in others."""
+    def opener(url, data=None, headers=None, method=None):
+        document = _details(199.0, None)
+        document["snapshot"].pop("offer")
+        document["snapshot"]["ofr"] = 201.0
+        return (document, {})
+
+    market = capital.fetch_market("AAPL", SESSION, CONFIG, opener=opener)
+    assert market.spread_pct == pytest.approx(1.0)
+
+
+def test_a_market_with_no_prices_says_why():
+    """An empty reason is how nineteen instruments reported 'error:' once."""
+    def opener(url, data=None, headers=None, method=None):
+        document = _details(None, None)
+        document["snapshot"]["marketStatus"] = "CLOSED"
+        return (document, {})
+
+    market = capital.fetch_market("AAPL", SESSION, CONFIG, opener=opener)
+
+    assert not market.ok
+    assert market.error.strip()
+    assert "closed" in market.error
+
+
+def test_an_instrument_that_failed_stays_in_the_table():
+    """M271: a partial reading that looks complete.
+
+    The interesting rows here are the failures -- an instrument the broker
+    does not offer is a finding, not a gap.
+    """
+    def opener(url, data=None, headers=None, method=None):
+        if "searchTerm" in url:
+            symbol = url.split("searchTerm=")[1].split("&")[0]
+            if symbol == "NOPE":
+                return ({"markets": []}, {})
+            return ({"markets": [{"symbol": symbol, "epic": symbol}]}, {})
+        return (_details(199.0, 201.0), {})
+
+    rows = capital.fetch_markets(
+        ["AAPL", "NOPE", "MSFT"], SESSION, CONFIG, opener=opener, sleep=lambda s: None
+    )
+
+    assert [row.ticker for row in rows] == ["AAPL", "NOPE", "MSFT"]
+    assert rows[1].error and not rows[1].ok
+    assert rows[0].ok and rows[2].ok
+
+
+def test_the_reader_is_paced():
+    """Ten a second is documented; a limiter that only reacts to a 429 has
+    already been rude."""
+    pauses: list[float] = []
+
+    def opener(url, data=None, headers=None, method=None):
+        if "searchTerm" in url:
+            return ({"markets": [{"symbol": "AAPL", "epic": "AAPL"}]}, {})
+        return (_details(199.0, 201.0), {})
+
+    capital.fetch_markets(
+        ["AAPL"], SESSION, CONFIG, opener=opener, sleep=pauses.append
+    )
+    assert pauses, "no pacing at all"
+    assert all(p >= capital.REQUEST_INTERVAL_SECONDS for p in pauses)
