@@ -1,349 +1,286 @@
-# cfdinvest — multi-asset CFD backtesting engine
+# cfdinvest
 
-**Status:** all layers are now built, tested, mutation-checked and
-integrated.
+A multi-asset CFD backtesting engine and **manual-trading assistant**. It
+models strategies, measures risk, and helps you place trades on Trading 212
+yourself.
 
-Major layers now present:
-
-- T212 broker-aware safety engine
-- Refinement layer
-- Journal, insights, bias detection
-- Simulation mode
-- Meta-Strategy layer
-- Account registry and router
-- Monitoring and risk dashboard
-- 21-page Streamlit UI
-- Full persistence and scheduler
-
-The Meta-Strategy layer is fully implemented; all refinement inputs exist.
-
-The lake freshness warning appears until ingestion is run; monitoring
-reports stale data as a warning.
+**It has never placed a trade.** There is a broker client, it is read-only
+by construction, and the one module that can deal is off unless switched on
+twice. See [Execution](#execution-what-can-and-cannot-happen).
 
 ---
 
-## Quick start
+## What it does, end to end
+
+Every fifteen minutes while a US market is open, a resident daemon:
+
+1. **tops up the lake** with fresh hourly bars from yfinance
+2. **rebuilds the panels** — prices, returns, volatility, correlations
+3. **classifies the regime** — volatility, trend, correlation, macro
+4. **produces signals** — direction, size and a confidence per instrument
+5. **simulates fills** with real spread, financing, FX and slippage
+6. **updates the paper book** — four arms at different confidence bars
+7. **emails you** anything it opened or closed
+
+Once a day it also refreshes the full history, takes health and risk
+snapshots, and prunes old artefacts.
+
+You read the dashboard, take the emails, and place a selection by hand.
+
+---
+
+## The state of the evidence
+
+This is a research system, and the honest summary matters more than the
+feature list.
+
+**There is a real directional signal.** Take the identical trades with
+identical costs and choose the direction at random two hundred times: random
+returns about 0% while the real signal returns 851% (z = +8.7, none of the
+two hundred draws beat it). Shorts make money in a market that rose ~25% a
+year, which is the hardest thing to fake.
+
+**The margin is thin.** The edge breaks even at roughly **6 basis points**
+of execution friction. The backtest charges 2bp. Nobody has measured the
+real figure, because no order has ever been placed.
+
+**The backtest cannot rank close configurations.** Removing one instrument
+from twenty swings CAGR by a standard deviation of **18 percentage points**.
+Any figure between roughly 90% and 155% is consistent with the same data, so
+differences smaller than that are noise — and several apparent findings this
+size have already dissolved under proper testing.
+
+**The universe was assembled with hindsight.** Buy-and-hold of the same
+twenty returns ~25% a year over the window. Every strategy figure is quoted
+against that benchmark, never alone.
+
+The forward paper book exists because none of the above can be settled by
+more backtesting.
+
+---
+
+## Running it
 
 ```bash
-pip install -e ".[dev]"          # or: pip install -r requirements.txt
-cp .env.example .env             # then paste your FRED API key into .env
+pytest                                  # ~2,830 tests, offline, about two minutes
+pytest -m live                          # hits the real FRED API; excluded by default
+pytest --cov=cfdinvest                  # needs the dev extra
 
-python examples/run_ingestion.py --tickers SPY GLD ^VIX --start 2024-01-01 --skip-macro
-python examples/run_ingestion.py                     # full universe from config.toml
-python examples/run_ingestion.py --vintage-mode initial_release   # point-in-time macro
+cfdinvest-analytics evaluate            # the standard battery (below)
+cfdinvest-analytics evaluate --walkforward   # adds out-of-sample, takes minutes
 
-pytest                    # 192 tests, offline, ~4.5s
-pytest -m live            # 11 tests against the real FRED API
+cfdinvest-schedule daemon               # everything, on its own cadence
+cfdinvest-schedule run-once --refresh   # one pipeline pass
+cfdinvest-schedule paper-book           # one paper-book pass
+cfdinvest-schedule prune-runs           # bound the artefact store
+
+cfdinvest-helper "long AAPL 0.68 entry=234.8 stop=228" --balance 2000
+cfdinvest-confirm open AAPL --price 234.8 --quantity 0.684
+
+python -m streamlit run cfdinvest/ui/app.py --server.address 127.0.0.1
 ```
 
-A free FRED key takes about a minute:
-<https://fred.stlouisfed.org/docs/api/api_key.html>. The market leg needs no
-key at all.
+`--server.address 127.0.0.1` is load-bearing in deployment: without it
+Streamlit binds every interface and answers past Caddy.
 
 ---
 
-## Architecture
+## Evaluating performance
 
-```
-                config.toml + .env + CFD_* env vars
-                              |
-                        AppConfig  (frozen dataclasses)
-                              |
-        +---------------------+---------------------+
-        |                                           |
-  MarketDataIngestor                        MacroDataIngestor
-  (yfinance, batched)                       (FRED REST, thread pool)
-        |                                           |
-        +---------------- storage.py ---------------+
-                   (atomic Parquet upsert)
-                              |
-                      data/raw/{market,macro}
-                              |
-                       DataRepository
-                              |
-              +---------------+---------------+
-              |                               |
-        tidy DataFrame                  wide panel
-     (timestamp, ticker)             timestamp x ticker
-              |                               |
-        [ preprocessing -> signals -> execution -> analytics ]
-                          (next layers)
+One command, so the same questions get asked the same way every time. Every
+figure here used to come from a throwaway script, which is how two tables
+came to disagree about the same universe while both were correct.
+
+```bash
+cfdinvest-analytics evaluate
 ```
 
-### The layers
+It answers five questions, in the order they matter:
 
-| Module | Responsibility |
+| question | how |
 | --- | --- |
-| [config.py](cfdinvest/config.py) | Frozen dataclasses; TOML → env → explicit overrides. No path is ever hardcoded. |
-| [schema.py](cfdinvest/schema.py) | The canonical vocabulary: column names, UTC index rule, `IngestionReport`. |
-| [storage.py](cfdinvest/storage.py) | Atomic Parquet write/read/upsert. Owns *how* bytes hit disk. |
-| [retry.py](cfdinvest/retry.py) | Exponential backoff with full jitter, shared by every network call. |
-| [ingestion/market.py](cfdinvest/ingestion/market.py) | yfinance → canonical OHLCV. |
-| [ingestion/macro.py](cfdinvest/ingestion/macro.py) | FRED REST → canonical macro series. |
-| [repository.py](cfdinvest/repository.py) | The single read API everything downstream depends on. |
-| [docs/ingestion-hardening-note.md](docs/ingestion-hardening-note.md) | Engineering note: vintage modes, publication dates, anomaly flags. |
-| [docs/publication-lag-note.md](docs/publication-lag-note.md) | Engineering note: the publication_lag default and daily-series fallback. |
-| [logging_utils.py](cfdinvest/logging_utils.py) | Handler setup for entry points only; libraries just `getLogger`. |
+| Is there anything there? | Shuffle control — same trades, random directions, 200 draws |
+| Is it beta? | Benchmark against buy-and-hold, plus the long/short split |
+| Can it be harvested? | Slippage curve and the break-even against the benchmark |
+| Does it survive selection? | Walk-forward, scored only on unseen stretches |
+| What did it cost? | Spread, slippage, financing and FX as shares of what was charged |
 
-### Safety rules
-
-Risk posture may request increases but cannot exceed the safety engine's
-approved maximum; overrules are reported explicitly.
-
-Broker checks report pass / not checked / unverified; silence is never
-treated as safe.
-
-### Design decisions worth knowing
-
-**Everything is UTC, everywhere.** Every stored index is a tz-aware UTC
-`DatetimeIndex` named `timestamp`. yfinance hands back tz-naive daily bars and
-exchange-local hourly bars; normalising at the boundary kills an entire class
-of alignment bug when a backtest joins SPY, the Nikkei and EURUSD on one clock.
-
-**One Parquet file per instrument.** `raw/market/1d/SPY.parquet`,
-`raw/macro/DGS10.parquet`. Incremental updates rewrite one small file instead
-of a monolith, partial failures stay isolated, and pyarrow still reads a list
-of files as one dataset. Writes go to a `.tmp` sibling and are `os.replace`d
-into place, so a crash mid-write can never leave a truncated file.
-
-**Incremental by default, with a deliberate overlap.** Each symbol resumes
-from its last stored timestamp minus an overlap window (5 days for bars, 45 for
-macro) because vendors *revise* recent data. On merge, incoming rows win at
-duplicate timestamps. Tickers that share a resume date are batched together, so
-adding one new symbol to a 50-asset universe does not trigger a full-history
-refetch of the other 49.
-
-**Two read shapes, because backtests need both.**
-`load_market()` returns tidy `MultiIndex(timestamp, ticker)` for per-asset
-groupby work; `load_panel("close")` returns wide `timestamp x ticker` so a
-50-asset momentum screen is one `.pct_change()` call rather than a loop. The
-panel path pushes the column projection down into Parquet, so a close-only
-load never reads the OHLV columns off disk.
-
-**Ingestion records anomalies; it never silently repairs them.**
-`validate_ohlcv` flags inverted bars, non-positive prices, negative volume and
->50% single-bar moves, and writes the rows anyway. Quietly dropping bars at
-ingest would hide genuine vendor problems from the layer best placed to judge
-them. Counts are persisted to the manifest and readable via
-`repo.anomalies("1d")`; on a live run `EURUSD=X` reports 23
-`close_outside_range` bars, a known yfinance FX quirk.
-
-Flags are computed against the *merged* file, not the incremental slice —
-otherwise each incremental run would erase every historical anomaly from the
-manifest and the lake would look cleaner the longer it ran.
-
-**Missing macro observations stay NaN.** FRED's `.` sentinel becomes NaN and
-survives to the reader. The gap *is* information; forward-filling requires
-knowing each series' publication calendar — which ingestion now *stores*, in
-the `publication_date` column, so preprocessing can fill without look-ahead.
-
-**Vintage modes are named, enforced and auditable.** Every macro file records
-whether it holds latest revisions, a fixed ALFRED vintage, or first prints.
-Modes are never mixed inside one file. See the section below.
-
-**Failures are isolated and reported, not raised.** One dead ticker or a 400
-from FRED yields a `SymbolResult(status="failed")` inside the run's
-`IngestionReport`; the other 49 symbols still land. Transient failures (429,
-5xx, connection resets) retry with jittered backoff; permanent ones (bad series
-id, bad API key) fail immediately rather than burning four attempts.
-
-**Purity where it pays.** Every transform — `normalize_yfinance_frame`,
-`normalize_fred_observations`, `merge_frames`, `resolve_start_dates`,
-`to_panel`, `slice_range` — takes data and returns data with no I/O. Both
-ingestors accept an injected downloader/session, so the entire suite runs
-offline in about four seconds.
+The report refuses to flatter. A curve too short to judge reports absence
+rather than zero. The break-even is measured where the strategy stops
+beating the benchmark, not where it hits zero. The benchmark is printed
+beside every headline. A shuffle control that fails says so.
 
 ---
 
-## ⚠️ Look-ahead bias in macro data
+## The strategy, as configured
 
-By default FRED returns the **latest revision** of every observation. This is
-not a rounding concern — measured live:
+| | |
+| --- | --- |
+| Universe | 20 US shares, one trading session (14:30–21:00 UTC) |
+| Bars | Hourly |
+| Entry / exit confidence | 0.35 / 0.20 |
+| Time stop | 0.29 days — one session |
+| Re-entry cooldown | 2 hours |
+| Max gross exposure | 2.5× equity (≈50% of the balance as margin) |
+| Slippage assumed | 2 bp |
+| Stake, paper book | £1,000 of exposure per trade, notional not margin |
 
-```
-GDPC1 2019Q4, latest revision   20985.448
-GDPC1 2019Q4, as of 2020-04-01  19221.97     -8.4%
-```
+**Why hourly.** A daily bar gave one decision per instrument per session,
+which for a CFD is far too slow. Over two years: daily returned 347 trips a
+year at 169 hours held; hourly returned 1,626 at 22 hours. Lower per trade,
+higher in total, and the mechanism is the holding period — financing was 72%
+of all cost at daily holding periods and is 12% now.
 
-A backtest reading the first number while simulating April 2020 is trading on
-information that did not exist. Set `vintage_mode` in `[macro]`:
+**Why one session.** The analysis layer builds one matrix across every
+instrument and timestamp. On hourly bars a mixed universe is mostly holes —
+FX trades around the clock, the Nikkei overnight, the FTSE closes before New
+York — leaving each instrument absent from four rows in five. Measured on 41
+mixed instruments at 1h: returns 19% populated, realised volatility 0.3%,
+and **zero** active signals across 16,026 bars. Restricted to one session it
+is dense again.
 
-| Mode | What you get | Use for |
-| --- | --- | --- |
-| **`publication_lag`** (default) | A real publication date on every observation: first prints where FRED serves them, otherwise latest values stamped `observation_date + lag`. | Almost everything |
-| `initial_release` | Strictly first prints. Falls back to `publication_lag` when FRED refuses, and warns. | When you want to know if first prints were unavailable |
-| `latest` | Newest revision. Look-ahead biased. | Opt in deliberately |
-| `vintage` | ALFRED snapshot as of a fixed date. Bounds forwarded verbatim. | Reproducing a specific historical run |
-
-The default gives you the publication calendar straight from the vendor:
-
-```
-UNRATE 2020-01-01 = 3.6    published 2020-02-07
-UNRATE 2020-03-01 = 4.4    published 2020-04-03
-UNRATE 2020-04-01 = 14.7   published 2020-05-08
-```
-
-```python
-# Tidy calendar across every series -- what preprocessing consumes.
-repo.publication_calendar()
-#   series_id  observation_date  publication_date  vintage_mode
-#   CPIAUCSL   2019-01-01        2019-02-13        publication_lag
-#   ...   sorted by (series_id, observation_date), always
-
-# Or the panel form, aligned element-wise with load_macro():
-values = repo.load_macro(["UNRATE"])["UNRATE"]
-published = repo.publication_calendar(["UNRATE"], wide=True)["UNRATE"]
-
-# What was genuinely knowable on 2020-04-05:
-as_of = pd.Timestamp("2020-04-05", tz="UTC")
-knowable = values[published <= as_of].iloc[-1]     # 4.4  (March, published 04-03)
-leaky = values.dropna().iloc[-1]                   # 14.7 (April, published 05-08!)
-```
-
-### The daily-series fallback
-
-FRED refuses first prints for series with more than 2000 vintages — DGS10
-has 5092. Rather than failing those series, ingestion refetches the latest
-values (which, for an unrevised daily series, *are* the first prints) and
-stamps `observation_date + release_lag`. Measured live over 2019–2021:
-
-```
-series      mode              lag (min/median/max days)   source
-DGS10       publication_lag     1 /   1 /   1             derived (fell back)
-UNRATE      publication_lag    31 /  34 /  40             vendor first prints
-CPIAUCSL    publication_lag    37 /  41 /  44             vendor first prints
-GDPC1       publication_lag   115 / 119 / 121             vendor first prints
-```
-
-The fallback is announced in the log and recorded as `fell_back` in the
-manifest, and the answer is cached so later runs skip the doomed request.
-
-### Per-series overrides
-
-```toml
-[macro.series_overrides.DGS10]
-vintage_mode = "latest"     # this series only
-release_lag_days = 1
-```
-
-### Guardrails
-
-- Every file's mode — the one that *actually* produced it, after any
-  fallback — is recorded and readable: `repo.macro_vintage_mode("UNRATE")`,
-  `repo.macro_vintage_modes()`, `repo.macro_coverage()`.
-- **Modes are never mixed inside one file.** Merging first prints into a
-  latest-revision file yields a series that is neither, with no way to tell
-  which row came from where. Changing mode requires
-  `ingest(allow_mode_change=True)`, which replaces the file.
-- In `latest` mode FRED stamps `publication_date` with *today* — so a
-  publication date equal to the ingest date is a detectable signature of a
-  biased file, not a silent one.
-
-**Upgrading an existing `latest` lake.** The default changed, so the first
-ingest after upgrading will be *refused* for series already stored as
-`latest` — deliberately, rather than silently mixing vintages. Either pin
-them with a per-series override, or re-ingest with
-`ingest(allow_mode_change=True)` to replace the files.
+**Why individual shares only.** Every source of non-price evidence — EDGAR
+filings, earnings dates, company news, sentiment — exists for a company and
+cannot exist for an index. Measured: the three US indices lost money on
+their own and their removal took the return from 81% a year to 127%.
 
 ---
 
-## Configuration
+## Execution: what can and cannot happen
 
-Resolution order — later wins:
+Trading 212 has no CFD API, so it is never automated — driving its web UI
+would breach their terms. That constraint was contingent, not absolute, and
+it lapsed when an IG demo account was opened.
 
-1. Dataclass defaults in [config.py](cfdinvest/config.py)
-2. `config/config.toml` (or `$CFD_CONFIG_FILE`)
-3. Environment variables / `.env` — `CFD_DATA_ROOT`, `CFD_TICKERS`,
-   `CFD_INTERVAL`, `CFD_START`, `FRED_API_KEY`, …
-4. An explicit `overrides=` mapping passed to `load_config()`
+- `broker/ig/client.py` is **read-only by construction**. No function places,
+  amends or cancels; tests assert IG's dealing endpoints appear nowhere and
+  that the only POST is the session.
+- `broker/ig/dealing.py` **can** deal, and says so in its name. Two gates:
+  `CFD_IG_DEALING_ENABLED` must be explicitly truthy, and a live account
+  needs `CFD_IG_ALLOW_LIVE` as well. Anything that is not the exact string
+  `live` resolves to demo.
+- The **paper book imports neither**, and a test enforces it. Its worth is
+  being a record nobody could edit once the outcome was known.
 
-The API key is **env-only** and is never read from or written to TOML.
-
-```python
-from cfdinvest import load_config, DataRepository
-
-config = load_config(overrides={"market": {"interval": "1h"}})
-repo = DataRepository(config)
-
-closes = repo.load_panel("close", start="2015-01-01")   # timestamp x ticker
-returns = closes.pct_change()
-vol = returns.rolling(252).std() * (252 ** 0.5)
-
-bundle = repo.load_bundle()                             # market + macro together
-```
+**IG was measured and rejected.** CFD commission is a $15 minimum per side —
+222bp round trip on £1,000, against a ~6bp budget. Spread betting has no
+commission but a 12.2bp spread and a £7,490 minimum position. Trading 212
+wins because it charges no commission at all, which at 22-hour holds is
+worth far more than its expensive financing costs.
 
 ---
 
-## Data layout
+## The paper book
 
-```
-data/
-├── raw/
-│   ├── market/1d/SPY.parquet          # index: timestamp (UTC)
-│   │                                  # cols: open, high, low, close, volume,
-│   │                                  #       dividends, stock_splits, ticker
-│   └── macro/DGS10.parquet            # cols: value, publication_date,
-│                                      #       series_id
-└── metadata/
-    ├── market_1d_manifest.json        # per-ticker status, coverage, run
-    │                                  # params, anomaly flag counts
-    ├── macro_manifest.json             # + vintage_mode per series
-    └── fred_DGS10.json                # title, units, frequency, last_updated
-```
+Four arms run side by side on the same signals and prices, each taking
+£1,000 of exposure:
+
+- **c35** — the bar the engine actually enters on
+- **c50, c60, c70** — does raising it help?
+
+The baseline arm is derived from `strategy.entry_confidence`, not hardcoded.
+It used to be, and the arms sat at 0.50/0.60/0.70 while the engine entered
+at 0.35 — so the forward record was validating a configuration returning 86%
+a year against the shipped 127%.
+
+Each arm keeps its own one-position-per-instrument rule and cooldown, so
+they never block each other. The book writes only `open` and `close` events
+— Trading 212 cannot resize an open CFD position, so neither can the
+simulation.
 
 ---
 
-## Scaling notes
+## Layer map
 
-Sized for 20–50 assets, verified against the live vendor:
+Read a package's README before changing it; each explains the failure it
+prevents.
 
-- 50 tickers = 2 yfinance requests (`batch_size = 25`), not 50.
-- FRED runs on a thread pool behind a shared process-wide rate limiter
-  (120 req/min ceiling).
-- 20 years of daily bars for 50 assets is roughly 250k rows — a few MB in
-  zstd Parquet, trivially in-memory.
-- Hourly is where size bites: yfinance serves only ~730 days of intraday
-  history, and the ingestor warns when you ask for more.
-- No per-row Python loops anywhere in the transform path.
+| | |
+| --- | --- |
+| `ingestion/` `repository.py` `storage.py` | The lake |
+| `preprocessing/` `regimes/` `signals/` | Panels, classifications, targets |
+| `execution/` `backtest/` | Fills, spread, slippage, FX, financing, stops |
+| `analytics/` | Metrics, attribution, sweeps, walk-forward, Monte Carlo, **evaluate** |
+| `universe/` | Which instruments to trade, by rule and point-in-time |
+| `persist/` | Every artefact store. Account-aware. |
+| `schedule/` | Daemon, market calendar, notifications, the paper alert |
+| `risk/` `monitoring/` | Book-level limits; operational health |
+| `livehelper/` | The T212 safety core: intent, safety, sizing, broker rules |
+| `advisor/` | Suggestions, sentiment, the forward record, the paper book |
+| `broker/ig/` | Read-only market data; gated dealing |
+| `confirm/` `journal/` `insights/` `bias/` | What you did, and what it says |
+| `simulate/` `metastrategy/` | Rehearsal; risk posture |
+| `accounts/` | Registry and router |
+| `ui/` | Three Streamlit pages. Optional install. |
+
+**Computed once, read everywhere:** expectancy in `analytics/`, regime
+labels in `risk.compute_regime_risk`, scheduler status in
+`risk.scheduler_status`, fills in `execution/`. Never add a second.
+
+---
+
+## The dashboard
+
+Three pages, deliberately. It carried twenty-three and almost none were
+read.
+
+- **Dashboard** — what the paper book has done: the four arms as one
+  comparison, open positions marked against the latest quote with its age
+  stated, and where the money went.
+- **System status** — whether the machine is doing its job. Every daemon job,
+  when it last ran, and what is overdue.
+- **Signals** — what the model wants now, highest conviction first, with a
+  red bar and a cross on anything below the entry threshold.
+
+---
+
+## Deployment
+
+A single VM. Caddy terminates HTTPS and proxies to Streamlit on 127.0.0.1;
+`cfdinvest.service` is a resident daemon owning every scheduled job;
+`cfdinvest-deploy.path` watches for a GitHub webhook and runs `deploy.sh`,
+which pulls, installs unit files, enables timers, restarts everything and
+then **proves it took** — services active, dashboard answering, disk under
+85%, and the running config read back from the process rather than the file.
+
+That last part exists because code was once copied to the server without a
+restart and ran eleven hours stale, reporting the wrong settings into its own
+metadata while nobody looked.
+
+Secrets live in `/etc/cfdinvest/env` and never in the repository.
 
 ---
 
 ## Testing
 
-```bash
-pytest              # 267 tests, ~8s, no network
-pytest -m live      # 14 tests against the real FRED API (needs a key)
-pytest -m ""        # everything
-```
+Tests are the deliverable, not a formality. ~2,830 of them, offline, about
+two minutes. Coverage is 88%.
 
-| File | Covers |
-| --- | --- |
-| `test_vintage.py` | Mode resolution, exact parameter forwarding, mode-mixing guardrail |
-| `test_publication_lag.py` | No forward-fill, publication dates stored, as-of boundaries |
-| `test_contract.py` | What downstream layers may rely on; multi-exchange alignment |
-| `test_utc_normalization.py` | DST transitions, holidays, mixed-frequency joins |
-| `test_vintage_default.py` | The publication_lag default and per-series overrides |
-| `test_fallback.py` | initial_release -> publication_lag fallback |
-| `test_publication_calendar.py` | The unified calendar's shape and determinism |
-| `test_live_fred.py` | The real API (excluded by default) |
-
-Both ingestors take an injected downloader / `requests.Session`. The FRED stub
-in `tests/fred_fixtures.py` dispatches on `output_type` and `realtime_start`
-exactly as the live API does, with payloads transcribed from real responses —
-so an offline pass exercises the same branch production takes.
-
-The suite has earned its keep repeatedly: it caught an index-alignment bug
-that turned every FRED value into NaN, a `pivot_table` call that silently
-dropped the missing observations this layer promises to preserve, and a
-`retry_call` default argument that made every sleep-mocking test a no-op.
+- **Mutation-check every suite.** Reintroduce each property as a bug and
+  confirm a test fails. Roughly 200 mutations have been checked; each
+  package's README lists its own. Several tests that looked fine passed
+  against their own mutation and had to be rewritten — a structural test
+  asserting an identifier appears in a file will happily pass while that
+  code is unreachable.
+- **Test the property, not the constant.**
+- **Run the real thing on real data.** Most of the serious bugs here
+  surfaced from smoke tests on the real lake, not from unit tests.
+- **Treat a surprising number as a bug.** A 2,135% backtest turned out to be
+  unowned leverage; a 42bn turnover figure turned out to be an 855% run
+  showing up in price × volume.
 
 ---
 
-## Next layer
+## Known limits
 
-Preprocessing: calendar alignment across exchanges, macro forward-fill driven
-by `publication_calendar()`, returns, realised volatility, rolling
-correlations — reading exclusively through `DataRepository`.
+- Two years of hourly history is all the vendor serves. One market regime.
+- The universe is hindsight-selected; the benchmark is always quoted with it.
+- Spread is estimated per asset class, not measured per instrument. It is the
+  largest single cost line.
+- Real slippage is unmeasured, and the edge breaks even near 6bp.
+- `schedule/app.py` is 44% covered — the daemon dispatch, where several
+  defects have hidden.
 
-The as-of primitive it needs already exists as a reference implementation:
-`value_available_at` in `tests/test_publication_lag.py`.
+The root of all of these is the same: the system has never traded. The
+forward paper book is the instrument built to change that, and it needs
+weeks rather than attention.

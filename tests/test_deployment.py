@@ -1029,3 +1029,67 @@ def test_the_dashboard_port_has_one_owner():
     assert set(ports.values()) != {"8501"}, (
         "8501 is held by another app on this box, bound to every interface"
     )
+
+
+def test_the_readme_matches_the_shipped_configuration():
+    """M198: documentation drifting from the thing it describes.
+
+    Every number in the README's configuration table is one somebody will
+    quote without checking. Three limits in this project have already been
+    found living only in a dataclass default while a file implied
+    otherwise, and a README is the easiest place of all for that to happen
+    unnoticed -- nothing executes it.
+
+    Asserted against the config rather than restated, so the table cannot
+    drift silently.
+    """
+    from cfdinvest.advisor import papertrade
+    from cfdinvest.advisor.papertrade_run import cohorts_for
+    from cfdinvest.config import load_config
+
+    readme = Path("README.md").read_text(encoding="utf-8")
+    config = load_config()
+    strategy = config.strategy
+
+    assert f"{len(config.market.tickers)} US shares" in readme
+    assert f"{strategy.entry_confidence} / {strategy.exit_confidence}" in readme
+    assert f"{strategy.time_stop_days} days" in readme
+    assert f"{strategy.max_leverage}\u00d7 equity" in readme
+    assert f"{strategy.slippage_bps:.0f} bp" in readme
+    assert f"\u00a3{papertrade.STAKE_GBP:,.0f} of exposure" in readme
+
+    # The paper arms, named as the code names them.
+    for name, _ in cohorts_for(strategy):
+        assert name in readme, f"the README does not mention the {name} arm"
+
+    # And the dashboard page count.
+    pages = len(list(Path("cfdinvest/ui/views").glob("*.py")))
+    assert f"{'Three' if pages == 3 else pages} pages" in readme
+
+
+def test_the_readme_never_quotes_a_return_without_its_benchmark():
+    """A return on a hindsight-selected universe, quoted alone, is the single
+    most misleading thing this project could publish.
+
+    Buy-and-hold of the same twenty returns about 25% a year over the same
+    window. The README must carry that wherever it carries a headline.
+    """
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "hindsight" in readme.lower(), "the selection bias is not disclosed"
+    assert "benchmark" in readme.lower()
+    assert "buy-and-hold" in readme.lower() or "buy and hold" in readme.lower()
+    # And the limits section must exist rather than the caveats being scattered.
+    assert "## Known limits" in readme
+
+
+def test_the_readme_states_that_nothing_has_ever_been_traded():
+    """The most important sentence in the document.
+
+    Someone reading this for the first time must not be able to mistake a
+    backtesting engine with a gated demo-only broker client for something
+    that trades.
+    """
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "never placed a trade" in readme.lower()
+    assert "read-only" in readme.lower()
