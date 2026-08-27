@@ -21,6 +21,31 @@
 #   available = false   Trading 212 does not offer it; stops it being suggested
 #
 
+# EXTENDED HOURS, and why nothing reads it
+#
+# `extended_hours` says whether Trading 212 offers the instrument outside the
+# exchange's regular session. It carries its own source line because it was
+# read on a different day from the rest of each entry, and dating a fact to a
+# reading that never covered it is the small kind of lie this table exists to
+# stop.
+#
+# It supersedes a partial reading taken earlier the same day, which had GOOGL
+# as available and NKE as not; the complete pass reversed both. The partial
+# values are gone rather than annotated -- this file is configuration and says
+# what is true now -- so the correction is recorded here instead.
+#
+# One caveat on the earlier reading, because the two are not in conflict:
+# it was taken by watching which instruments were *open at 12:59 UTC*, and
+# NKE was not. "Offers extended hours" and "is trading at this minute" are
+# different questions, and the sessions do not all start together.
+#
+# NOTHING TRADES ON IT. The strategy has no measured edge in that window:
+# 6,397 signals held into an overnight gap moved the right way 49.4% of the
+# time (mean +0.024%, t=+0.89, p=0.375), and no confidence band did better.
+# The spread there is unmeasured and thinner books are wider, against a
+# break-even near 6bp. It is recorded so the system knows what it does not
+# know.
+
 # ── CONFIRMED: 40 of 40 ──────────────────────────────
 
 ["^GSPC"]
@@ -249,6 +274,8 @@ financing_daily_pct_short = 0.0251
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["AAPL"]
 t212_name            = "Apple"
@@ -258,6 +285,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["MSFT"]
 t212_name            = "Microsoft"
@@ -267,6 +296,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["AMZN"]
 t212_name            = "Amazon"
@@ -276,6 +307,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["GOOGL"]
 t212_name            = "Alphabet (Class A)"
@@ -285,6 +318,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = false
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["META"]
 t212_name            = "Meta Platforms"
@@ -294,6 +329,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["TSLA"]
 t212_name            = "Tesla"
@@ -303,6 +340,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["AMD"]
 t212_name            = "Advanced Micro Devices"
@@ -312,6 +351,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["AVGO"]
 t212_name            = "Broadcom"
@@ -321,6 +362,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = false
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["NFLX"]
 t212_name            = "Netflix"
@@ -330,6 +373,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["ADBE"]
 t212_name            = "Adobe"
@@ -339,6 +384,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = false
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["ORCL"]
 t212_name            = "Oracle"
@@ -348,6 +395,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["JPM"]
 t212_name            = "JPMorgan Chase"
@@ -357,6 +406,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["XOM"]
 t212_name            = "Exxon Mobil"
@@ -366,6 +417,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["JNJ"]
 t212_name            = "Johnson & Johnson"
@@ -375,6 +428,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["INTC"]
 t212_name            = "Intel"
@@ -384,6 +439,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["NKE"]
 t212_name            = "Nike"
@@ -393,6 +450,8 @@ financing_daily_pct_short = 0.0251             # US-share pair on T212.
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["CAT"]
 t212_name            = "Caterpillar"
@@ -411,6 +470,8 @@ source               = "T212 app, 2026-08-27"
 # technology; a thirteenth would have made the concentration worse, and
 # diversification is what bought the -19.6% drawdown that beat every tighter
 # configuration tested.
+extended_hours        = true
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 # NOTE ON MINIMUMS: min_quantity (units) and min_trade_value (account
 # currency) both vary by instrument type and must be read per instrument.
@@ -430,6 +491,8 @@ min_trade_value      = 5.0                     # GBP. The smallest position the
 fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
+extended_hours        = false
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 ["COST"]
 t212_name            = "Costco Wholesale"      # the NYSE listing, NOT Costain
@@ -450,6 +513,8 @@ source               = "T212 app, 2026-08-25"
 # sharing a symbol attaches the trading terms of one to the prices of the
 # other, and the resulting suggestion names the right size, the right stop
 # and the wrong company.
+extended_hours        = false
+extended_hours_source = "owner, T212 app, 2026-08-27 (all 20 read in one pass)"
 
 # ── STILL TO DO: 0 ─────────────────────────────────────────
 # Paste the figures and they get written in above. The dashboard's

@@ -1401,3 +1401,94 @@ def test_a_part_day_stop_is_not_truncated_away_inside_the_engine():
     assert entries(0.5) < entries(0.0), (
         "a half-day cooldown admitted as many entries as no cooldown"
     )
+
+
+#: The traded universe, read from the config rather than restated -- a second
+#: list is one that is right until the day the universe changes.
+def _universe_tickers():
+    from cfdinvest.config import load_config
+
+    return list(load_config().market.tickers)
+
+
+_UNIVERSE = _universe_tickers()
+
+
+# --------------------------------------------------------------------------- #
+# M252 a recorded availability with no provenance
+# M253 an absent availability read as "not available"
+# M254 the flag reaching the trading decision
+# --------------------------------------------------------------------------- #
+def test_every_recorded_extended_hours_names_its_source():
+    """M252: a broker fact with nothing behind it.
+
+    The whole table's rule. An entry that says an instrument trades
+    pre-market without saying who looked is indistinguishable from a guess,
+    and the fear that kept this table empty for months was invented figures
+    that look measured.
+
+    It carries its *own* source because it was read on a different day from
+    the rest of each entry. Borrowing the entry's line would date the fact
+    to a reading that never covered it.
+    """
+    from pathlib import Path
+
+    from cfdinvest.livehelper.t212_rules import load_rules
+
+    table = load_rules(Path("config/t212_rules.toml"))
+    recorded = [
+        t for t in _UNIVERSE
+        if table.get(t) is not None and table.get(t).extended_hours is not None
+    ]
+    assert recorded, "nothing recorded, so this asserts nothing"
+
+    for ticker in recorded:
+        entry = table.get(ticker)
+        assert entry.extended_hours_source not in ("unverified", "", None), (
+            f"{ticker} records extended_hours with no source"
+        )
+        assert entry.extended_hours_source != entry.source, (
+            f"{ticker} dates its extended-hours reading to the entry's own "
+            "source, which was taken on a different day"
+        )
+
+
+def test_an_unrecorded_instrument_is_unverified_not_unavailable():
+    """M253: absence read as a "no".
+
+    ``None`` means nobody has looked. ``False`` means somebody looked and it
+    is not offered. Collapsing them would let an unread instrument look like
+    a checked one -- the same distinction this project draws everywhere else,
+    and the reason the field is a tri-state rather than a bool.
+    """
+    from cfdinvest.livehelper.t212_rules import InstrumentRules
+
+    fresh = InstrumentRules(ticker="WHATEVER")
+    assert fresh.extended_hours is None
+    assert fresh.extended_hours is not False
+    assert fresh.extended_hours_source == "unverified"
+
+
+def test_nothing_trades_on_extended_hours():
+    """M254: a field that quietly became a trading decision.
+
+    It is recorded so the system knows what it does not know. There is no
+    measured edge in that window -- 6,397 signals held into an overnight gap
+    went the right way 49.4% of the time, t=+0.89, p=0.375 -- and the spread
+    there is unmeasured against a break-even near 6bp.
+
+    If that ever changes it should change deliberately, in a commit that says
+    so, rather than because a field was already there and looked useful.
+    """
+    from pathlib import Path
+
+    for module in (
+        "cfdinvest/advisor/papertrade_run.py",
+        "cfdinvest/schedule/market_calendar.py",
+        "cfdinvest/livehelper/safety.py",
+        "cfdinvest/execution/engine.py",
+    ):
+        source = Path(module).read_text(encoding="utf-8")
+        assert "extended_hours" not in source, (
+            f"{module} reads extended_hours; nothing should trade on it yet"
+        )

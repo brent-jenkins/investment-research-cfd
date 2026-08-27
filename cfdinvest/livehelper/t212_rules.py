@@ -112,6 +112,22 @@ class InstrumentRules:
     close_only:
         Trading 212 puts instruments into close-only around expiries and
         corporate actions. An open order then simply does not fill.
+    extended_hours:
+        Whether Trading 212 offers this instrument outside the exchange's
+        regular session. A *broker* fact, deliberately separate from
+        ``trading_hours``, which describes the exchange's own window -- the
+        two differ per instrument and conflating them would make one of them
+        wrong.
+
+        Nothing trades on it. The strategy has no measured edge in that
+        window: 6,397 signals held into an overnight gap moved the right way
+        49.4% of the time (mean +0.024%, t=+0.89, p=0.375), and no confidence
+        band did better. It is recorded so the system knows what it does not
+        know, rather than to act on.
+    extended_hours_source:
+        Its own provenance. The availability was read off the app on a
+        different day from the rest of the entry, and attributing it to the
+        entry's ``source`` would date a fact to a reading that never made it.
     """
 
     ticker: str
@@ -137,6 +153,8 @@ class InstrumentRules:
     currency: str | None = None
     trading_hours: str | None = None
     close_only: bool | None = None
+    extended_hours: bool | None = None
+    extended_hours_source: str = "unverified"
     #: When the contract expires, if it is a dated one.
     #:
     #: Trading 212's index CFDs are expiring contracts -- "UK 100 EXPIRING
