@@ -15,7 +15,7 @@ import streamlit as st  # noqa: E402
 
 from cfdinvest.schema import TICKER, TIMESTAMP  # noqa: E402
 from cfdinvest.livehelper import t212_instruments
-from cfdinvest.ui import components, explain  # noqa: E402
+from cfdinvest.ui import components, explain, theme  # noqa: E402
 
 data = components.page_setup(
     st,
@@ -157,35 +157,37 @@ else:
         # The bar is the point of the column: a number you have to compare
         # against a threshold in your head is a number you will misread.
         if pd.notna(confidence):
-            # The tick is the whole point of the column: whether this signal
-            # would actually be traded, or is being shown for information.
+            # Drawn rather than using st.progress, which takes no colour. The
+            # bar carries the verdict: red below the entry bar, accent above
+            # it. A reader should not have to compare a percentage against a
+            # threshold they are holding in their head.
             if not takeable:
+                colour = theme.colour_for("critical", mode)
                 mark = f" ✕ below {bar:.0%}"
-            elif confidence >= suggest_bar:
-                mark = " ✓✓"
             else:
-                mark = " ✓"
-            conf.progress(
-                min(max(float(confidence), 0.0), 1.0),
-                text=f"{confidence:.0%}{mark}",
+                colour = theme.colour_for("ok", mode)
+                mark = " ✓✓" if confidence >= suggest_bar else " ✓"
+            width = min(max(float(confidence), 0.0), 1.0) * 100
+            conf.markdown(
+                f'<div style="font:600 13px/1.4 inherit;color:{colour};">'
+                f'{confidence:.0%}{mark}</div>'
+                f'<div style="background:rgba(128,128,128,0.22);border-radius:3px;'
+                f'height:6px;width:100%;margin-top:2px;">'
+                f'<div style="background:{colour};width:{width:.1f}%;height:6px;'
+                f'border-radius:3px;"></div></div>',
+                unsafe_allow_html=True,
             )
         else:
             conf.markdown("—")
 
         size.markdown(components.number(row.get("size"), 3))
-        if takeable:
-            why.caption(explain.reason(row.get("reason")))
-        else:
-            # Said on the row rather than in a footnote. A list where the
-            # untradeable and the tradeable look alike is a list that has to
-            # be cross-checked against a number every time it is read.
-            why.caption(
-                f":grey[{explain.reason(row.get('reason'))}]"
-            )
-            why.caption(
-                f":orange[Confidence too low — the engine enters at "
-                f"{bar:.0%}, so this would not be traded.]"
-            )
+        # No second line explaining the cross. The red bar and the "✕ below
+        # 35%" already say it, and repeating it on every untradeable row was
+        # more words than the rows they were describing.
+        why.caption(
+            explain.reason(row.get("reason")) if takeable
+            else f":grey[{explain.reason(row.get('reason'))}]"
+        )
 
         # Only where it would stop you acting. Eleven of the configured
         # instruments have no CFD at all, and that is worth a line; "Apple,

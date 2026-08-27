@@ -2820,9 +2820,16 @@ def test_the_signals_page_marks_what_would_actually_be_traded(populated):
     page = (UI / "views" / "02_Signals.py").read_text(encoding="utf-8")
 
     assert "entry_confidence" in page, "the page does not read the real entry bar"
-    assert "Confidence too low" in page, "a low signal is not called out"
-    # And the reason it is too low must name the bar rather than assume it.
-    assert "the engine enters at" in page
+
+    # The verdict is carried by the bar's colour and a marker naming the
+    # threshold, not by a sentence repeated on every untradeable row.
+    assert "✕ below" in page, "an untradeable signal is not marked"
+    assert 'colour_for("critical"' in page, (
+        "the bar is not coloured for signals below the entry bar"
+    )
+    assert 'colour_for("ok"' in page, "tradeable signals are not coloured"
+    # st.progress takes no colour, so the bar has to be drawn.
+    assert "conf.progress(" not in page
 
 
 def test_the_paper_arms_start_at_the_bar_the_engine_enters_on():
