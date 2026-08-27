@@ -212,6 +212,7 @@ def evaluate(
         regime_mode=strategy.regime_mode,
         use_volume=strategy.use_volume,
         environment_in_confidence=strategy.environment_in_confidence,
+        hold_across_session_open=strategy.hold_across_session_open,
     ))
 
     pipeline = run_backtest_pipeline(repo, settings)

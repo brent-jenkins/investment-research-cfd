@@ -176,6 +176,25 @@ def test_an_instrument_with_no_recorded_terms_is_not_invented(rules):
 # --------------------------------------------------------------------------- #
 # One pass of the book
 # --------------------------------------------------------------------------- #
+@pytest.fixture(autouse=True)
+def recheck_approves(monkeypatch):
+    """Let the last-look pass, for every test that is not about the last look.
+
+    Opening now runs the recorded signal past a fresh re-evaluation, and
+    that re-evaluation reads the lake. These tests hand the book synthetic
+    signals with no lake behind them, so the real check would decline
+    everything -- correctly, since a check that cannot run is not a check
+    that passed, but it would turn every assertion in this file into a test
+    of the same one gate.
+
+    The tests that *are* about the gate patch this again with their own
+    behaviour, which wins because it is applied second.
+    """
+    from cfdinvest.advisor import livecheck
+
+    monkeypatch.setattr(livecheck, "holds", lambda *a, **k: (True, ""))
+
+
 def _signal(ticker, direction="long", confidence=0.9, **extra):
     return {"ticker": ticker, "direction": direction, "confidence": confidence, **extra}
 
@@ -846,3 +865,232 @@ def test_only_signals_and_errors_are_emailed_by_default():
         assert call in source, f"{call} vanished; update this test"
         before = source[: source.index(call)]
         assert gate in before[-400:], f"{call} is not gated by {gate}"
+
+
+# --------------------------------------------------------------------------- #
+# The last look before a trade opens
+#
+# M227 the recorded signal opened without re-evaluation
+# M228 a direction that flipped overnight still traded
+# M229 a signal that no longer clears the bar still traded
+# M230 a check that could not run treated as a check that passed
+# M231 the re-evaluation run once per instrument instead of once per pass
+# M232 the refusal recorded as an ordinary skip with no reason
+# --------------------------------------------------------------------------- #
+#: The real gate, captured at import so the autouse fixture above -- which
+#: waves it through for every test that is not about it -- can be undone by
+#: the tests that are. Binding the function rather than the module attribute
+#: is what makes that possible.
+from cfdinvest.advisor.livecheck import holds as _real_holds
+
+
+def _paper_setup(tmp_path, monkeypatch):
+    """A book on disk, an open market, and the *real* last-look gate."""
+    from cfdinvest.advisor import livecheck, papertrade, papertrade_run
+
+    monkeypatch.setattr(
+        papertrade, "_path", lambda config=None, account=None: tmp_path / "book.jsonl"
+    )
+    monkeypatch.setattr(papertrade_run, "_market_open", lambda t, n: True)
+    monkeypatch.setattr(livecheck, "holds", _real_holds)
+    return papertrade, papertrade_run
+
+
+def test_a_signal_that_no_longer_holds_is_not_opened(tmp_path, monkeypatch):
+    """M228/M229: yesterday's conviction, filled at today's price.
+
+    The signal is computed on the last bar that closed. At a session open
+    that is the previous evening, while the fill happens at a price holding
+    the whole overnight move -- an earnings release, a downgrade, a sector
+    repricing. Measured over 2,125 round trips, requiring the freshly
+    computed signal to still agree and still clear the bar refused 201 of
+    them; those refused won 36.3% and averaged -0.331% against +0.011% for
+    the ones kept (t=+4.63, p<0.0001).
+    """
+    from cfdinvest.advisor import livecheck
+
+    papertrade, papertrade_run = _paper_setup(tmp_path, monkeypatch)
+
+    monkeypatch.setattr(
+        livecheck, "reevaluate",
+        lambda tickers, prices, **kw: {
+            # Still long and still convinced.
+            "KEEP": {"direction": "long", "confidence": 0.90},
+            # The overnight move turned it round.
+            "FLIP": {"direction": "short", "confidence": 0.90},
+            # Same direction, no longer worth acting on.
+            "FADE": {"direction": "long", "confidence": 0.10},
+        },
+    )
+
+    signals = [_signal(t, direction="long", confidence=0.8)
+               for t in ("KEEP", "FLIP", "FADE")]
+    prices = {t: 100.0 for t in ("KEEP", "FLIP", "FADE")}
+
+    result = papertrade_run.run_paper_pass(
+        signals, prices, now="2026-08-27T13:35:00Z", blackout_days=0,
+        threshold=0.35,
+    )
+
+    assert result["opened"] == 1
+    book = papertrade.load_book()
+    assert [row["ticker"] for row in book] == ["KEEP"]
+    assert result["skipped"].get("direction changed since the signal") == 1
+    assert result["skipped"].get("no longer clears the bar") == 1
+
+
+def test_a_check_that_could_not_run_is_not_a_check_that_passed(tmp_path, monkeypatch):
+    """M230: the gate that opens when it breaks.
+
+    An unreadable lake, a vendor timeout, an exception anywhere in the
+    re-evaluation -- all come back as "nothing was checked". Treating that
+    as approval would make the gate disappear at exactly the moment
+    something is wrong with the data it was meant to be reading.
+    """
+    from cfdinvest.advisor import livecheck
+
+    papertrade, papertrade_run = _paper_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(livecheck, "reevaluate", lambda tickers, prices, **kw: {})
+
+    result = papertrade_run.run_paper_pass(
+        [_signal("AAPL", direction="long", confidence=0.9)], {"AAPL": 100.0},
+        now="2026-08-27T13:35:00Z", blackout_days=0, threshold=0.35,
+    )
+
+    assert result["opened"] == 0
+    assert result["skipped"].get("not re-checked") == 1, (
+        "an unchecked signal must not be traded, and the log must say why"
+    )
+
+
+def test_the_re_evaluation_runs_once_for_the_whole_pass(tmp_path, monkeypatch):
+    """M231: a pipeline rebuild per instrument.
+
+    The check reads the lake and rebuilds the panels. Run per instrument it
+    would cost twenty times what it is worth on a twenty-name universe, on
+    every five-minute tick.
+    """
+    from cfdinvest.advisor import livecheck
+
+    papertrade, papertrade_run = _paper_setup(tmp_path, monkeypatch)
+
+    calls = []
+
+    def record(tickers, prices, **kw):
+        calls.append(list(tickers))
+        return {t: {"direction": "long", "confidence": 0.9} for t in tickers}
+
+    monkeypatch.setattr(livecheck, "reevaluate", record)
+
+    tickers = [f"T{i:02d}" for i in range(6)]
+    papertrade_run.run_paper_pass(
+        [_signal(t, direction="long", confidence=0.9) for t in tickers],
+        {t: 100.0 for t in tickers},
+        now="2026-08-27T13:35:00Z", blackout_days=0, threshold=0.35,
+    )
+
+    assert len(calls) == 1, f"re-evaluated {len(calls)} times, once was enough"
+    assert sorted(calls[0]) == sorted(tickers)
+
+
+def test_nothing_is_re_evaluated_when_nothing_would_open(tmp_path, monkeypatch):
+    """M227's other half: paying for a check with nothing to check.
+
+    Most passes open nothing. Rebuilding the panels to confirm a decision
+    that was never going to be taken is pure cost, every five minutes,
+    forever.
+    """
+    from cfdinvest.advisor import livecheck
+
+    papertrade, papertrade_run = _paper_setup(tmp_path, monkeypatch)
+
+    calls = []
+    monkeypatch.setattr(
+        livecheck, "reevaluate",
+        lambda tickers, prices, **kw: calls.append(1) or {},
+    )
+
+    result = papertrade_run.run_paper_pass(
+        [_signal("AAPL", direction="long", confidence=0.10)], {"AAPL": 100.0},
+        now="2026-08-27T13:35:00Z", blackout_days=0, threshold=0.35,
+    )
+
+    assert result["opened"] == 0
+    assert calls == [], "re-evaluated with no candidate to re-evaluate"
+
+
+def test_an_absent_instrument_is_refused_rather_than_assumed(tmp_path, monkeypatch):
+    """M230, one instrument at a time.
+
+    A re-evaluation that returned readings for two of three names has not
+    said the third is fine. It has said nothing about the third.
+    """
+    from cfdinvest.advisor import livecheck
+
+    papertrade, papertrade_run = _paper_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        livecheck, "reevaluate",
+        lambda tickers, prices, **kw: {"HERE": {"direction": "long", "confidence": 0.9}},
+    )
+
+    result = papertrade_run.run_paper_pass(
+        [_signal("HERE", direction="long", confidence=0.9),
+         _signal("GONE", direction="long", confidence=0.9)],
+        {"HERE": 100.0, "GONE": 100.0},
+        now="2026-08-27T13:35:00Z", blackout_days=0, threshold=0.35,
+    )
+
+    assert result["opened"] == 1
+    assert result["skipped"].get("not re-checked") == 1
+
+
+# --------------------------------------------------------------------------- #
+# What the re-evaluation itself computes
+# --------------------------------------------------------------------------- #
+def test_the_provisional_bar_extends_the_lake_and_never_rewrites_it():
+    """M233: a stale quote overwriting a bar that really happened.
+
+    A vendor returning yesterday's price is a thing that happens. Appending
+    it as though it were now would replace a real observation with a stale
+    one and then compute a signal from it.
+    """
+    import pandas as pd
+
+    from cfdinvest.advisor.livecheck import ProvisionalRepository
+
+    index = pd.date_range("2026-08-26 17:30", periods=2, freq="h", tz="UTC")
+    stored = pd.DataFrame({
+        "timestamp": list(index) * 1,
+        "ticker": ["AAPL", "AAPL"],
+        "open": [100.0, 101.0], "high": [100.0, 101.0],
+        "low": [100.0, 101.0], "close": [100.0, 101.0],
+        "volume": [1e6, 1e6],
+    })
+
+    class Inner:
+        config = None
+
+        def load_market(self, *a, **k):
+            return stored
+
+    fresh = ProvisionalRepository(Inner(), {"AAPL": 105.0}, "2026-08-27T13:35:00Z")
+    extended = fresh.load_market()
+    assert len(extended) == 3
+    assert extended["close"].iloc[-1] == 105.0
+
+    stale = ProvisionalRepository(Inner(), {"AAPL": 105.0}, "2026-08-26T12:00:00Z")
+    assert len(stale.load_market()) == 2, "a quote older than the lake was appended"
+
+
+def test_the_last_look_does_not_inherit_the_session_open_rule():
+    """M234: a check that echoes the signal it is meant to question.
+
+    ``hold_across_session_open`` carries the previous bar's stance across a
+    session's first bar. The provisional bar *is* a session's first bar, so
+    with that rule on, the re-evaluation would return the stale signal back
+    to the caller and agree with itself every time.
+    """
+    from pathlib import Path
+
+    source = Path("cfdinvest/advisor/livecheck.py").read_text(encoding="utf-8")
+    assert "hold_across_session_open=False" in source

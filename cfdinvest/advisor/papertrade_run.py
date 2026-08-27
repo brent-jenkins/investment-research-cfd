@@ -242,6 +242,14 @@ def _reports_within(ticker: str, now, days: int, earnings) -> bool:
     return False
 
 
+def _confidence_of(row) -> float:
+    """A signal row's confidence, or zero when it does not carry one."""
+    try:
+        return float(row.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def run_paper_pass(
     latest: Iterable[dict],
     prices: dict[str, float],
@@ -254,6 +262,7 @@ def run_paper_pass(
     cooldown_days: int = 14,
     blackout_days: int = 2,
     cohort: str = "",
+    recheck: bool = True,
 ) -> dict[str, Any]:
     """Close what is due and open what qualifies. Never raises.
 
@@ -263,7 +272,7 @@ def run_paper_pass(
     """
     import pandas as pd
 
-    from cfdinvest.advisor import papertrade
+    from cfdinvest.advisor import livecheck, papertrade
     from cfdinvest.ingestion.earnings import load_earnings_dates
     from cfdinvest.livehelper.t212_rules import load_rules
 
@@ -349,6 +358,27 @@ def run_paper_pass(
     def skip(why: str) -> None:
         skipped[why] = skipped.get(why, 0) + 1
 
+    # Everything that would open on the recorded signal alone. Gathered
+    # first so the re-evaluation runs once for the whole pass rather than
+    # once per instrument -- it reads the lake and rebuilds the panels, and
+    # doing that twenty times a tick would cost more than the check is
+    # worth. On most passes the list is empty and it does not run at all.
+    candidates = [
+        ticker
+        for ticker, row in signals.items()
+        if ticker not in EXCLUDED
+        and ticker not in live
+        and str(row.get("direction") or "flat").lower() in ("long", "short")
+        and _confidence_of(row) >= threshold
+        and prices.get(ticker) is not None
+        and _market_open(ticker, now)
+    ]
+    rechecked = (
+        livecheck.reevaluate(candidates, prices, config=config, at=now)
+        if candidates and recheck
+        else {}
+    )
+
     for ticker, row in signals.items():
         if ticker in EXCLUDED:
             skip("not an instrument")
@@ -360,10 +390,7 @@ def run_paper_pass(
         direction = str(row.get("direction") or "flat").lower()
         if direction not in ("long", "short"):
             continue
-        try:
-            confidence = float(row.get("confidence") or 0.0)
-        except (TypeError, ValueError):
-            confidence = 0.0
+        confidence = _confidence_of(row)
         if confidence < threshold:
             skip("below the bar")
             continue
@@ -389,6 +416,15 @@ def run_paper_pass(
         if blackout_days and _reports_within(ticker, now, blackout_days, earnings):
             skip("reports soon")
             continue
+
+        # The last look. The signal was formed on the last bar that closed;
+        # this asks whether it still stands against the price being filled
+        # at, which at a session open is a night later.
+        if recheck:
+            still, why = livecheck.holds(rechecked, ticker, direction, threshold)
+            if not still:
+                skip(why)
+                continue
 
         trade = papertrade.open_trade(
             ticker, direction, price, now.isoformat(), rules=rules,

@@ -382,3 +382,25 @@ fx_conversion_fee_pct = 0.005
 # environment still scales the size.
 environment_in_confidence = false
 suggestion_confidence = 0.60
+
+# Take no signal action on the first bar of a session.
+#
+# The signal is computed on the last bar that closed -- at the open, that is
+# yesterday evening's -- while the fill happens at a live price containing
+# the whole overnight move. Measured over 2,125 round trips: entries on the
+# first bar of a session won 44.2% against 51.9% on every other bar, and
+# averaged -0.202% against -0.020% (208 trips, t=-2.26, p=0.025; the mean
+# sits at the 2.8th percentile of 2,000 random samples of the same size).
+# They carry a mean adverse move of 0.38% between the close they were
+# decided on and the price they filled at, against 0.02% elsewhere.
+#
+# Backtested: 126.4% against 120.2% CAGR, drawdown -18.2% against -18.4%,
+# Sharpe 2.58 against 2.49, with 4% fewer trades. That +6.2pp is one draw
+# and well inside what a twenty-name universe moves by on its own; the
+# trip-level evidence is what this rests on.
+#
+# It is NOT a rule against entering after a large adverse move -- those are
+# the best cohort measured, not the worst (57.7% win rate past 0.25%
+# adverse, against 41.2% for entries chasing a favourable move). The damage
+# is the opening bar itself, so that is what is held across.
+hold_across_session_open = true

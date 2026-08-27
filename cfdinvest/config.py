@@ -310,6 +310,13 @@ class StrategyConfig:
     #: confidence threshold mean what it says.
     environment_in_confidence: bool = True
 
+    #: Take no signal action on the first bar of a session. The decision is
+    #: formed on the last bar that closed -- yesterday evening's, at the open
+    #: -- while the fill happens at a price holding the whole overnight move.
+    #: Entries on that bar won 44.2% against 51.9% everywhere else across 208
+    #: trips (t=-2.26, p=0.025). See ``signals.SignalConfig``.
+    hold_across_session_open: bool = False
+
     #: Confidence a signal must reach to be offered as a trade. Note that
     #: the environment multiplier is folded into confidence, so a bar above
     #: 0.5 is unreachable whenever volatility is high -- roughly one day in

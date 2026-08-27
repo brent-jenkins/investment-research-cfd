@@ -29,6 +29,68 @@ the outcome exists.
 `sentiment.py` — a news reading that decides nothing, recorded so the
 question can be answered later.
 
+`livecheck.py` — the last look before a trade opens.
+
+## The last look
+
+The engine decides on the last bar that *closed*. The fill happens now. At a
+US session open those are a night apart, and the price being filled at
+already contains everything that happened in between. The decision is not
+wrong; it is answering a question about a world that has since changed.
+
+So before anything opens, the signal is recomputed with the current price
+standing in as the bar in progress, and the trade proceeds only if the
+direction still matches and the confidence still clears the bar.
+
+Over 2,125 round trips that check would have refused 201, 9.5% of them.
+The refused won **36.3%** and averaged **-0.331%**; the kept won 52.7% and
+averaged +0.011% (t=+4.63, p<0.0001). On entries taken at a session open it
+refuses 46 of 208, averaging -0.498%.
+
+**What is deliberately not checked is the size of the move.** A rule
+refusing entries because the price has run against the signal would remove
+the best cohort measured, not the worst: past 0.25% adverse those trips win
+57.7%, against 41.2% for entries that chased a favourable move. Getting a
+better price than the signal was struck at is an advantage. What matters is
+whether the signal still stands, which is why this recomputes it rather than
+measuring a distance.
+
+Judgement calls:
+
+**Nothing is reimplemented.** It runs the same preprocessing, regime and
+signal code the pipeline uses, over the same lake, with one provisional bar
+appended. A second copy of the trend blend would drift from the first, and
+the day it drifted the check would refuse trades the engine had every reason
+to take.
+
+**A check that could not run is not a check that passed.** An unreadable
+lake, a vendor timeout, an instrument missing from the result — all refuse,
+and the reason lands in the skipped counts. A gate that opens when it breaks
+is not a gate.
+
+**Once per pass, and only when something would open.** It rebuilds the
+panels, so per instrument it would cost twenty times what it is worth, and
+on most passes there is nothing to check at all.
+
+**The provisional bar never rewrites the lake.** It is a guess about a bar
+that has not finished, held for the length of one check. A quote older than
+the newest stored bar is discarded rather than appended, because a vendor
+returning a stale price is a thing that happens.
+
+**`hold_across_session_open` is forced off inside the check.** That rule
+carries the previous bar's stance across a session's first bar — and the
+provisional bar *is* a session's first bar, so leaving it on would hand the
+stale signal back and agree with itself every time.
+
+One consequence worth knowing: a signal sitting exactly on the entry bar
+will often be refused, because a provisional bar with little movement
+dilutes the momentum component. CAT at 0.358 against a 0.35 bar goes flat on
+a bar that did nothing. That is the conservative direction and arguably the
+point — a signal that only clears the bar on stale data is not clearing it
+now — but it means live refusals will run above the measured 9.5%. Every
+refusal is recorded with its reason, so the real rate will be known within
+days rather than argued about.
+
 ## The paper book
 
 Four arms run side by side on the same signals and prices, each taking
@@ -127,6 +189,14 @@ is recorded here so that stops being true.
 | M168 | Meaning that lives only in the markup |
 | M169 | Twenty-six performance emails a session |
 | M191 | A forward record validating a strategy nobody trades |
+| M227 | The recorded signal opened with no re-evaluation |
+| M228 | A direction that flipped overnight still traded |
+| M229 | A signal that no longer clears the bar still traded |
+| M230 | A check that could not run treated as approval |
+| M231 | The re-evaluation run once per instrument, not once per pass |
+| M232 | The check paid for when nothing would open |
+| M233 | A stale quote rewriting a real bar |
+| M234 | The last look inheriting the session-open rule |
 
 ## What it writes
 

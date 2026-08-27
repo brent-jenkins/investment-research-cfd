@@ -85,6 +85,29 @@ class SignalConfig:
     #: regime is instead, keeping the engine's own ranking rather than
     #: discarding it at a boundary.
     regime_mode: str = "gate"
+    #: Carry the previous bar's stance across the first bar of each session,
+    #: so nothing is opened or signal-closed at the open.
+    #:
+    #: The signal is computed on the last bar that closed, which at the open
+    #: is yesterday evening's -- while the fill is at a price containing the
+    #: whole overnight move. Entries taken on that bar carry a mean adverse
+    #: move of 0.38% between the close they were decided on and the price
+    #: they filled at, against 0.02% for every other bar, and they win 44.2%
+    #: of the time against 51.9% (208 trips, t=-2.26, p=0.025; the mean sits
+    #: at the 2.8th percentile of 2,000 random samples of the same size).
+    #:
+    #: Holding the stance rather than forcing a flat: a flat book stays flat
+    #: so nothing opens into the gap, and a held position stays held so the
+    #: change never closes anything by itself. Stops are unaffected -- they
+    #: run off prices in the execution layer, not off this frame, so a gap
+    #: through a stop still fires at the open.
+    #:
+    #: What this is *not* is a rule against entering after a large adverse
+    #: move. Those entries are the best cohort measured, not the worst:
+    #: 57.7% win rate past 0.25% adverse against 41.2% for entries that
+    #: chased a favourable one. The damage is the opening bar itself.
+    hold_across_session_open: bool = False
+
     #: Shrink a position when volume is unusually heavy. Volume against the
     #: next day's range measured r=+0.177 at t=+39.03 on shares and +24.06
     #: on indices -- the strongest signal in this project by a distance, and
@@ -353,9 +376,21 @@ def generate_signals(
         rule, outcome.reason_flags(), context
     )
 
+    if settings.hold_across_session_open:
+        # No flatness reconciliation afterwards, deliberately. Every panel
+        # is carried by the same one bar, so a cell that inherits a flat
+        # direction inherits the zero size that went with it -- they cannot
+        # come apart. A re-mask here would be a safety net that catches
+        # nothing, and one of those is worse than none: it invites the
+        # belief that direction and size are reconciled somewhere.
+        direction, size, confidence, reason = _hold_across_session_open(
+            direction, size, confidence, reason
+        )
+
     metadata = {
         "bars": len(index),
         "tickers": tuple(columns),
+        "held_across_session_open": bool(settings.hold_across_session_open),
         "calendar_start": index.min() if len(index) else None,
         "calendar_end": index.max() if len(index) else None,
         "components": tuple(sorted(components)),
@@ -390,6 +425,41 @@ def generate_signals(
         },
         metadata=metadata,
     )
+
+
+def _hold_across_session_open(*frames):
+    """Replace the first bar of each session with the bar before it.
+
+    Session boundaries are read from the index dates rather than from a
+    calendar: the frame only holds bars the market produced, so a change of
+    date *is* a new session, and a holiday or a half day needs no special
+    case. The very first bar of the sample has nothing before it and is left
+    as it is -- carrying a NaN in would lose a bar to a rule about gaps that
+    has no gap to reason about.
+    """
+    if not frames or not len(frames[0].index):
+        return frames
+
+    index = frames[0].index
+    dates = pd.Series(index.date, index=index)
+    opening = (dates != dates.shift(1)).to_numpy().copy()
+    opening[0] = False
+
+    # On daily bars every row opens a session, so "hold across the open"
+    # would hold across everything -- a one-bar lag on the entire strategy,
+    # wearing the name of a rule about gaps. There is no opening bar to
+    # single out when the bar *is* the session, so there is nothing to do.
+    if opening.all() or opening.sum() >= len(index) - 1:
+        return frames
+
+    held = []
+    for frame in frames:
+        keep = pd.DataFrame(
+            np.repeat(~opening[:, None], frame.shape[1], axis=1),
+            index=frame.index, columns=frame.columns,
+        )
+        held.append(frame.where(keep, frame.shift(1)))
+    return tuple(held)
 
 
 def _is_tradable(ticker: str, settings) -> bool:

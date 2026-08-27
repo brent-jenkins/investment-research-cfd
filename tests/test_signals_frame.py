@@ -406,3 +406,126 @@ def test_empty_frame_views_do_not_raise():
     assert empty.active().empty
     assert empty.signed_size.empty
     assert empty.reason_counts().empty
+
+
+# --------------------------------------------------------------------------- #
+# Holding the stance across a session open
+#
+# M235 the opening bar acting on a stance formed before the gap
+# M236 the rule forcing flat instead of holding, so it closes positions
+# M237 the rule applied to daily bars, where it is a lag on everything
+# M238 the first bar of the sample losing its signal to a NaN
+# --------------------------------------------------------------------------- #
+def _intraday_frames(days=4, bars_per_day=5):
+    """Hourly bars over several sessions, and a direction panel to match."""
+    stamps = []
+    for day in range(days):
+        start = pd.Timestamp("2026-08-24", tz="UTC") + pd.Timedelta(days=day)
+        stamps += [start + pd.Timedelta(hours=13, minutes=30) + pd.Timedelta(hours=h)
+                   for h in range(bars_per_day)]
+    return pd.DatetimeIndex(stamps, name=TIMESTAMP)
+
+
+def test_the_opening_bar_takes_the_stance_from_before_it():
+    """M235: yesterday's conviction acting at today's price.
+
+    The signal is computed on the last bar that closed, so at a session open
+    it was formed the previous evening while the fill lands on a price
+    holding the whole overnight move. Entries on that bar won 44.2% against
+    51.9% everywhere else (208 trips, t=-2.26, p=0.025).
+    """
+    from cfdinvest.signals.frame import _hold_across_session_open
+
+    index = _intraday_frames()
+    # Flat all through day one, long from the first bar of day two.
+    values = ["flat"] * 5 + ["long"] * 15
+    direction = pd.DataFrame({"SPY": values}, index=index)
+
+    (held,) = _hold_across_session_open(direction)
+
+    # The bar that opens day two inherits day one's close: still flat.
+    assert held["SPY"].iloc[5] == "flat"
+    # And the bar after it is free to act.
+    assert held["SPY"].iloc[6] == "long"
+
+
+def test_a_held_position_is_not_closed_by_the_rule():
+    """M236: forcing flat at the open instead of holding.
+
+    Flattening every opening bar would close positions the engine still
+    wanted, turning a rule about *entering* into an exit nobody asked for --
+    and it would do it at the gapped price it exists to avoid.
+    """
+    from cfdinvest.signals.frame import _hold_across_session_open
+
+    index = _intraday_frames()
+    values = ["long"] * 5 + ["flat"] + ["long"] * 14
+    direction = pd.DataFrame({"SPY": values}, index=index)
+
+    (held,) = _hold_across_session_open(direction)
+
+    assert held["SPY"].iloc[5] == "long", "the rule closed a position"
+
+
+def test_daily_bars_are_left_alone():
+    """M237: a one-bar lag on everything, wearing the name of a gap rule.
+
+    On daily bars every row opens a session, so holding across the open
+    holds across the whole strategy. There is no opening bar to single out
+    when the bar *is* the session.
+    """
+    from cfdinvest.signals.frame import _hold_across_session_open
+
+    index = pd.bdate_range("2026-08-03", periods=10, tz="UTC", name=TIMESTAMP)
+    direction = pd.DataFrame({"SPY": ["flat"] * 5 + ["long"] * 5}, index=index)
+
+    (held,) = _hold_across_session_open(direction)
+
+    assert list(held["SPY"]) == list(direction["SPY"])
+
+
+def test_the_first_bar_of_the_sample_keeps_its_signal():
+    """M238: a bar lost to a rule about a gap that has no gap.
+
+    Nothing precedes the first bar, so carrying the previous one in would
+    write a NaN over a perfectly good reading.
+    """
+    from cfdinvest.signals.frame import _hold_across_session_open
+
+    index = _intraday_frames()
+    direction = pd.DataFrame({"SPY": ["long"] * 20}, index=index)
+
+    (held,) = _hold_across_session_open(direction)
+
+    assert held["SPY"].iloc[0] == "long"
+    assert held["SPY"].notna().all()
+
+
+def test_the_engine_records_whether_it_held(analysis, regimes):
+    """The metadata says which rule produced the frame.
+
+    A signal frame that cannot say whether the rule was on is one nobody can
+    reconcile against a config file three months later.
+    """
+    off = generate_signals(analysis, regimes, SignalConfig())
+    on = generate_signals(
+        analysis, regimes, replace(SignalConfig(), hold_across_session_open=True)
+    )
+
+    assert off.metadata["held_across_session_open"] is False
+    assert on.metadata["held_across_session_open"] is True
+
+
+def test_holding_never_leaves_size_on_a_flat_cell(analysis, regimes):
+    """The invariant the execution layer depends on.
+
+    A flat cell carrying size becomes a phantom trade downstream, and the
+    hold rewrites direction and size independently -- so flatness has to be
+    reconciled after it, not before.
+    """
+    signals = generate_signals(
+        analysis, regimes, replace(SignalConfig(), hold_across_session_open=True)
+    )
+    flat = signals.direction == "flat"
+
+    assert (signals.size.where(flat).fillna(0.0) == 0.0).to_numpy().all()

@@ -406,6 +406,9 @@ def _backtest_config(args, app_config) -> BacktestConfig:
             volume_heavy_ratio=app_config.strategy.volume_heavy_ratio,
             volume_heavy_multiplier=app_config.strategy.volume_heavy_multiplier,
             environment_in_confidence=app_config.strategy.environment_in_confidence,
+            hold_across_session_open=(
+                app_config.strategy.hold_across_session_open
+            ),
         ),
     )
 
