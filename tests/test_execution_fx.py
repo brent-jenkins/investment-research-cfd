@@ -1116,3 +1116,92 @@ def test_nothing_happens_when_nothing_is_asked_for():
 
     assert attach_reference_prices(analysis, _PairRepository(), [], interval="1h") is analysis
     assert attach_reference_prices(analysis, _PairRepository(), None, interval="1h") is analysis
+
+
+# --------------------------------------------------------------------------- #
+# M247 a run whose trades are all priced at a rate of 1.0
+# --------------------------------------------------------------------------- #
+def test_a_real_run_prices_its_trades_at_a_real_rate(tmp_path):
+    """The seam every other test in this file misses.
+
+    This defect shipped twice. The rate map named GBPUSD=X and nothing
+    fetched it; then it was fetched and nothing *loaded* it. Both times the
+    unit tests were green, because each one checked a part: the map had the
+    right pairs, the ingest asked for them, the attach aligned them. Nothing
+    ran the pipeline and looked at what came out.
+
+    So this runs it and reads the trades. A rate of exactly 1.0 on every row
+    is the signature of the fallback, and the fallback means a $150 share was
+    marked at £150 -- an error of the exchange rate itself, on every figure
+    denominated in money.
+    """
+    import dataclasses
+
+    import numpy as np
+    import pandas as pd
+
+    from cfdinvest import storage
+    from cfdinvest.backtest import BacktestConfig, run_backtest_pipeline
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.execution.fx import FXConfig
+    from cfdinvest.repository import DataRepository
+    from cfdinvest.schema import TICKER, TIMESTAMP
+    from cfdinvest.signals.frame import SignalConfig
+    from tests.test_analytics import INTERVAL, TICKERS, build_lake
+
+    config = build_lake(tmp_path / "data", bars=400)
+
+    # A sterling/dollar pair in the same lake, on the same calendar, drifting
+    # so a rate carried through is visibly not a constant.
+    calendar = pd.bdate_range("2022-01-03", periods=400, tz="UTC", name=TIMESTAMP)
+    rate = np.linspace(1.36, 1.22, len(calendar))
+    pair = pd.DataFrame(
+        {"open": rate, "high": rate, "low": rate, "close": rate,
+         "adj_close": rate, "volume": 0.0, TICKER: "GBPUSD=X"},
+        index=calendar,
+    )
+    storage.write_parquet(
+        pair, storage.market_path(config.paths, "GBPUSD=X", INTERVAL)
+    )
+
+    universe = list(TICKERS)
+    settings = BacktestConfig(
+        tickers=universe,
+        interval=INTERVAL,
+        signal=dataclasses.replace(
+            SignalConfig(), reference_tickers=frozenset({"GBPUSD=X"})
+        ),
+        execution=dataclasses.replace(
+            ExecutionConfig(),
+            fx=FXConfig(
+                enabled=True,
+                account_currency="GBP",
+                instrument_currencies={t: "USD" for t in universe},
+                fx_pair_tickers={"USD": ("GBPUSD=X", -1)},
+                fx_rate_source="lake",
+            ),
+        ),
+    )
+
+    pipeline = run_backtest_pipeline(DataRepository(config), settings)
+    result = run_backtest(pipeline.signals, pipeline.analysis, settings.execution)
+
+    assert "GBPUSD=X" in pipeline.analysis.prices["close"].columns, (
+        "the pair never reached the panel the engine reads"
+    )
+    assert not len(result.trades) == 0, "no trades to check"
+
+    rates = result.trades["fx_rate"]
+    assert not (rates == 1.0).all(), (
+        "every trade priced at a rate of 1.0 -- the engine fell back to the "
+        "configured rate, so every figure in money is wrong by the exchange rate"
+    )
+    # Every rate inside the band the pair actually quoted, and more than
+    # one of them -- a single repeated value would mean a constant was
+    # picked up somewhere rather than the series being read per bar.
+    assert rates.min() >= 1 / 1.36 - 1e-6
+    assert rates.max() <= 1 / 1.22 + 1e-6
+    assert rates.nunique() > 1, "the rate never moved; it is not being read per bar"
+
+    # And the pair itself was never traded.
+    assert "GBPUSD=X" not in set(result.trades["asset"].astype(str))
