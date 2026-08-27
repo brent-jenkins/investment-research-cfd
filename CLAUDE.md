@@ -17,10 +17,35 @@ These are standing instructions from the project owner, not preferences.
 - **Execution is opt-in, explicit, and off by default.** A broker client may
   exist; it may not place an order because a config file drifted. Anything
   that can trade says so in its name, is gated on an explicit setting, and
-  refuses to act against a live account without one.
-- **The paper book stays a simulation.** It must never become the thing that
-  places orders. Its whole value is being a record nobody could have
-  edited after the outcome, and a book that sometimes trades is not that.
+  refuses to act against a live account without one. This constraint stops
+  being decorative from 2026-08-27, when the daemon was permitted to place
+  orders: it is now the only thing between a configuration mistake and a
+  funded account.
+- **Automated dealing is permitted on a demo account, and nowhere else
+  without a second deliberate act.** Owner's decision, 2026-08-27. The
+  Capital.com demo account is the venue; the daemon may open and close
+  positions on it unattended. Live requires its own environment variable, in
+  different words from the first, so the mistake has to be made twice.
+- **The paper book stays a simulation, and stays running.** It must never
+  become the thing that places orders — its whole value is being a record
+  nobody could have edited after the outcome, and a book that sometimes
+  trades is not that. Dealing lives in a separate path that the book neither
+  imports nor knows about.
+
+  It keeps running alongside the demo account rather than being replaced by
+  it, and its stake stays at a fixed £1,000. Two reasons. The four arms
+  answer whether raising the confidence bar helps, and one account can only
+  trade one of them. And the book's `c35` arm holds the same intended
+  positions as the demo account, so the difference between them measures how
+  wrong the simulation's fills and costs are — which nothing else measures.
+- **Position size on a real account comes from the balance, not from a
+  constant.** The £1,000 stake is the *paper book's*, where a fixed stake is
+  the point: the only thing varying between trades should be whether the
+  call was right. An account has a balance, a margin requirement and a limit
+  on how much of it may be committed, and a book that ignores those is
+  unbounded rather than realistic. The dealing path reads the balance from
+  the broker and sizes within the risk limits; it refuses rather than
+  truncating when there is no headroom.
 - **No credentials in code, in logs, or in the repository.** Secrets are read
   from the environment or `/etc/cfdinvest/env`. The dashboard redacts. This
   matters more now than it did: a broker API key and password are not a
@@ -45,6 +70,23 @@ calls and trade execution outright. That constraint existed because Trading
 contingent, and it lapsed when an IG demo CFD account was opened. It is
 replaced rather than deleted, because most of what it protected is
 unchanged and the rest matters more once real credentials exist.
+
+On 2026-08-27 the owner permitted **automated dealing on the Capital.com
+demo account**. That is a larger step than the last one and it is worth
+being plain about what it does and does not change.
+
+It does not make the project a trading system. It makes the demo account the
+place the forward test runs, because a broker's own fills are a better
+record than our simulation of them — they are confirmed by somebody with no
+stake in the answer. The IG episode is the argument: every cost figure this
+project held was an estimate until an actual number turned up, and two of
+them were wrong by more than a factor of two.
+
+What it does change is that a mistake now has consequences. Every constraint
+above that reads as ceremony — the gates, the naming, demo-before-live,
+credentials out of the repository — is load-bearing from today. The
+protection is no longer that the code cannot trade; it is that the code will
+only trade where it has been told to, twice, in different words.
 
 The first use is read-only, and on 2026-08-27 it did what it was for: all
 twenty spreads were measured on a Capital.com demo account without placing
