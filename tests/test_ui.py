@@ -3078,8 +3078,69 @@ def test_the_broker_page_cannot_reach_a_live_account():
     """
     page = (UI / "views" / "03_Broker.py").read_text(encoding="utf-8")
 
-    assert "place_position" not in page
-    assert "close_position" not in page
-    assert '"live"' not in page and "'live'" not in page
-    # It may list positions, which is a read.
-    assert "list_positions" in page
+    source = Path("cfdinvest/ui/broker.py").read_text(encoding="utf-8")
+
+    for body in (page, source):
+        assert "place_position" not in body
+        assert "close_position" not in body
+        assert '"live"' not in body and "'live'" not in body
+    # Listing positions is a read, and it belongs to the reader.
+    assert "list_positions" in source
+
+
+def test_the_broker_page_renders_with_an_account_behind_it(monkeypatch):
+    """M302: a page tested only in the state where it does nothing.
+
+    With no credentials the script stops a few lines in, so "the page
+    renders" was true while every line after the second paragraph went
+    unexecuted -- which is how a tile built with three fields instead of the
+    four render_tiles unpacks reached the deployed dashboard with a green
+    suite behind it. The suite now guarantees no credentials, so this state
+    is the only one the earlier test could ever see.
+
+    So the read is injected and the whole body runs.
+    """
+    from cfdinvest.ui import broker as broker_source
+
+    monkeypatch.setattr(
+        broker_source, "read_broker",
+        lambda config=None: {
+            "configured": True, "environment": "demo", "error": "",
+            "account": {"id": "A1", "currency": "GBP", "balance": 5000.0,
+                        "available": 4999.88, "profit_loss": 0.0},
+            "positions": [{
+                "Instrument": "NFLX", "Side": "BUY", "Size": 0.01,
+                "Opened at": 80.18, "Unrealised": 0.0, "Ccy": "USD",
+                "Deal id": "D1",
+            }],
+            "positions_error": "",
+            "markets": [
+                {"Instrument": "AAPL", "Bid": 314.34, "Offer": 314.47,
+                 "Spread bp": 4.1, "Min size": 0.1, "Status": "tradeable"},
+                {"Instrument": "NKE", "Bid": 38.34, "Offer": 38.45,
+                 "Spread bp": 28.6, "Min size": 0.1, "Status": "tradeable"},
+            ],
+        },
+    )
+
+    result = render("views/03_Broker.py")
+    assert not result.exception, f"broker page raised: {result.exception}"
+
+
+def test_the_broker_page_renders_when_the_account_cannot_be_read(monkeypatch):
+    """The other populated path: configured, and the read failed."""
+    from cfdinvest.ui import broker as broker_source
+
+    monkeypatch.setattr(
+        broker_source, "read_broker",
+        lambda config=None: {
+            "configured": True, "environment": "demo", "error": "",
+            "account": {"id": "A1", "currency": "GBP", "balance": 5000.0,
+                        "available": None, "profit_loss": None},
+            "positions": [], "positions_error": "HTTP 503",
+            "markets": [],
+        },
+    )
+
+    result = render("views/03_Broker.py")
+    assert not result.exception, f"broker page raised: {result.exception}"

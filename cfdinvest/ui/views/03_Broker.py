@@ -30,6 +30,7 @@ if _ROOT not in sys.path:
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
+from cfdinvest.ui import broker as broker_source  # noqa: E402
 from cfdinvest.ui import components  # noqa: E402
 
 data = components.page_setup(
@@ -52,71 +53,20 @@ components.render_note(
 
 @st.cache_data(ttl=30, show_spinner=False)
 def _read_broker() -> dict:
-    """Balance, positions and costs, read live. Never raises.
+    """The live read, cached for thirty seconds.
 
-    Thirty seconds of caching so a page refresh does not hammer the API, and
-    no longer, because the whole point is that it says what is true now.
-    Returns a plain dictionary — nothing callable, which is what breaks the
-    cache and takes the rest of the page down with it.
+    Thirty and no longer: a position is a fact about now, and a cached one is
+    a claim about a moment that has passed. Long enough that a refresh does
+    not hammer the API, short enough that the page still means what it says.
+
+    The reading itself lives in ``cfdinvest.ui.broker`` so a test can supply
+    one. It used to live here, which made the whole body of this page
+    unreachable in tests -- with no credentials the script stopped a few
+    lines below and everything after went unexecuted, which is how a tile
+    with three fields instead of four reached the deployed dashboard with a
+    green suite behind it.
     """
-    out: dict = {
-        "configured": False, "error": "", "account": None,
-        "positions": [], "positions_error": "", "markets": [],
-    }
-    try:
-        from cfdinvest.broker.capital import client as capital
-        from cfdinvest.broker.capital import dealing
-        from cfdinvest.config import load_config
-
-        settings = capital.CapitalConfig.from_env()
-        out["environment"] = settings.environment
-        if not settings.complete:
-            out["error"] = (
-                "No Capital.com credentials in the environment, so nothing "
-                "can be read. This is not a failure — the account is "
-                "optional — but it is also not an empty account."
-            )
-            return out
-        out["configured"] = True
-
-        session = capital.open_session(settings)
-        if not session.ok:
-            out["error"] = f"Could not authenticate: {session.error}"
-            return out
-
-        account = capital.fetch_account(session, settings)
-        out["account"] = {
-            "id": account.account_id, "currency": account.currency,
-            "balance": account.balance, "available": account.available,
-            "profit_loss": account.profit_loss,
-        }
-
-        found, error = dealing.list_positions(session, settings)
-        out["positions_error"] = error
-        out["positions"] = [
-            {
-                "Instrument": p.epic, "Side": p.direction, "Size": p.size,
-                "Opened at": p.level, "Unrealised": p.upl, "Ccy": p.currency,
-                "Deal id": p.deal_id,
-            }
-            for p in found
-        ]
-
-        tickers = list(load_config().market.tickers or ())
-        markets = capital.fetch_market_details(tickers, session, settings)
-        out["markets"] = [
-            {
-                "Instrument": m.ticker,
-                "Bid": m.bid, "Offer": m.offer,
-                "Spread bp": None if m.spread_pct is None else m.spread_pct * 100,
-                "Min size": m.min_deal_size,
-                "Status": "tradeable" if m.tradable else "closed",
-            }
-            for m in markets
-        ]
-    except Exception as error:  # noqa: BLE001 - a page must render
-        out["error"] = f"{type(error).__name__}: {error}"
-    return out
+    return broker_source.read_broker()
 
 
 broker = _read_broker()
@@ -150,10 +100,15 @@ if account.get("balance") is not None and account.get("available") is not None:
     committed = account["balance"] - account["available"]
 
 components.render_tiles(st, [
-    ("Balance", _money(account.get("balance")), "what sizing is a fraction of"),
-    ("Available", _money(account.get("available")), "after committed margin"),
-    ("Margin in use", _money(committed), "across every open position"),
-    ("Profit and loss", _money(account.get("profit_loss")), "since the account opened"),
+    ("Balance", _money(account.get("balance")),
+     "what sizing is a fraction of", "pass"),
+    ("Available", _money(account.get("available")),
+     "after committed margin", "pass"),
+    ("Margin in use", _money(committed),
+     "across every open position", "pass"),
+    ("Profit and loss", _money(account.get("profit_loss")),
+     "since the account opened",
+     "pass" if (account.get("profit_loss") or 0) >= 0 else "warning"),
 ])
 
 # --------------------------------------------------------------------------- #
@@ -198,13 +153,19 @@ if markets.empty:
 else:
     priced = markets[markets["Spread bp"].notna()]
     if not priced.empty:
+        median = priced["Spread bp"].median()
         components.render_tiles(st, [
-            ("Median spread", f"{priced['Spread bp'].median():.1f} bp", "across the universe"),
-            ("Cheapest", f"{priced.loc[priced['Spread bp'].idxmin(), 'Instrument']}"
-                         f" {priced['Spread bp'].min():.1f} bp", ""),
-            ("Dearest", f"{priced.loc[priced['Spread bp'].idxmax(), 'Instrument']}"
-                        f" {priced['Spread bp'].max():.1f} bp", ""),
-            ("Assumed by the model", "10.0 bp", "round trip, every instrument"),
+            ("Median spread", f"{median:.1f} bp", "across the universe",
+             "pass" if median <= 10.0 else "warning"),
+            ("Cheapest",
+             f"{priced.loc[priced['Spread bp'].idxmin(), 'Instrument']}"
+             f" {priced['Spread bp'].min():.1f} bp", "", "pass"),
+            ("Dearest",
+             f"{priced.loc[priced['Spread bp'].idxmax(), 'Instrument']}"
+             f" {priced['Spread bp'].max():.1f} bp", "",
+             "warning" if priced["Spread bp"].max() > 10.0 else "pass"),
+            ("Assumed by the model", "10.0 bp", "round trip, every instrument",
+             "unchecked"),
         ])
     st.dataframe(
         markets.sort_values("Spread bp", na_position="last"),
