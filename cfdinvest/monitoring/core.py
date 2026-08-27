@@ -48,6 +48,7 @@ __all__ = [
     "MonitoringThresholds",
     "MonitoringIssue",
     "check_lake_freshness",
+    "check_credential_expiry",
     "check_live_quote_freshness",
     "check_scheduler_health",
     "check_disk_space",
@@ -64,6 +65,7 @@ __all__ = [
 TYPES: tuple[str, ...] = (
     "livequotes",
     "lake", "scheduler", "disk", "run", "confirm", "email", "pipeline", "system",
+    "credentials",
 )
 
 #: Ordered worst-first, which is also the display order.
@@ -220,6 +222,101 @@ def _unreadable(kind: str, what: str, why: str = "") -> MonitoringIssue:
             "Check the file exists and is readable."
         ),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Credentials
+# --------------------------------------------------------------------------- #
+#: How long before a broker credential expires the system starts saying so.
+#:
+#: Seven days, because a key is replaced by a person logging into a web
+#: interface with two-factor authentication, and that is not a thing that
+#: happens at 03:00 on the morning it stops working.
+KEY_EXPIRY_WARNING_DAYS = 7
+
+
+def check_credential_expiry(
+    expires_on: str | None,
+    *,
+    label: str = "Capital.com API key",
+    warn_days: int = KEY_EXPIRY_WARNING_DAYS,
+    now: pd.Timestamp | None = None,
+) -> list[MonitoringIssue]:
+    """Is a broker credential close to expiring, or already gone?
+
+    A key that expires is not a failure until it is, and then it is a total
+    one: every order refused, every reading absent, and the symptom is an
+    authentication error indistinguishable from a wrong password. The
+    difference between a week's notice and none is the difference between a
+    calendar entry and an outage.
+
+    **An unset date is reported as unchecked, not as fine.** Nobody has to
+    record an expiry, but a system silent about a credential whose lifetime
+    it does not know would be making the strongest claim from the weakest
+    evidence, which is the rule everything here follows.
+
+    Critical once expired, a warning inside the window, and silent otherwise
+    -- a check that speaks every day for eleven months is one nobody reads in
+    the twelfth.
+    """
+    moment = _now(now)
+
+    if not str(expires_on or "").strip():
+        return [
+            _unreadable(
+                "credentials",
+                f"{label} expiry",
+                "no expiry date is recorded, so its remaining life is unknown",
+            )
+        ]
+
+    try:
+        expiry = pd.Timestamp(str(expires_on).strip())
+    except (TypeError, ValueError):
+        return [
+            _unreadable(
+                "credentials", f"{label} expiry", f"{expires_on!r} is not a date"
+            )
+        ]
+    if expiry.tz is None:
+        expiry = expiry.tz_localize("UTC")
+
+    days = (expiry - moment).total_seconds() / 86_400.0
+
+    if days <= 0:
+        return [
+            MonitoringIssue(
+                type="credentials",
+                severity="critical",
+                message=(
+                    f"{label} expired on {expiry:%Y-%m-%d}. Nothing can "
+                    "authenticate until it is replaced."
+                ),
+                details={"expires_on": str(expiry), "days_remaining": days},
+                remedy=(
+                    "Generate a new key in the broker's settings and update the "
+                    "environment file. Dealing and market data both stop until "
+                    "it is done."
+                ),
+            )
+        ]
+    if days <= warn_days:
+        return [
+            MonitoringIssue(
+                type="credentials",
+                severity="warning",
+                message=(
+                    f"{label} expires in {days:.0f} day(s), on {expiry:%Y-%m-%d}."
+                ),
+                details={"expires_on": str(expiry), "days_remaining": days},
+                remedy=(
+                    "Generate a replacement before it lapses; it needs a person, "
+                    "two-factor authentication and a web interface, none of which "
+                    "are available at 03:00."
+                ),
+            )
+        ]
+    return []
 
 
 # --------------------------------------------------------------------------- #

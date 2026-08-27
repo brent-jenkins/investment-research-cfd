@@ -169,6 +169,18 @@ def collect_issues(
     confirmed = read("load_confirmed_positions", config, account) or {}
 
     issues: list[MonitoringIssue] = []
+    # Read from the environment rather than from config: the expiry belongs
+    # to the key, the key belongs to the machine, and the two move together.
+    # An unset date reports "unchecked" rather than nothing, so a credential
+    # whose lifetime nobody recorded is visible as exactly that.
+    import os as _os
+
+    issues += _guarded(
+        "credentials", "credential expiry",
+        lambda: core.check_credential_expiry(
+            _os.environ.get("CFD_CAPITAL_KEY_EXPIRES"), now=moment
+        ),
+    )
     issues += _guarded("lake", "lake freshness", lambda: core.check_lake_freshness(
         _lake_metadata(config), limits, now=moment))
     issues += _guarded("livequotes", "live quote freshness",

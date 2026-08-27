@@ -953,3 +953,84 @@ def test_the_alert_says_when_the_machine_was_not_measured():
     ).get_content()
 
     assert "not measured" in body
+
+
+# --------------------------------------------------------------------------- #
+# M294 a credential that expires without warning
+# M295 an unrecorded expiry read as "fine"
+# M296 the reminder speaking every day for a year
+# --------------------------------------------------------------------------- #
+def test_a_key_close_to_expiring_warns_a_week_ahead():
+    """M294: a total outage that arrives without notice.
+
+    A key that expires is not a failure until it is, and then everything
+    stops at once -- orders refused, readings absent -- with an
+    authentication error indistinguishable from a wrong password. Replacing
+    it needs a person, two-factor authentication and a web interface, none
+    of which are available at 03:00 on the morning it lapses.
+    """
+    from cfdinvest.monitoring.core import KEY_EXPIRY_WARNING_DAYS, check_credential_expiry
+
+    now = pd.Timestamp("2027-08-20", tz="UTC")
+    inside = check_credential_expiry("2027-08-24", now=now)
+    assert len(inside) == 1
+    assert inside[0].severity == "warning"
+    assert "expires in" in inside[0].message
+
+    # Exactly at the boundary still speaks.
+    edge = check_credential_expiry(
+        str((now + pd.Timedelta(days=KEY_EXPIRY_WARNING_DAYS)).date()), now=now
+    )
+    assert edge and edge[0].severity == "warning"
+
+
+def test_an_expired_key_is_critical_not_a_warning():
+    from cfdinvest.monitoring.core import check_credential_expiry
+
+    out = check_credential_expiry("2027-08-19", now=pd.Timestamp("2027-08-20", tz="UTC"))
+    assert out[0].severity == "critical"
+    assert "expired" in out[0].message
+
+
+def test_an_unrecorded_expiry_is_unchecked_not_fine():
+    """M295: the strongest claim from the weakest evidence.
+
+    Nobody has to record an expiry. But staying silent about a credential
+    whose lifetime is unknown would say it is fine, which is not something
+    the absence of a date can support.
+    """
+    from cfdinvest.monitoring.core import check_credential_expiry
+
+    for value in (None, "", "   ", "not-a-date"):
+        out = check_credential_expiry(value)
+        assert out, f"{value!r} produced no issue at all"
+        assert out[0].severity == "warning"
+        assert "could not be checked" in out[0].message
+
+
+def test_the_reminder_is_silent_while_there_is_time():
+    """M296: a check that speaks every day for eleven months.
+
+    That is a check nobody reads in the twelfth, which is the month it
+    matters.
+    """
+    from cfdinvest.monitoring.core import check_credential_expiry
+
+    assert check_credential_expiry(
+        "2028-01-01", now=pd.Timestamp("2027-08-20", tz="UTC")
+    ) == []
+
+
+def test_the_new_issue_type_is_registered_everywhere():
+    """A type the aggregator cannot label shows as a bare token to a person.
+
+    There is a closed set of types and a map of what each is called. Adding
+    to one and not the other is how a new check ships looking like a bug.
+    """
+    from cfdinvest.monitoring.aggregate import TYPE_LABELS
+    from cfdinvest.monitoring.core import TYPES
+
+    assert "credentials" in TYPES
+    assert set(TYPES) <= set(TYPE_LABELS), (
+        f"types with no label: {sorted(set(TYPES) - set(TYPE_LABELS))}"
+    )

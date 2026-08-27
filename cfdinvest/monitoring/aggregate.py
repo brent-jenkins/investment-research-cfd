@@ -29,6 +29,11 @@ STATUSES: tuple[str, ...] = ("red", "yellow", "green")
 
 #: What each type is called when it is shown to a person.
 TYPE_LABELS: dict[str, str] = {
+    # ``livequotes`` was in TYPES and missing here, so a live-quote issue
+    # rendered to a person as the bare token "livequotes". Found by the test
+    # that asserts every type has a label, written for a different type
+    # being added -- which is the argument for that test existing.
+    "livequotes": "Live quotes",
     "lake": "Data lake",
     "scheduler": "Scheduler",
     "disk": "Disk space",
@@ -37,6 +42,7 @@ TYPE_LABELS: dict[str, str] = {
     "email": "Notifications",
     "pipeline": "Pipeline output",
     "system": "The machine",
+    "credentials": "Broker credentials",
 }
 
 
