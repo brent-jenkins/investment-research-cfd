@@ -1193,3 +1193,27 @@ def test_the_balance_is_the_accounts_not_the_runs(recorded_lake):
     leverage = result.leverage_metrics["effective_leverage"]
 
     assert leverage == pytest.approx(gross / RiskLimits().account_balance_gbp)
+
+
+def test_an_arm_that_holds_nothing_is_flat_not_unchecked(recorded_lake):
+    """M226: a book that was read and is empty, reported as unknown.
+
+    Caught by running the fixed snapshot against the server rather than
+    against a fixture. The baseline arm held nothing that morning -- the one
+    open position was in a different arm -- and the page said "positions
+    could not be checked", which is the sentence reserved for nobody knowing
+    what is held. Somebody did know: nothing.
+
+    The raised arms are legitimately empty for days at a time, so every one
+    of those days would have been a warning, which is how a status page
+    teaches you to ignore it.
+    """
+    config, _ = recorded_lake
+    _write_paper_book(config, [_paper_event("SPY", cohort="c70", quantity=4.0)])
+
+    result = snapshot_from_disk(config)
+
+    assert result.book == f"paper:{_baseline_arm(config)}"
+    assert result.exposure_metrics["flat"] is True
+    assert "positions" not in result.unavailable
+    assert result.severity == "ok"

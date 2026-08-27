@@ -62,6 +62,12 @@ careful about.
 | `paper:<arm>` | otherwise, if the paper book exists | the baseline arm, £1,000 notional a position |
 | absent | neither | reported absent, not flat |
 
+An arm that holds nothing is **flat and checked**, not unknown. The raised
+arms are legitimately empty for days at a time, and calling each of those
+days a warning is how a status page teaches you to ignore it. The
+distinction is a book that was read and is empty against no book at all --
+which is the same absence rule as everywhere else, one level in.
+
 The baseline arm only. The four arms are independent experiments at
 different confidence bars; adding them together describes a book that trades
 every threshold at once, which is nobody's and four times too big.
@@ -291,7 +297,7 @@ missing one artefact at a time, but not usefully missing eleven.
 python -m pytest tests/test_risk.py -q
 ```
 
-83 tests. Beyond the metric arithmetic, they pin:
+84 tests. Beyond the metric arithmetic, they pin:
 
 - **The drawdown matches `cfdinvest.analytics`** on a real run, computed two
   different ways.

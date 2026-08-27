@@ -204,7 +204,7 @@ def compute_current_risk(
         "largest_instrument_share": None,
         "unavailable": ("positions",),
     }
-    if positions_frame is None or getattr(positions_frame, "empty", True):
+    if positions_frame is None or len(positions_frame.index) == 0:
         return {**empty, "flat": True}
 
     frame = positions_frame.copy()
@@ -213,6 +213,14 @@ def compute_current_risk(
     frame.index = pd.to_datetime(frame.index, utc=True, errors="coerce")
 
     as_of = frame.index.max()
+
+    # A row with no instruments in it is a book that was read and holds
+    # nothing -- which is not the same as no book at all, and reporting it as
+    # "positions could not be checked" says nobody knows what is held when
+    # somebody does. The paper book's raised arms are legitimately empty for
+    # days at a time; every one of those days would have been a warning.
+    if frame.shape[1] == 0:
+        return {**empty, "as_of": as_of, "flat": True, "unavailable": ()}
     held = frame.loc[as_of]
     held = held[pd.to_numeric(held, errors="coerce").fillna(0.0) != 0.0]
 
