@@ -404,3 +404,98 @@ suggestion_confidence = 0.60
 # advisor/livecheck.py, which re-evaluates the signal against the live price
 # before opening. That one survives the correction: t=+4.18, p=0.000038.
 hold_across_session_open = false
+
+# --------------------------------------------------------------------------- #
+# The universe screen
+# --------------------------------------------------------------------------- #
+#
+# The pool the screen ranks, and the sector map it caps concentration by.
+#
+# This is the screen's one remaining judgement call, and it is here so that
+# it stays visible. Selecting mechanically from a hand-drawn list moves the
+# bias rather than removing it; what it buys is that the selection *within*
+# the pool is reproducible, and that the pool is one list somebody can argue
+# with rather than nineteen decisions nobody wrote down.
+#
+# It lived in a scratch script until 2026-08-27, which meant every screen
+# this project had run was reproducible only by whoever still had the file.
+# That is the same defect the screen exists to fix, one level up.
+#
+# An instrument here is one the screen MAY RANK, not one it will hold. The
+# traded universe is `market.tickers` and changing it stays a human act:
+# `cfdinvest-universe screen` reports the difference and records it, and
+# never edits this file.
+#
+# Known bias, stated rather than hidden: the pool is US large caps that are
+# large *now*, so it is drawn with hindsight. Screening within it is
+# reproducible; the pool itself is not a measurement.
+
+[universe]
+candidates = [
+    "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META",
+    "TSLA", "AMD", "AVGO", "NFLX", "ADBE", "ORCL",
+    "JPM", "XOM", "JNJ", "INTC", "NKE", "LULU",
+    "COST", "CAT", "PLTR", "COIN", "MU", "CRM",
+    "QCOM", "UBER", "SMCI", "TXN", "GM", "WMT",
+    "PFE", "BAC", "GS", "CVX", "KO", "ABNB",
+    "SHOP", "MRNA", "BA", "DIS", "PYPL", "MCD",
+    "HD", "UNH", "DE", "LMT", "GE", "T",
+    "VZ",
+]
+
+# How many the screen selects. Unset means "as many as are traded", so the
+# screen answers "which twenty" rather than inventing a number of its own.
+# target = 20
+
+# Sector map for the concentration cap. Without it the cap cannot bind, and
+# the screen reports that it was not applied rather than silently skipping.
+[universe.sectors]
+NVDA = "technology"
+AAPL = "technology"
+MSFT = "technology"
+AMZN = "technology"
+GOOGL = "technology"
+META = "technology"
+AMD = "technology"
+AVGO = "technology"
+NFLX = "technology"
+ADBE = "technology"
+ORCL = "technology"
+INTC = "technology"
+PLTR = "technology"
+CRM = "technology"
+QCOM = "technology"
+MU = "technology"
+SMCI = "technology"
+TXN = "technology"
+SHOP = "technology"
+COIN = "technology"
+ABNB = "technology"
+UBER = "technology"
+TSLA = "consumer"
+NKE = "consumer"
+LULU = "consumer"
+COST = "consumer"
+WMT = "consumer"
+MCD = "consumer"
+HD = "consumer"
+KO = "consumer"
+GM = "consumer"
+DIS = "consumer"
+JPM = "financials"
+BAC = "financials"
+GS = "financials"
+PYPL = "financials"
+XOM = "energy"
+CVX = "energy"
+JNJ = "health"
+PFE = "health"
+UNH = "health"
+MRNA = "health"
+CAT = "industrial"
+DE = "industrial"
+LMT = "industrial"
+GE = "industrial"
+BA = "industrial"
+T = "telecom"
+VZ = "telecom"

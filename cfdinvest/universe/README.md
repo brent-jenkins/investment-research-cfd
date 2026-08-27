@@ -56,6 +56,38 @@ ranking. The cost is that with very few candidates a rank turns any
 difference at all into a full separation; tests assert on the metrics rather
 than the scores where that matters.
 
+## The runner
+
+```bash
+cfdinvest-universe screen            # rank, report the difference, record
+cfdinvest-universe screen --as-of 2026-06-30 --no-record
+cfdinvest-universe history
+cfdinvest-universe drift
+```
+
+Plus a monthly job in the daemon, on the first at 03:10 UTC. Monthly because
+the answer barely moves: across twenty-five monthly screens the selection
+changed by one or two names a month and consecutive rankings correlated at
++0.97 to +0.99.
+
+Until 2026-08-27 there was no runner at all. Every screen this project had
+run was a script written for the occasion and then deleted, so the rule was
+reproducible in principle and, in practice, only by whoever still had the
+file — the same defect the screen exists to fix, one level up. And
+`record_screen` had been written and never called, so the store held nothing
+to compare against.
+
+**It never edits the configuration.** The screen ranks; a person decides. A
+scheduled job that rebalanced the universe on a ranking never shown to
+predict return would be acting on far more confidence than the evidence
+carries — and a test asserts the module cannot write a config at all.
+
+**The sector cap now binds, and says so.** Every screen before the map
+existed reported "no sector map supplied, so the sector cap was not
+applied". The first run with one displaced sixteen instruments, nine of them
+currently traded. A constraint that strong must never arrive quietly, so the
+command names what it displaced and why.
+
 ## Mutations checked
 
 | | |
@@ -66,6 +98,12 @@ than the scores where that matters.
 | M174 | The sector cap silently skipped when no map is supplied |
 | M175 | The snapshot records only the winners |
 | M175b | The snapshot rewrites instead of appending |
+| M260 | The runner edits the universe it is meant to report on |
+| M261 | A screen that failed to record reporting success |
+| M262 | The pool losing the instruments actually traded |
+| M263 | The sector cap binding silently |
+| M264 | The monthly screen owed every day |
+| M265 | A selection recorded with no decision date |
 
 ## What it writes
 

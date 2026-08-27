@@ -932,6 +932,17 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         )
     elif name == "prune-runs":
         _command_prune_runs(_job_args(args, "prune-runs"), app_config)
+    elif name == "screen-universe":
+        # Records what the rule says and nothing else. It cannot change the
+        # traded universe -- the CLI it calls has no path that writes the
+        # config, and a scheduled job that could rebalance on a ranking
+        # never shown to predict return would be acting on more confidence
+        # than the evidence carries.
+        from cfdinvest.universe import cli as universe_cli
+
+        universe_cli.main(
+            ["screen"] + (["--account", args.account] if getattr(args, "account", None) else [])
+        )
 
 
 def _command_daemon(args, app_config, smtp, transport) -> int:

@@ -325,6 +325,51 @@ class StrategyConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class UniverseConfig:
+    """The pool the screen chooses from, and the map it caps sectors by.
+
+    The pool is the screen's one remaining judgement call, and the point of
+    putting it here is that it stays *visible*. Selecting mechanically from
+    a hand-drawn list moves the bias rather than removing it; what it buys
+    is that the selection within the pool is reproducible and the pool is
+    one list somebody can argue with, rather than nineteen decisions nobody
+    wrote down.
+
+    It lived in a scratch script until now, which meant every screen this
+    project has run was reproducible only by whoever still had the file --
+    the same defect the screen exists to fix, one level up.
+
+    ``candidates`` excludes nothing by itself: an instrument here is one the
+    screen may rank, not one it will hold. The traded universe stays
+    ``market.tickers`` and is only ever changed by a person.
+    """
+
+    #: Instruments the screen may rank. Empty means "the traded universe",
+    #: which makes a screen with no pool a re-ranking of what is held rather
+    #: than an error.
+    candidates: tuple[str, ...] = ()
+
+    #: Ticker to sector, for the concentration cap. Absent, the cap cannot
+    #: bind and the screen says so rather than silently not applying it.
+    sectors: dict[str, str] = field(default_factory=dict)
+
+    #: How many instruments a screen selects. Defaults to however many are
+    #: traded, so the screen answers "which twenty" rather than inventing a
+    #: number of its own.
+    target: int | None = None
+
+    #: Most instruments from any one sector. ``None`` leaves the screen's own
+    #: default in force -- one owner, and this is an override rather than a
+    #: second copy.
+    #:
+    #: Worth knowing that this only started mattering when a sector map was
+    #: written. Until then every screen reported the cap as not applied, so
+    #: turning the map on changed the answer by more than the map itself: it
+    #: activated a limit that had been inert since the screen was built.
+    max_per_sector: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     """Root configuration object threaded through the engine."""
 
@@ -335,6 +380,7 @@ class AppConfig:
     storage: StorageConfig = field(default_factory=StorageConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
+    universe: UniverseConfig = field(default_factory=UniverseConfig)
 
 
 # --------------------------------------------------------------------------- #

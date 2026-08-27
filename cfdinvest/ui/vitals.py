@@ -61,6 +61,7 @@ SCHEDULES: tuple[tuple[str, str, str], ...] = (
     ("monitoring-snapshot", "daily", "Operational health, recorded"),
     ("risk-snapshot", "daily", "The book's risk, recorded"),
     ("prune-runs", "daily", "Bound the artefact store"),
+    ("screen-universe", "monthly", "Rank the pool and record the selection"),
 )
 
 
@@ -180,6 +181,23 @@ def job_report(
                     f"Last ran {age:.0f} minutes ago."
                     + ("" if status == "pass" else f" Expected within {limit:.0f}.")
                 )
+
+        elif kind == "monthly":
+            # Its own rule, not the daily one. A monthly job judged on the
+            # daily threshold would report "last ran 700 hours ago" as a
+            # warning every day of its life, which is how a status page
+            # teaches you to stop reading it.
+            at = daemon.SCREEN_AT_UTC
+            schedule = f"Monthly, 1st at {at[0]:02d}:{at[1]:02d} UTC"
+            next_due = None
+            if last is None:
+                status, detail = "unchecked", "Has not run yet."
+            else:
+                days = (moment - last).total_seconds() / 86_400.0
+                # Thirty-five: a month plus the slack for a machine that was
+                # off over a month end, which is late rather than broken.
+                status = "pass" if days <= 35 else "warning"
+                detail = f"Last ran {days:.0f} days ago."
 
         else:  # daily
             # The snapshots and the prune used to be timed against the daily

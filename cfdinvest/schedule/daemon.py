@@ -32,6 +32,7 @@ __all__ = [
     "QUOTE_INTERVAL_MINUTES",
     "INGEST_AT_UTC",
     "SNAPSHOT_AT_UTC",
+    "SCREEN_AT_UTC",
     "JOBS",
     "jobs_due",
 ]
@@ -62,6 +63,19 @@ INGEST_AT_UTC = (3, 0)
 #: session saying the same thing.
 SNAPSHOT_AT_UTC = (3, 5)
 
+#: The universe screen, monthly, after the day's housekeeping.
+#:
+#: Monthly rather than daily because the answer barely moves: across
+#: twenty-five monthly screens the selection changed by one or two names a
+#: month and the ranking correlated at +0.97 to +0.99 between consecutive
+#: runs. Daily would be twenty-odd identical records a month.
+#:
+#: And it records rather than acts. The screen has never been shown to
+#: predict return -- it is a tradability filter -- so the job exists to
+#: notice drift, not to rebalance. Changing the traded universe stays a
+#: human act.
+SCREEN_AT_UTC = (3, 10)
+
 #: How often the lake and the signals are refreshed while a market is open.
 #:
 #: A daily pipeline on daily bars gave one decision per instrument per
@@ -88,6 +102,7 @@ JOBS: tuple[str, ...] = (
     "monitoring-snapshot",
     "risk-snapshot",
     "prune-runs",
+    "screen-universe",
 )
 
 
@@ -111,6 +126,28 @@ def _due_daily(now: pd.Timestamp, last, at: tuple[int, int]) -> bool:
     """
     hour, minute = at
     appointed = now.normalize() + pd.Timedelta(hours=hour, minutes=minute)
+    if now < appointed:
+        return False
+    previous = _utc(last)
+    return previous is None or previous < appointed
+
+
+def _due_monthly(now: pd.Timestamp, last, at: tuple[int, int]) -> bool:
+    """True when this calendar month's run has not happened yet.
+
+    Keyed on the month rather than on elapsed days, for the same reason the
+    daily check is keyed on the date: a daemon that was down on the first of
+    the month has not missed the month, it is late, and an elapsed-time
+    check would either skip it or fire it twice.
+
+    The appointed time is on the first, but the test is "past it and not yet
+    run this month" -- so a machine that was off for a week still screens
+    when it comes back, once.
+    """
+    hour, minute = at
+    appointed = (
+        now.normalize().replace(day=1) + pd.Timedelta(hours=hour, minutes=minute)
+    )
     if now < appointed:
         return False
     previous = _utc(last)
@@ -182,5 +219,8 @@ def jobs_due(
         # After the snapshots, so a run is only ever pruned once everything
         # that describes it has been written.
         due.append("prune-runs")
+
+    if _due_monthly(moment, history.get("screen-universe"), SCREEN_AT_UTC):
+        due.append("screen-universe")
 
     return [job for job in JOBS if job in due]
