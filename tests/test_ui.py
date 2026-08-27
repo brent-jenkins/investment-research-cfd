@@ -2885,3 +2885,70 @@ def test_the_entry_band_reaches_the_engine():
     assert app._execution_config(
         ["AAPL"], StrategyConfig(entry_confidence=0.55, exit_confidence=0.3)
     ).thresholds.entry_confidence == pytest.approx(0.55)
+
+
+def test_a_configured_instrument_with_no_data_is_reported():
+    """M193: a universe of twenty where nineteen are traded.
+
+    Adding a ticker to the configuration does not fetch its data. Until the
+    next ingest the engine looks for it, fails, and skips it with a log line
+    nobody reads -- so the config says one thing and the book does another,
+    with nothing anywhere saying so.
+
+    That is not hypothetical: Caterpillar was added at 09:22, the daily
+    ingest had run at 03:01, and it had no bars until hours later.
+
+    The gap heals itself, which is exactly why it needs saying. A silence
+    that closes on its own is a silence nobody investigates -- and the same
+    shape covers a mistyped ticker, a delisting, or a vendor that has
+    stopped serving one, none of which heal.
+    """
+    from cfdinvest.config import AppConfig, MarketDataConfig
+    from cfdinvest.ui import health, sources
+
+    config = AppConfig(market=MarketDataConfig(tickers=("AAPL", "MSFT", "CAT")))
+    coverage = pd.DataFrame(
+        {"status": ["ok", "ok"], "rows_total": [100, 100]}, index=["AAPL", "MSFT"]
+    )
+
+    check = health._check_universe_coverage(
+        sources.Source(value=config), sources.Source(value={"coverage": coverage})
+    )
+    assert check.triggered, "a configured instrument with no data went unreported"
+    assert "CAT" in check.detail, "the missing instrument is not named"
+    assert "1 of 3" in check.detail
+    assert check.value == 1
+    # A warning, not a critical: the daemon does heal it.
+    assert check.severity == "warning"
+
+    # And when everything is present it says so rather than staying silent.
+    full = pd.DataFrame(
+        {"status": ["ok"] * 3}, index=["AAPL", "MSFT", "CAT"]
+    )
+    ok = health._check_universe_coverage(
+        sources.Source(value=config), sources.Source(value={"coverage": full})
+    )
+    assert not ok.triggered
+    assert "all 3" in ok.detail
+
+
+def test_unreadable_coverage_is_not_read_as_covered():
+    """An unanswerable question about the universe is not a reassuring answer."""
+    from cfdinvest.config import AppConfig, MarketDataConfig
+    from cfdinvest.ui import health, sources
+
+    config = AppConfig(market=MarketDataConfig(tickers=("AAPL",)))
+    check = health._check_universe_coverage(
+        sources.Source(value=config), sources.Source(value={})
+    )
+    assert check.triggered, "missing coverage was treated as full coverage"
+    assert check.value is None, "an unknown count was given a number"
+
+
+def test_the_coverage_check_runs_with_the_rest():
+    """A check nothing calls is a check that does not exist."""
+    import inspect
+
+    from cfdinvest.ui import health
+
+    assert "_check_universe_coverage" in inspect.getsource(health.run_checks)

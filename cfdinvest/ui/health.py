@@ -377,6 +377,63 @@ def _check_ingestion(lake: Source, summary: Source) -> Check:
     )
 
 
+@_safe("universe_covered", "Every configured instrument has data")
+def _check_universe_coverage(config_source: Source, lake: Source) -> Check:
+    """An instrument in the universe with no bars behind it.
+
+    Adding a ticker to the configuration does not fetch its data. Until the
+    next ingest it is a name the engine will look for, fail to find, and
+    skip with a log line nobody is reading -- so the universe says twenty
+    while nineteen are traded, and nothing anywhere says so.
+
+    That is what happened when Caterpillar was added: the config changed at
+    09:22, the daily ingest had run at 03:01, and the instrument had no bars
+    at all until the next intraday pass hours later.
+
+    It heals itself, which is exactly why it needs saying out loud. A gap
+    that closes on its own is a gap nobody investigates, and the same shape
+    of silence covers a ticker that was mistyped, delisted, or that the
+    vendor has stopped serving -- none of which heal.
+    """
+    config = config_source.value
+    wanted = [str(t) for t in getattr(getattr(config, "market", None), "tickers", ()) or ()]
+    if not wanted:
+        return Check(
+            key="universe_covered", title="Every configured instrument has data",
+            triggered=False, severity="warning",
+            detail="no universe is configured", value=0,
+        )
+
+    coverage = (lake.value or {}).get("coverage")
+    if not isinstance(coverage, pd.DataFrame) or coverage.empty:
+        return Check(
+            key="universe_covered", title="Every configured instrument has data",
+            triggered=True, severity="warning",
+            detail="the lake reported no coverage, so this could not be checked",
+            remedy="Check that the lake is readable and that ingestion has run.",
+            value=None,
+        )
+
+    have = {str(name) for name in coverage.index}
+    missing = [t for t in wanted if t not in have]
+    return Check(
+        key="universe_covered",
+        title="Every configured instrument has data",
+        triggered=bool(missing),
+        severity="warning",
+        detail=(
+            f"{len(missing)} of {len(wanted)} configured instruments have no "
+            f"data in the lake: {', '.join(missing[:6])}"
+            + ("…" if len(missing) > 6 else "")
+            if missing
+            else f"all {len(wanted)} configured instruments have data"
+        ),
+        remedy="Run ingestion for the missing tickers, or remove them from "
+        "config.market.tickers if they were added in error.",
+        value=len(missing),
+    )
+
+
 @_safe("execution_ok", "Execution engine clean")
 def _check_execution(summary: Source, errors: Source) -> Check:
     reasons: list[str] = []
@@ -589,6 +646,7 @@ def run_checks(
         _check_missed_run(scheduler_status, limits, moment),
         _check_pipeline(summary),
         _check_ingestion(lake, summary),
+        _check_universe_coverage(config_source, lake),
         _check_execution(summary, errors),
         _check_stops(execution),
         _check_fx(execution, summary),
