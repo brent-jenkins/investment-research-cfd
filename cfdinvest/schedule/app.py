@@ -372,6 +372,8 @@ def _execution_config(tickers, strategy=None):
         earnings_dates=earnings or None,
         earnings_blackout_days=strategy.earnings_blackout_days,
         thresholds=HysteresisThresholds(
+            entry_confidence=strategy.entry_confidence,
+            exit_confidence=strategy.exit_confidence,
             exit_on_flat=strategy.exit_on_flat,
             exit_on_opposing_signal=strategy.exit_on_opposing_signal,
         ),

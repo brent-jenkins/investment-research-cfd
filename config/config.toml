@@ -282,6 +282,26 @@ reentry_cooldown_days = 0.083 # two hours; the multi-day version measured as noi
 # rebalancing is off entirely and only opens and closes remain.
 rebalance_threshold = 3.0     # was 0.25; drift rebalancing off entirely
 
+# Confidence a signal needs to open a position, and the level below which an
+# open one is closed. The gap between them is hysteresis: it stops a position
+# being churned by a confidence reading wobbling across a single line.
+#
+# This is the strategy's real entry bar, and until now it lived only as a
+# dataclass default -- no configuration file named the number the engine
+# traded on. The paper book's arms were then chosen as round numbers
+# (0.50/0.60/0.70) without anyone checking against it, so the forward record
+# was validating a configuration measurably worse than the one being
+# backtested. Measured over two years on hourly bars:
+#
+#   entry bar   0.00    0.35    0.40    0.50    0.60    0.70    0.80
+#   CAGR      103.6%  126.7%  121.4%   85.6%   71.6%   67.7%   52.3%
+#
+# 0.35 is the peak, and walk-forward across 18 out-of-sample months says to
+# leave it alone: re-fitting it on a rolling six-month window lost to the
+# fixed value in 17 of 18 windows.
+entry_confidence = 0.35
+exit_confidence = 0.20
+
 # Execution friction beyond the spread, in basis points of price. The spread
 # is charged separately; this is what the quote moves between deciding and
 # filling.

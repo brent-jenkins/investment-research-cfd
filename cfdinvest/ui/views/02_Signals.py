@@ -32,7 +32,8 @@ components.render_note(
     st,
     "Only **active** signals are stored — flat cells are the vast majority "
     "and are dropped before writing, so an instrument missing here is flat, "
-    "not missing.",
+    "not missing. A signal below the entry bar is shown for information and "
+    "marked as untradeable: it is what the model sees, not what it would do.",
 )
 
 if components.render_absent(st, signals, "Signals"):
@@ -98,7 +99,12 @@ for level, label in (("stop_level", "stop_distance"), ("take_profit_level", "tp_
 # in ticker order, so the one signal that cleared the bar was as prominent
 # as the fourteen that did not and you had to scroll to find out whether
 # anything was actionable at all.
-bar = getattr(data["config"].strategy, "suggestion_confidence", 0.60)
+# The bar the engine actually enters on, not the one the advisor suggests
+# at. Those were different numbers for a while -- the engine entered at 0.35
+# while the paper book's lowest arm sat at 0.50 -- so a signal at 0.42 was
+# traded by the strategy and shown here as though nothing would happen.
+bar = getattr(data["config"].strategy, "entry_confidence", 0.35)
+suggest_bar = getattr(data["config"].strategy, "suggestion_confidence", 0.60)
 confidences = pd.to_numeric(latest.get("confidence"), errors="coerce")     if "confidence" in latest else pd.Series(dtype=float)
 clearing = int((confidences >= bar).sum())
 longs = int((latest.get("direction", pd.Series(dtype=str)) == "long").sum())
@@ -108,14 +114,14 @@ if latest.empty:
     headline = "**Nothing is signalling.** The model wants no position on this bar."
 elif clearing:
     headline = (
-        f"**{clearing} of {len(latest)} signals clear the {bar:.0%} bar** and "
-        f"would be taken. {longs} long, {shorts} short."
+        f"**{clearing} of {len(latest)} signals clear the {bar:.0%} entry bar** "
+        f"and would be taken. {longs} long, {shorts} short."
     )
 else:
     best = confidences.max() if len(confidences) else float("nan")
     headline = (
-        f"**Nothing clears the {bar:.0%} bar.** {len(latest)} instruments are "
-        f"signalling — {longs} long, {shorts} short — but the strongest is "
+        f"**Nothing clears the {bar:.0%} entry bar.** {len(latest)} instruments "
+        f"are signalling — {longs} long, {shorts} short — but the strongest is "
         f"{best:.0%}, so nothing would be taken."
     )
 components.render_note(st, headline)
@@ -151,15 +157,35 @@ else:
         # The bar is the point of the column: a number you have to compare
         # against a threshold in your head is a number you will misread.
         if pd.notna(confidence):
+            # The tick is the whole point of the column: whether this signal
+            # would actually be traded, or is being shown for information.
+            if not takeable:
+                mark = f" ✕ below {bar:.0%}"
+            elif confidence >= suggest_bar:
+                mark = " ✓✓"
+            else:
+                mark = " ✓"
             conf.progress(
                 min(max(float(confidence), 0.0), 1.0),
-                text=f"{confidence:.0%}" + (" ✓" if takeable else ""),
+                text=f"{confidence:.0%}{mark}",
             )
         else:
             conf.markdown("—")
 
         size.markdown(components.number(row.get("size"), 3))
-        why.caption(explain.reason(row.get("reason")))
+        if takeable:
+            why.caption(explain.reason(row.get("reason")))
+        else:
+            # Said on the row rather than in a footnote. A list where the
+            # untradeable and the tradeable look alike is a list that has to
+            # be cross-checked against a number every time it is read.
+            why.caption(
+                f":grey[{explain.reason(row.get('reason'))}]"
+            )
+            why.caption(
+                f":orange[Confidence too low — the engine enters at "
+                f"{bar:.0%}, so this would not be traded.]"
+            )
 
         # Only where it would stop you acting. Eleven of the configured
         # instruments have no CFD at all, and that is worth a line; "Apple,

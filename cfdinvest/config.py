@@ -239,6 +239,22 @@ class StrategyConfig:
     reentry_cooldown_days: float = 0.0
     #: Relative drift before an open position is resized.
     rebalance_threshold: float = 0.25
+    #: Confidence a signal needs to open a position, and the level below
+    #: which an open one is closed.
+    #:
+    #: This is the strategy's real entry bar and it had no owner: it was the
+    #: HysteresisThresholds default, so nothing in any configuration file
+    #: named the number the engine actually traded on. That mattered more
+    #: than the usual tidiness argument -- the paper book's arms were set to
+    #: 0.50/0.60/0.70 without anyone checking, so the forward record was
+    #: validating a strategy a third worse than the one being backtested
+    #: (0.35 returns 126.7% a year against 0.50's 85.6%).
+    #:
+    #: Third limit in a row found living only in a dataclass default, after
+    #: max_leverage and slippage_bps. Anything the engine reads should be
+    #: named somewhere a person can see it.
+    entry_confidence: float = 0.35
+    exit_confidence: float = 0.20
     #: Execution friction beyond the spread, in basis points of price.
     #:
     #: The spread is charged separately and properly; this is what the

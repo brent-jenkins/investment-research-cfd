@@ -33,21 +33,47 @@ from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["EXCLUDED", "COHORTS", "run_paper_pass", "run_all_cohorts"]
+__all__ = [
+    "EXCLUDED", "COHORTS", "RAISED_BARS", "cohorts_for",
+    "run_paper_pass", "run_all_cohorts",
+]
 
-#: The arms of the experiment. Three books at three confidence thresholds,
-#: run side by side on the same signals and the same prices, so that "do
-#: lower-confidence trades do worse" is answered by comparison rather than
-#: by argument.
+#: Bars above the shipped entry threshold, to test whether raising it helps.
 #:
-#: Measured on 2,018 historical round trips, the win rate was 34.6% below
-#: 0.40, 42.4% between 0.50 and 0.60, and 55.7% between 0.60 and 0.70 --
-#: a cliff, not a gradient. Whether it survives forward is the question.
-COHORTS: tuple[tuple[str, float], ...] = (
-    ("c50", 0.50),
-    ("c60", 0.60),
-    ("c70", 0.70),
-)
+#: Measured on 2,018 historical round trips the win rate stepped from 34.6%
+#: below 0.40 to 55.7% between 0.60 and 0.70 -- a cliff, not a gradient.
+#: Run as a book rather than as a trip filter it looks very different, which
+#: is exactly why it is worth watching forward.
+RAISED_BARS: tuple[float, ...] = (0.50, 0.60, 0.70)
+
+
+def cohorts_for(strategy=None) -> tuple[tuple[str, float], ...]:
+    """The arms: the strategy's own entry bar first, then the raised ones.
+
+    The baseline arm is not a round number somebody liked -- it is read from
+    ``strategy.entry_confidence``, the bar the engine actually enters on.
+
+    That had to be fixed rather than tidied. The arms were 0.50/0.60/0.70,
+    chosen as round numbers without checking, while the engine entered at
+    0.35. So every signal between 0.35 and 0.50 was traded by the strategy
+    being backtested and by no arm at all, and the forward record -- the one
+    measurement that cannot be overfitted -- was validating a configuration
+    returning 85.6% a year against the shipped 126.7%.
+
+    Three numbers had drifted apart with no single owner. There is one now.
+    """
+    entry = 0.35 if strategy is None else float(
+        getattr(strategy, "entry_confidence", 0.35)
+    )
+    arms: list[tuple[str, float]] = [(f"c{round(entry * 100):02.0f}", entry)]
+    arms += [
+        (f"c{round(bar * 100):02.0f}", bar) for bar in RAISED_BARS if bar > entry
+    ]
+    return tuple(arms)
+
+
+#: The default arms, for callers with no config to hand.
+COHORTS: tuple[tuple[str, float], ...] = cohorts_for()
 
 #: Signals, not instruments.
 EXCLUDED = frozenset({"^VIX"})
@@ -412,7 +438,9 @@ def run_all_cohorts(latest, prices, **kwargs) -> list[dict[str, Any]]:
     """
     kwargs.pop("threshold", None)
     kwargs.pop("cohort", None)
+    config = kwargs.get("config")
+    arms = cohorts_for(getattr(config, "strategy", None))
     return [
         run_paper_pass(latest, prices, threshold=bar, cohort=name, **kwargs)
-        for name, bar in COHORTS
+        for name, bar in arms
     ]

@@ -424,11 +424,18 @@ def test_the_three_arms_do_not_block_each_other(tmp_path, monkeypatch):
         signals, {"AAA": 100.0}, now="2026-08-26T12:00:00Z", blackout_days=0
     )
 
+    # Confidence 0.65 clears the baseline arm and 0.50 and 0.60; it misses
+    # 0.70. The baseline is whatever the engine enters on rather than a
+    # round number -- it was 0.35 when this was written, and the arms are
+    # derived so that changing it cannot leave the forward record testing a
+    # strategy nobody trades.
     opened = {r["cohort"]: r["opened"] for r in results}
-    assert opened == {"c50": 1, "c60": 1, "c70": 0}
+    assert opened == {"c35": 1, "c50": 1, "c60": 1, "c70": 0}
 
     book = papertrade.load_book()
-    assert {r["cohort"] for r in book if r["event"] == "open"} == {"c50", "c60"}
+    assert {r["cohort"] for r in book if r["event"] == "open"} == {
+        "c35", "c50", "c60"
+    }
     # And each arm sees only its own position.
     assert list(papertrade.open_positions(book, "c50")) == ["AAA"]
     assert list(papertrade.open_positions(book, "c70")) == []

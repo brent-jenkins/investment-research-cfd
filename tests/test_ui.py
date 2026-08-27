@@ -2807,3 +2807,74 @@ def test_the_cookie_is_cleared_on_a_run_that_finishes():
     assert "SIGNED_OUT_KEY" in login and "_write_cookie" in login, (
         "nothing clears the cookie on a run that finishes"
     )
+
+
+def test_the_signals_page_marks_what_would_actually_be_traded(populated):
+    """M190: a list where the untradeable looks like the tradeable.
+
+    The page read `suggestion_confidence` (0.60) while the engine entered at
+    `entry_confidence` (0.35), so a signal at 0.42 was traded by the strategy
+    and displayed as though nothing would happen. Worse, a reader had to
+    carry a threshold in their head and compare it against every row.
+    """
+    page = (UI / "views" / "02_Signals.py").read_text(encoding="utf-8")
+
+    assert "entry_confidence" in page, "the page does not read the real entry bar"
+    assert "Confidence too low" in page, "a low signal is not called out"
+    # And the reason it is too low must name the bar rather than assume it.
+    assert "the engine enters at" in page
+
+
+def test_the_paper_arms_start_at_the_bar_the_engine_enters_on():
+    """M191: a forward record validating a strategy nobody trades.
+
+    The arms were 0.50/0.60/0.70, chosen as round numbers, while the engine
+    entered at 0.35. Every signal between the two was traded by the
+    backtested strategy and by no arm at all -- so the one measurement that
+    cannot be overfitted was scoring a configuration returning 85.6% a year
+    against the shipped 126.7%.
+    """
+    from cfdinvest.advisor.papertrade_run import cohorts_for
+    from cfdinvest.config import load_config
+
+    config = load_config()
+    arms = cohorts_for(config.strategy)
+    bars = [bar for _, bar in arms]
+
+    assert bars[0] == pytest.approx(config.strategy.entry_confidence), (
+        f"the baseline arm is {bars[0]}, the engine enters at "
+        f"{config.strategy.entry_confidence}"
+    )
+    assert bars == sorted(bars), "the arms are not in order"
+    assert len(set(bars)) == len(bars), "two arms share a bar"
+    # Raising the bar is the experiment, so there must be arms above it.
+    assert len(bars) >= 2
+
+
+def test_the_entry_band_reaches_the_engine():
+    """M192: the third limit found living only in a dataclass default.
+
+    After max_leverage and slippage_bps. Nothing in any configuration file
+    named the confidence the engine actually traded on, which is how the
+    paper book's arms came to disagree with it unnoticed.
+    """
+    from cfdinvest.config import StrategyConfig, load_config
+    import cfdinvest.schedule.app as app
+
+    config = load_config()
+    execution = app._execution_config(list(config.market.tickers), config.strategy)
+
+    assert execution.thresholds.entry_confidence == pytest.approx(
+        config.strategy.entry_confidence
+    )
+    assert execution.thresholds.exit_confidence == pytest.approx(
+        config.strategy.exit_confidence
+    )
+    # Hysteresis: the exit must sit below the entry or a position churns on
+    # a confidence reading wobbling across one line.
+    assert config.strategy.exit_confidence < config.strategy.entry_confidence
+
+    # And an override travels rather than being ignored.
+    assert app._execution_config(
+        ["AAPL"], StrategyConfig(entry_confidence=0.55, exit_confidence=0.3)
+    ).thresholds.entry_confidence == pytest.approx(0.55)
