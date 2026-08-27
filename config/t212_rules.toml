@@ -394,6 +394,24 @@ fx_fee_applies       = true
 currency             = "USD"
 source               = "T212 app, 2026-08-25"
 
+["CAT"]
+t212_name            = "Caterpillar"
+leverage             = 5.0
+financing_daily_pct_long  = 0.0694             # The standard US-share pair,
+financing_daily_pct_short = 0.0251             # identical to the other eighteen.
+fx_fee_applies       = true
+currency             = "USD"
+source               = "T212 app, 2026-08-27"
+# The twentieth instrument, and the only one outside technology added on
+# purpose. The screen ranked MU top of the candidates, but MU had returned
+# +855% in two years and turnover is price x volume -- so its liquidity score
+# was largely the run itself, which is the residual bias the screen's README
+# admits to. CAT scored +0.257, mid-pack among names already held, and is the
+# only non-technology name in the top group. Twelve of nineteen were already
+# technology; a thirteenth would have made the concentration worse, and
+# diversification is what bought the -19.6% drawdown that beat every tighter
+# configuration tested.
+
 # NOTE ON MINIMUMS: min_quantity (units) and min_trade_value (account
 # currency) both vary by instrument type and must be read per instrument.
 # Shares, index CFDs, FX pairs and commodity futures are quoted in

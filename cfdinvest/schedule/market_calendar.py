@@ -164,7 +164,7 @@ DEFAULT_ASSET_CLASSES: dict[str, str] = {
             "^GSPC", "^NDX", "^DJI", "^RUT",
             "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
             "AVGO", "NFLX", "ADBE", "ORCL", "COST",
-            "JPM", "XOM", "JNJ", "INTC", "NKE", "LULU",
+            "JPM", "XOM", "JNJ", "INTC", "NKE", "LULU", "CAT",
             # Retired from the universe, kept so an older run still reads.
             "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "EEM",
             "PYPL", "DIS", "BA",

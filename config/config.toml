@@ -81,6 +81,13 @@ tickers = [
     "AVGO", "NFLX", "ADBE", "ORCL",
     # Other sectors: financials, energy, healthcare, semis, consumer
     "JPM", "XOM", "JNJ", "INTC", "NKE", "LULU", "COST",
+    # Industrials. Added 2026-08-27 as the twentieth, chosen against the
+    # screen rather than by it: the screen's top pick was MU, whose $42bn
+    # turnover is largely an +855% two-year run showing up in price x
+    # volume. CAT ranks mid-pack on the same rule and is the only non-tech
+    # name in the top group, which matters when twelve of nineteen were
+    # already technology.
+    "CAT",
 ]
 # Hourly, not daily.
 #

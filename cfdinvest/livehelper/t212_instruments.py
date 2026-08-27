@@ -135,6 +135,7 @@ SUGGESTED: dict[str, tuple[str, str, str]] = {
     "NFLX": ("Netflix", "same", ""),
     "ADBE": ("Adobe", "same", ""),
     "ORCL": ("Oracle", "same", ""),
+    "CAT": ("Caterpillar", "same", ""),
     "DIS": ("Walt Disney", "same", ""),
     # Not tradable, and in the universe on purpose. The VIX drives the
     # regime classification; it is an input, never a suggestion. The
@@ -395,7 +396,7 @@ _CLASS_BY_TICKER: dict[str, str] = {
     **{t: "share" for t in (
         "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
         "JPM", "XOM", "JNJ", "BA", "INTC", "PYPL", "NKE", "LULU", "DIS",
-        "COST", "AVGO", "NFLX", "ADBE", "ORCL",
+        "COST", "AVGO", "NFLX", "ADBE", "ORCL", "CAT",
     )},
     "^VIX": "volatility",
 }
