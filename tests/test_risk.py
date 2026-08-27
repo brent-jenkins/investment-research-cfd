@@ -1216,4 +1216,108 @@ def test_an_arm_that_holds_nothing_is_flat_not_unchecked(recorded_lake):
     assert result.book == f"paper:{_baseline_arm(config)}"
     assert result.exposure_metrics["flat"] is True
     assert "positions" not in result.unavailable
-    assert result.severity == "ok"
+    # Not asserted on the severity: a simulated book also reports the
+    # *account's* exposure as unverified, which is a second and unrelated
+    # reason for a warning. The property here is that the book was read and
+    # found empty, and that is what the two lines above say.
+    assert not result.flags
+    assert not result.advisory
+
+
+# --------------------------------------------------------------------------- #
+# M248 a simulated book breaching the account's limits
+# M249 the comparison thrown away instead of demoted
+# M250 an unconfirmed account reported as flat rather than unverified
+# M251 a confirmed breach demoted along with the simulated ones
+# --------------------------------------------------------------------------- #
+def test_a_simulated_book_does_not_breach_the_accounts_limits(recorded_lake):
+    """M248: red every day, and therefore unread.
+
+    The paper book has no position cap on purpose -- it measures signal
+    quality, not portfolio construction -- so its gross exposure passes a
+    £2,000 account's £3,000 limit as soon as it holds four positions and
+    stays past it for good. On the afternoon this shipped the c35 arm held
+    eight, £8,010 against £3,000.
+
+    That is the third time this page has been made to shout something
+    structural: first the backtest's compounded positions, then the arm that
+    held nothing reading as unknown, now this. A limit that cannot be
+    satisfied teaches you to stop reading the page.
+    """
+    config, _ = recorded_lake
+    arm = _baseline_arm(config)
+    _write_paper_book(config, [
+        _paper_event(t, cohort=arm, quantity=200.0) for t in ("SPY", "TLT", "GLD")
+    ])
+
+    result = snapshot_from_disk(config)
+
+    assert result.book == f"paper:{arm}"
+    assert result.exposure_metrics["gross_exposure_gbp"] > 3_000.0, (
+        "the fixture is not over the limit, so this proves nothing"
+    )
+    assert not result.flags, "a simulation breached the account's limits"
+    assert result.severity != "critical"
+
+
+def test_the_comparison_is_kept_rather_than_dropped(recorded_lake):
+    """M249: demoted into silence.
+
+    "Following every c35 signal would have you carrying four times your
+    account" is a real thing to know. It is just not a statement about what
+    you are carrying, so it is reported apart from what is.
+    """
+    config, _ = recorded_lake
+    arm = _baseline_arm(config)
+    _write_paper_book(config, [
+        _paper_event(t, cohort=arm, quantity=200.0) for t in ("SPY", "TLT", "GLD")
+    ])
+
+    result = snapshot_from_disk(config)
+
+    assert result.advisory, "the limit comparison was thrown away"
+    assert any("Gross exposure" in note for note in result.advisory)
+    assert "simulated" in result.message.lower()
+
+
+def test_an_unconfirmed_account_is_unverified_not_flat(recorded_lake):
+    """M250: the strongest claim from the weakest evidence.
+
+    No confirmation on file is not evidence of a flat account. It is the
+    absence of evidence either way -- this layer's oldest rule, applied to
+    the account itself rather than to one of its artefacts.
+    """
+    config, _ = recorded_lake
+    arm = _baseline_arm(config)
+    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=1.0)])
+
+    result = snapshot_from_disk(config)
+
+    assert any("no confirmed position" in item for item in result.unavailable)
+    assert result.severity == "warning"
+
+
+def test_a_confirmed_breach_is_still_a_breach(recorded_lake):
+    """M251: the demotion applied to the account as well.
+
+    The whole point is that the account's own book still breaches. A rule
+    that quietened both would be worse than the noise it replaced.
+    """
+    from cfdinvest.persist.confirm import Confirmation, write_confirmation
+
+    config, _ = recorded_lake
+    write_confirmation(
+        Confirmation(
+            ticker="SPY", action="open", quantity=500.0, price=100.0,
+            timestamp=pd.Timestamp("2026-08-26 17:00", tz="UTC"), fx_rate=1.0,
+        ),
+        config,
+    )
+
+    result = snapshot_from_disk(config)
+
+    assert result.book == "confirmed"
+    assert result.exposure_metrics["gross_exposure_gbp"] > 3_000.0
+    assert result.flags, "a confirmed position over the limit did not flag"
+    assert result.severity == "critical"
+    assert not result.advisory

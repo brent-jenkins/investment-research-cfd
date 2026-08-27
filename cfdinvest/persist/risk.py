@@ -176,6 +176,7 @@ def load_risk_history(
                 "margin_usage_pct": margin.get("margin_usage_pct"),
                 "current_drawdown": pnl.get("current_drawdown"),
                 "flags": len(snapshot.get("flags") or ()),
+                "advisory": len(snapshot.get("advisory") or ()),
                 "run_status": (document.get("scheduler_status") or {}).get(
                     "run_status"
                 ),

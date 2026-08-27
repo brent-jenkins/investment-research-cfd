@@ -62,6 +62,28 @@ careful about.
 | `paper:<arm>` | otherwise, if the paper book exists | the baseline arm, £1,000 notional a position |
 | absent | neither | reported absent, not flat |
 
+**Only the account's own book can breach the account's limits.** The paper
+book has no position cap on purpose — it measures signal quality, not
+portfolio construction — so its gross exposure passes a £2,000 account's
+£3,000 limit as soon as it holds four positions and stays past it for good.
+On the afternoon this shipped the baseline arm held eight, £8,010 against
+£3,000.
+
+So a simulated book's breaches are demoted to `advisory`: reported, never
+raised, and never `critical`. The comparison is worth seeing — "following
+every c35 signal would have you carrying four times your account" is a real
+thing to know — it is just not a statement about what you are carrying.
+
+And the account is then `unverified`, not flat. No confirmation on file is
+not evidence of a flat account; it is the absence of evidence either way,
+which is this layer's oldest rule applied to the account rather than to one
+of its artefacts.
+
+That is the third time this page has been made to shout something
+structural — the backtest's compounded positions, then an empty arm reading
+as unknown, then this. Each one would have made a real breach arrive on a
+page already red.
+
 An arm that holds nothing is **flat and checked**, not unknown. The raised
 arms are legitimately empty for days at a time, and calling each of those
 days a warning is how a status page teaches you to ignore it. The

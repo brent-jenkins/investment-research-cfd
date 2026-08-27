@@ -117,6 +117,18 @@ class RiskSnapshot:
     pnl_risk_metrics: dict[str, Any] = field(default_factory=dict)
     scheduler_status: dict[str, Any] = field(default_factory=dict)
     flags: tuple[str, ...] = ()
+    #: Limits that the *simulated* book exceeds. Reported, never raised.
+    #:
+    #: The paper book has no position cap on purpose -- it measures signal
+    #: quality, not portfolio construction -- so its gross exposure passes a
+    #: £2,000 account's limits as soon as it holds four positions and stays
+    #: past them for good. Raising that as a breach would put the page back
+    #: where it was this morning: red every day, and therefore unread.
+    #:
+    #: The comparison is still worth seeing. "Following every c35 signal
+    #: would have you carrying four times your account" is a real thing to
+    #: know; it is just not a statement about what you are carrying.
+    advisory: tuple[str, ...] = ()
     unavailable: tuple[str, ...] = ()
     message: str = ""
     details: dict[str, Any] = field(default_factory=dict)
@@ -789,9 +801,27 @@ def build_risk_snapshot(
     if not regimes.get("available"):
         unavailable.append("regimes")
 
+    # Only a simulated book is demoted. ``book`` is None when the caller
+    # passed positions directly -- every test in this suite, and the
+    # walk-forward -- and those positions are the book that caller means. An
+    # unknown provenance is not a reason to stop reporting a breach; being
+    # told the positions are a simulation is.
+    advisory: list[str] = []
+    if str(book or "").startswith("paper:"):
+        advisory, flags = flags, []
+        # And the account's exposure is then unverified rather than nil. No
+        # confirmation on file is not evidence of a flat account -- it is
+        # the absence of evidence either way, and this layer's oldest rule
+        # is that those are different statements.
+        unavailable.append("account exposure: no confirmed position on file")
+
     if flags:
-        message = f"{len(flags)} limit breached" + ("" if len(flags) == 1 else "es")
         message = f"{len(flags)} limit{'s' if len(flags) > 1 else ''} breached."
+    elif advisory:
+        message = (
+            f"Nothing confirmed on the account. The simulated book would be "
+            f"over {len(advisory)} limit{'s' if len(advisory) > 1 else ''}."
+        )
     elif unavailable:
         message = (
             "No limit breached, but "
@@ -816,6 +846,7 @@ def build_risk_snapshot(
         pnl_risk_metrics=pnl,
         scheduler_status=dict(scheduler_status or {}),
         flags=tuple(flags),
+        advisory=tuple(advisory),
         unavailable=tuple(dict.fromkeys(unavailable)),
         message=message,
         details={"limits": bounds.__class__.__name__},

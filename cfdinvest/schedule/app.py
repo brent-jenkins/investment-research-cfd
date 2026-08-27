@@ -1136,6 +1136,10 @@ def _print_risk(observation) -> None:
     )
     for flag in snapshot.flags:
         print(f"  ! {flag}")
+    # Marked differently from a breach on purpose: this is what the
+    # simulated book would be doing, not what the account is doing.
+    for note in getattr(snapshot, "advisory", ()):
+        print(f"  ~ simulated: {note}")
     for item in snapshot.unavailable:
         print(f"  ? could not check: {item}")
     if observation.stored_path:
