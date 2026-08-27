@@ -46,13 +46,24 @@ contingent, and it lapsed when an IG demo CFD account was opened. It is
 replaced rather than deleted, because most of what it protected is
 unchanged and the rest matters more once real credentials exist.
 
-The first use is read-only and is worth stating on its own terms: every one
-of the nineteen instruments currently charges an *estimated* spread, a
-single per-class constant of 4bp round trip, and that constant is 79% of all
-modelled cost against a measured break-even of about 4bp of further
-slippage. The largest number in the cost model is a guess. Replacing it with
-nineteen measured ones is the point of the integration; placing orders is a
-later and separate decision.
+The first use is read-only, and on 2026-08-27 it did what it was for: all
+twenty spreads were measured on a Capital.com demo account without placing
+an order, because that broker returns bid and offer where IG would not.
+
+**Two figures previously stated here were wrong**, and the measurement is
+what exposed them. The estimated spread was described as a per-class
+constant of 4bp round trip. It is 10bp: `spread_bps` is unset and no
+asset-class map is supplied, so the lookup falls through to
+`default_spread_bps = 5.0` — a *half* spread — and the `equity: 2.0` entry
+in `DEFAULT_SPREAD_BPS` never applies to anything. And it is 46.6% of
+modelled cost, not 79%: measured over the whole backtest, spread 46.6%,
+slippage 37.3%, financing 12.2%, FX 3.8%.
+
+Measured, the median is 5.3bp round trip against the 10bp charged, ranging
+from 2.8bp (META, COST) to 28.6bp (NKE). So the model has been overstating
+the largest line rather than understating it. Every price checked against
+the vendor to within 0.04%, which is what says the instruments resolved
+correctly rather than to lookalike listings.
 
 ### Before every commit
 

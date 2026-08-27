@@ -60,10 +60,16 @@ that sometimes places an order is not one.
 
 ## Why it exists: to measure, not to trade
 
-Every instrument charges an *estimated* spread — one per-class constant of
-4bp, the largest single line in the cost model, against an edge that breaks
-even near 6bp of friction. IG will not show this account share prices
-(`unauthorised.access.to.equity.exception`), so the spread cannot be quoted.
+Every instrument charged an *estimated* spread — a constant of **10bp round
+trip**, the largest single line in the cost model at 46.6% of it, against an
+edge that breaks even near 6bp of further friction. That figure was written
+here as 4bp and as 79% of cost; both were wrong, and the thing that exposed
+them was finally measuring. See `CLAUDE.md`.
+
+IG will not show this account share prices
+(`unauthorised.access.to.equity.exception`), so the spread cannot be quoted
+there. **Capital.com will**, which is why the measurement finally happened
+without dealing at all — see `capital/`.
 
 It can be **filled**. A buy fills at the offer, a sell at the bid, and the
 difference is what was actually charged. That is a better measurement than a
