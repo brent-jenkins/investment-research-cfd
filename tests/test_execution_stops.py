@@ -866,3 +866,89 @@ def test_empty_frame_stop_views_do_not_raise():
     empty = ExecutionFrame()
     assert empty.stop_summary().empty
     assert empty.working_orders().empty
+
+
+# --------------------------------------------------------------------------- #
+# M255 the time stop's closes labelled as the signal's
+# M256 a reason the engine emits with no translation
+# --------------------------------------------------------------------------- #
+def test_the_time_stop_says_it_was_the_time_stop():
+    """M255: a wrong label, which is worse than a missing one.
+
+    The time stop closes a position by zeroing it, and that fell through to
+    ``"signal"`` -- so every close in a two-year run claimed to be the
+    signal's doing. It was not a small share: 1,622 of 2,139, 75.8%, and
+    they behave nothing like the ones the signal really made (44.3% win at
+    -0.278% against 64.0% at +0.768%).
+
+    "How often does the time stop fire" was unanswerable from the log that
+    exists to answer it, and the answer looked like zero.
+    """
+    from cfdinvest.execution.engine import _trade_reason
+
+    assert _trade_reason(False, False, None, 0, True) == "time_stop"
+    assert _trade_reason(False, False, None, 0, False) == "signal"
+
+    # And it never outranks a rule that acted first. A position stopped out
+    # at the book level, or through its own price stop, was closed by that
+    # -- the time stop only fires on one nothing else has closed.
+    assert _trade_reason(True, False, None, 0, True) == "stop_out"
+    breach = {"is_take_profit": [False]}
+    assert _trade_reason(False, True, breach, 0, True) == "stop_loss"
+
+
+def test_the_time_stop_is_labelled_in_a_real_run(tmp_path):
+    """The seam, not the helper.
+
+    Asserting on ``_trade_reason`` proves the branch works while leaving the
+    call site untouched -- and the call site is where this was wrong for two
+    years. So run the engine and read the log.
+    """
+    import dataclasses
+
+    from cfdinvest.backtest import BacktestConfig, run_backtest_pipeline
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.repository import DataRepository
+    from tests.test_analytics import INTERVAL, TICKERS, build_lake
+
+    config = build_lake(tmp_path / "data", bars=400)
+    settings = BacktestConfig(tickers=list(TICKERS), interval=INTERVAL)
+    settings = dataclasses.replace(
+        settings,
+        execution=dataclasses.replace(settings.execution, time_stop_days=1.0),
+    )
+    pipeline = run_backtest_pipeline(DataRepository(config), settings)
+    result = run_backtest(pipeline.signals, pipeline.analysis, settings.execution)
+
+    closes = result.trades[result.trades["action"] == "close"]
+    assert len(closes), "no closes to label"
+    assert "time_stop" in set(closes["reason"].astype(str)), (
+        "a run with a one-day time stop produced no close attributed to it"
+    )
+
+
+def test_the_engine_emits_no_reason_the_dashboard_cannot_read():
+    """M256: a reason with no translation.
+
+    There is a test pinning the trade-log *actions* against the glossary and
+    none that pinned the reasons, which is how ``time_stop`` could have
+    shipped as a bare token on the page. Read out of the engine's own source
+    rather than restated, so a reason added later is caught by this rather
+    than by somebody noticing an odd word on a table.
+    """
+    import re
+    from pathlib import Path
+
+    from cfdinvest.ui import explain
+
+    source = Path("cfdinvest/execution/engine.py").read_text(encoding="utf-8")
+    body = source[source.index("def _trade_reason("):]
+    body = body[: body.index("\ndef ")]
+    emitted = set(re.findall(r'return\s+"([a-z_]+)"', body))
+    # The ternary branch returns two names on one line.
+    emitted |= set(re.findall(r'"([a-z_]+)"\s+if\s+.*else\s+"([a-z_]+)"', body)[0]) \
+        if re.search(r'"[a-z_]+"\s+if\s+.*else\s+"[a-z_]+"', body) else set()
+
+    assert emitted, "no reasons found; the parse is wrong, not the code"
+    missing = sorted(emitted - set(explain.ACTIONS))
+    assert not missing, f"the engine emits {missing} with no translation"

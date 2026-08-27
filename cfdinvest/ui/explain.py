@@ -83,6 +83,7 @@ ACTIONS: dict[str, str] = {
     "stop_loss": "Stopped out at the stop-loss level",
     "take_profit": "Closed at the take-profit level",
     "signal": "The model changed its mind",
+    "time_stop": "Held long enough without working, and closed",
     "stop_out": "Account-level stop-out — everything was flattened",
 }
 

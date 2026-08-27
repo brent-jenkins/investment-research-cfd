@@ -405,6 +405,13 @@ def run_execution(signal_frame, analysis_frame, config):
             # prevented by refusing new entries.
             new_held = np.where(blackout[bar], 0, new_held)
 
+        # Nothing timed out until the rule below says so. Bound here rather
+        # than inside the branch: with the time stop disabled the trade log
+        # still has to be written, and a name that only exists when a feature
+        # is switched on is a crash waiting for the config that switches it
+        # off.
+        timed_out = np.zeros_like(held, dtype=bool)
+
         if time_stop is not None:
             # A position that has had long enough to work and has not is
             # closed, however small the loss. Financing is deducted first,
@@ -425,6 +432,7 @@ def run_execution(signal_frame, analysis_frame, config):
                 & np.isfinite(net_pct) & (net_pct <= time_stop_threshold)
             )
             new_held = np.where(stale, 0, new_held)
+            timed_out = stale
 
         # Stamped here, after every rule that can close a position has had
         # its say -- the cooldown suppression, the blackout and the time
@@ -582,7 +590,8 @@ def run_execution(signal_frame, analysis_frame, config):
                     "notional": float(abs(target_units[position] * reference[position])),
                     "equity": equity,
                     "reason": _trade_reason(
-                        stop_out, bool(stopped[position]), breach, position
+                        stop_out, bool(stopped[position]), breach, position,
+                        bool(timed_out[position]),
                     ),
                     **_stop_fields(breach, stopped, position, stop_level, target_level),
                     **_fx_fields(
@@ -777,14 +786,30 @@ def _roll_entry_price(previous_units, new_units, entry_price, fill_price):
     return result
 
 
-def _trade_reason(stop_out, was_stopped, breach, position) -> str:
-    """Why a trade happened, in one word."""
+def _trade_reason(
+    stop_out, was_stopped, breach, position, timed_out: bool = False
+) -> str:
+    """Why a trade happened, in one word.
+
+    ``timed_out`` was missing, and its absence was not a gap but a wrong
+    answer: the time stop closes a position by zeroing it, which then fell
+    through to ``"signal"``. Every close in a two-year run therefore claimed
+    to be the signal's doing, including the ones the time stop made, and
+    nothing could tell them apart -- so "how often does the time stop fire"
+    was unanswerable from the log that exists to answer it.
+
+    Ordered by which rule actually acted. A book-wide stop-out overrides
+    everything; a price stop is the position's own; the time stop comes last
+    because it only fires on a position no other rule has already closed.
+    """
     if stop_out:
         return "stop_out"
     if was_stopped and breach is not None:
         return (
             "take_profit" if breach["is_take_profit"][position] else "stop_loss"
         )
+    if timed_out:
+        return "time_stop"
     return "signal"
 
 
