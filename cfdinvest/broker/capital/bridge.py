@@ -1,0 +1,334 @@
+"""From a signal to an order, and back again to check it arrived.
+
+This is the piece that makes the demo account trade. It reads what the
+engine wants, sizes it against the balance the broker reports, applies every
+limit, and places what survives. It also reads the account back and refuses
+to do anything at all when what is there disagrees with what it placed.
+
+The rules it follows are the engine's, not new ones
+---------------------------------------------------
+Position size is ``signal size x exposure_per_unit_size x balance``, the
+same expression the backtest uses, and the same ``needs_resize`` hysteresis
+decides when to adjust. Inventing a sizing rule here would make the demo
+account measure that rule rather than the strategy -- and the strategy's
+recorded return came from a book sized this way.
+
+**It resizes.** The paper book only opens and closes because Trading 212
+cannot resize a CFD; that is a venue's constraint and this is a different
+venue. The owner's call, and the right one: 62% of the engine's actions are
+resizes, so a book that skipped them would be a different strategy wearing
+the same name.
+
+What it refuses
+---------------
+**Anything outside the exchange session.** Measured on 2026-08-27, spreads
+widen a median of 1.85x once the session closes and JNJ by 14.9x, against a
+strategy that breaks even near 6bp of friction. Capital.com will happily
+deal at those prices -- it reported eighteen of twenty as tradeable
+forty-six minutes after the close -- so the calendar decides, never the
+broker's flag.
+
+**Any size below the instrument's minimum.** Rounded *down* to the dealing
+increment, always: a size rounded up can breach the limit it was computed
+from. Below the minimum it is refused rather than raised, because a zero is
+the sizing step declining and rounding it up would override that decision.
+
+**Everything, when the account and the record disagree.** A position the
+bridge never opened, or one it opened that is not there, means something is
+wrong that is not yet understood -- and the most likely cause of a mismatch
+is the thing that would make the next order wrong too. It alerts and stops
+opening. It does not try to correct: acting on an account you have just
+demonstrated you do not understand is how one bad read becomes several bad
+trades.
+
+Every decision is recorded, including the refusals. A refusal is the more
+interesting record: it is the only evidence of the limits doing their job.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Sequence
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "Intent",
+    "BridgeReport",
+    "plan_orders",
+    "reconcile",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class Intent:
+    """One instrument: what is held, what is wanted, and what to do."""
+
+    ticker: str
+    epic: str = ""
+    direction: str = "flat"
+    held_units: float = 0.0
+    target_units: float = 0.0
+    action: str = "none"          # open | resize | close | none | refused
+    reason: str = ""
+    price: float | None = None
+    notional: float | None = None
+    deal_id: str = ""
+
+    @property
+    def acts(self) -> bool:
+        return self.action in ("open", "resize", "close")
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeReport:
+    """What one pass decided, and whether it was allowed to act at all."""
+
+    intents: tuple[Intent, ...] = ()
+    halted: bool = False
+    halt_reason: str = ""
+    balance: float | None = None
+    gross_target: float | None = None
+    unexplained: tuple[str, ...] = ()
+    missing: tuple[str, ...] = ()
+
+    @property
+    def actionable(self) -> tuple[Intent, ...]:
+        return () if self.halted else tuple(i for i in self.intents if i.acts)
+
+
+def _round_down(value: float, increment: float) -> float:
+    """Down to the dealing increment, never up.
+
+    A size rounded up can breach the limit it was computed from, which would
+    make this module the cause of the problem it exists to prevent.
+    """
+    if not increment or increment <= 0:
+        return float(value)
+    steps = int(abs(value) / increment)
+    return float(steps * increment) * (1.0 if value >= 0 else -1.0)
+
+
+def reconcile(
+    held: Mapping[str, Mapping[str, Any]],
+    placed: Mapping[str, Mapping[str, Any]],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Compare the account against the record. Returns (unexplained, missing).
+
+    ``held`` is what the broker says, keyed by epic; ``placed`` is what this
+    bridge believes it opened. Both directions matter and they fail
+    differently: an unexplained position is money at risk nobody chose, and a
+    missing one means an order the app believes filled did not -- so the
+    engine is reasoning about a position that does not exist.
+    """
+    in_account = {str(k) for k in (held or {})}
+    in_record = {str(k) for k in (placed or {})}
+    return tuple(sorted(in_account - in_record)), tuple(sorted(in_record - in_account))
+
+
+def plan_orders(
+    signals: Sequence[Mapping[str, Any]],
+    markets: Mapping[str, Any],
+    positions: Mapping[str, Mapping[str, Any]],
+    *,
+    balance: float,
+    limits,
+    exposure_per_unit_size: float,
+    rebalance_threshold: float,
+    session_open: Mapping[str, bool] | None = None,
+    placed: Mapping[str, Mapping[str, Any]] | None = None,
+    fx_rate: float = 1.0,
+) -> BridgeReport:
+    """Decide what to place. Pure: it reads and returns, and places nothing.
+
+    Separated from the dealing so the decision can be tested without a
+    network and without a gate — the thing that decides and the thing that
+    acts are different concerns, and only one of them can lose money.
+    """
+    from cfdinvest.execution.state import needs_resize
+    import numpy as np
+
+    unexplained, missing = reconcile(
+        positions, placed if placed is not None else positions
+    )
+    halt_reason = ""
+    if unexplained or missing:
+        halt_reason = (
+            "the account and the record disagree — "
+            + (f"unexplained: {', '.join(unexplained)}. " if unexplained else "")
+            + (f"missing: {', '.join(missing)}. " if missing else "")
+            + "Opening nothing until a person has looked."
+        )
+
+    if not balance or balance <= 0:
+        return BridgeReport(
+            halted=True,
+            halt_reason="the balance could not be read, so nothing can be sized",
+        )
+
+    open_now = dict(session_open or {})
+    intents: list[Intent] = []
+    gross = 0.0
+
+    for row in signals or ():
+        ticker = str(row.get("ticker") or "")
+        if not ticker:
+            continue
+        market = markets.get(ticker)
+        position = dict(positions.get(getattr(market, "epic", ticker), {}) or {})
+        held_units = float(position.get("size") or 0.0)
+        if str(position.get("direction") or "").upper() in ("SELL", "SHORT"):
+            held_units = -held_units
+
+        epic = getattr(market, "epic", "") or ticker
+        price = getattr(market, "offer", None) or getattr(market, "bid", None)
+        direction = str(row.get("direction") or "flat").lower()
+
+        def refuse(why: str) -> Intent:
+            return Intent(
+                ticker=ticker, epic=epic, direction=direction,
+                held_units=held_units, target_units=held_units,
+                action="refused", reason=why, price=price,
+            )
+
+        if market is None or price is None or price <= 0:
+            intents.append(refuse("no price"))
+            continue
+        if not open_now.get(ticker, False):
+            # Closing is refused too. A close outside the session pays the
+            # same widened spread as an open, and the engine's own exit will
+            # act on the next in-session bar.
+            intents.append(refuse("outside the exchange session"))
+            continue
+
+        # The engine's own sizing, in the engine's own terms.
+        share = 0.0
+        try:
+            share = float(row.get("size") or 0.0)
+        except (TypeError, ValueError):
+            share = 0.0
+        if direction not in ("long", "short"):
+            share = 0.0
+
+        wanted_notional = share * float(exposure_per_unit_size) * float(balance)
+        cap = float(getattr(limits, "max_exposure_per_instrument_gbp", 0.0) or 0.0)
+        capped = False
+        if cap and wanted_notional > cap:
+            wanted_notional, capped = cap, True
+
+        # Notional is in account currency; the instrument is not.
+        units = wanted_notional / (float(price) * float(fx_rate or 1.0))
+        if direction == "short":
+            units = -units
+
+        increment = getattr(market, "min_deal_size", None) or 0.0
+        target = _round_down(units, increment)
+        minimum = float(increment or 0.0)
+
+        if target == 0.0 and held_units == 0.0:
+            intents.append(refuse(
+                f"below the minimum deal size of {minimum:g}"
+                if share > 0 else "no signal"
+            ))
+            continue
+
+        if target == 0.0 and held_units != 0.0:
+            intents.append(Intent(
+                ticker=ticker, epic=epic, direction=direction,
+                held_units=held_units, target_units=0.0, action="close",
+                reason="the signal is flat" if share == 0 else "below the minimum",
+                price=price, deal_id=str(position.get("deal_id") or ""),
+            ))
+            continue
+
+        if held_units == 0.0:
+            gross += abs(target) * price * float(fx_rate or 1.0)
+            intents.append(Intent(
+                ticker=ticker, epic=epic, direction=direction,
+                held_units=0.0, target_units=target, action="open",
+                reason="capped by the per-instrument limit" if capped else "",
+                price=price,
+                notional=abs(target) * price * float(fx_rate or 1.0),
+            ))
+            continue
+
+        if (held_units > 0) != (target > 0):
+            # A reversal is a close and an open, never one order: the venue
+            # would net them, and the record would show neither.
+            intents.append(Intent(
+                ticker=ticker, epic=epic, direction=direction,
+                held_units=held_units, target_units=0.0, action="close",
+                reason="direction reversed", price=price,
+                deal_id=str(position.get("deal_id") or ""),
+            ))
+            continue
+
+        drifted = bool(
+            needs_resize(
+                np.array([held_units]), np.array([target]),
+                threshold=float(rebalance_threshold),
+            )[0]
+        )
+        gross += abs(target if drifted else held_units) * price * float(fx_rate or 1.0)
+        if not drifted:
+            intents.append(Intent(
+                ticker=ticker, epic=epic, direction=direction,
+                held_units=held_units, target_units=held_units, action="none",
+                reason="inside the rebalance threshold", price=price,
+            ))
+            continue
+
+        intents.append(Intent(
+            ticker=ticker, epic=epic, direction=direction,
+            held_units=held_units, target_units=target, action="resize",
+            reason="capped by the per-instrument limit" if capped else "",
+            price=price, notional=abs(target) * price * float(fx_rate or 1.0),
+            deal_id=str(position.get("deal_id") or ""),
+        ))
+
+    # The book-wide cap, applied last, exactly as the engine applies it after
+    # the keep rather than before -- a position opened when the balance was
+    # higher must not survive untouched into a breach.
+    ceiling = float(getattr(limits, "max_total_exposure_gbp", 0.0) or 0.0)
+    if ceiling and gross > ceiling:
+        scale = ceiling / gross
+        scaled: list[Intent] = []
+        for intent in intents:
+            if intent.action in ("open", "resize"):
+                shrunk = _round_down(
+                    intent.target_units * scale,
+                    getattr(markets.get(intent.ticker), "min_deal_size", None) or 0.0,
+                )
+                if shrunk == 0.0:
+                    scaled.append(Intent(
+                        ticker=intent.ticker, epic=intent.epic,
+                        direction=intent.direction, held_units=intent.held_units,
+                        target_units=intent.held_units, action="refused",
+                        reason="no headroom under the gross exposure limit",
+                        price=intent.price,
+                    ))
+                    continue
+                scaled.append(Intent(
+                    ticker=intent.ticker, epic=intent.epic,
+                    direction=intent.direction, held_units=intent.held_units,
+                    target_units=shrunk, action=intent.action,
+                    reason=(intent.reason + "; scaled to the gross limit").strip("; "),
+                    price=intent.price,
+                    notional=abs(shrunk) * (intent.price or 0.0) * float(fx_rate or 1.0),
+                    deal_id=intent.deal_id,
+                ))
+            else:
+                scaled.append(intent)
+        intents = scaled
+        gross = ceiling
+
+    # The intents survive a halt deliberately. Withholding them as well
+    # would leave nobody able to see what the pass would have done, and
+    # "here is what I wanted and here is why I did not" is the useful
+    # refusal -- ``actionable`` is what withholds the orders.
+    return BridgeReport(
+        intents=tuple(intents), balance=balance, gross_target=gross,
+        halted=bool(halt_reason), halt_reason=halt_reason,
+        unexplained=unexplained, missing=missing,
+    )
