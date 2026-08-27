@@ -50,6 +50,17 @@ class SignalConfig:
     #: Hold instruments with no Trading 212 CFD flat. Off only for
     #: research on the raw signal, never for a run you would act on.
     require_tradable: bool = True
+
+    #: Instruments loaded because something else needs them, and never
+    #: traded whatever the broker offers.
+    #:
+    #: The VIX is held flat because Trading 212 sells no instrument for it,
+    #: which ``require_tradable`` already catches. The currency pairs are
+    #: different: they are perfectly tradable, and the engine needs them in
+    #: the price panel to convert a dollar instrument into sterling. Without
+    #: this they would be loaded for pricing and then *traded*, putting five
+    #: FX positions into a book meant to measure twenty US shares.
+    reference_tickers: frozenset[str] = frozenset()
     #: Absolute strength required to want a position.
     entry_threshold: float = 0.3
 
@@ -92,9 +103,14 @@ class SignalConfig:
     #: is yesterday evening's -- while the fill is at a price containing the
     #: whole overnight move. Entries taken on that bar carry a mean adverse
     #: move of 0.38% between the close they were decided on and the price
-    #: they filled at, against 0.02% for every other bar, and they win 44.2%
-    #: of the time against 51.9% (208 trips, t=-2.26, p=0.025; the mean sits
-    #: at the 2.8th percentile of 2,000 random samples of the same size).
+    #: they filled at, against 0.02% for every other bar.
+    #:
+    #: **Off by default, and off in the shipped config.** The case for it --
+    #: 44.2% against 51.9%, t=-2.26, p=0.025 -- was measured while every
+    #: dollar instrument was marked at an exchange rate of 1.0. With the
+    #: rate applied it falls to t=-1.63, p=0.104, and the rule costs 1.1pp
+    #: of CAGR. The code stays because the effect may be real and merely too
+    #: small to see in two years of one regime; the default does not.
     #:
     #: Holding the stance rather than forcing a flat: a flat book stays flat
     #: so nothing opens into the gap, and a held position stays held so the
@@ -349,14 +365,27 @@ def generate_signals(
     # classification -- and taking a position in it would be worse than
     # useless: the recommendation could not be acted on, and the backtest
     # would be scoring P&L from a position that could never have existed.
+    reference = frozenset(getattr(settings, "reference_tickers", ()) or ())
     untradable = [
         column for column in columns
-        if not _is_tradable(column, settings)
+        if column not in reference and not _is_tradable(column, settings)
     ]
     if untradable:
         direction.loc[:, untradable] = "flat"
         logger.info(
             "Held flat, not tradable on Trading 212: %s", ", ".join(untradable)
+        )
+
+    # Separately, and reported separately: these *are* tradable and are held
+    # flat anyway. Folding them into the line above would say Trading 212
+    # does not offer GBPUSD, which is untrue and is the kind of untrue thing
+    # somebody later acts on.
+    held_for_reference = [column for column in columns if column in reference]
+    if held_for_reference:
+        direction.loc[:, held_for_reference] = "flat"
+        logger.info(
+            "Held flat, loaded for pricing only: %s",
+            ", ".join(held_for_reference),
         )
 
     is_flat = direction == "flat"
@@ -406,6 +435,7 @@ def generate_signals(
         },
         "active_bars": int((direction != "flat").to_numpy().sum()),
         "untradable": tuple(untradable),
+        "reference_only": tuple(held_for_reference),
     }
 
     return SignalFrame(

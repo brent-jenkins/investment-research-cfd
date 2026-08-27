@@ -42,10 +42,15 @@ So before anything opens, the signal is recomputed with the current price
 standing in as the bar in progress, and the trade proceeds only if the
 direction still matches and the confidence still clears the bar.
 
-Over 2,125 round trips that check would have refused 201, 9.5% of them.
-The refused won **36.3%** and averaged **-0.331%**; the kept won 52.7% and
-averaged +0.011% (t=+4.63, p<0.0001). On entries taken at a session open it
-refuses 46 of 208, averaging -0.498%.
+Over 2,139 round trips that check would have refused 197, 9.2% of them.
+The refused won **36.0%** and averaged **-0.323%**; the kept won 50.4% and
+averaged +0.005% (t=+4.18, p=0.000038).
+
+Those are the figures with exchange rates applied. An earlier version of
+this section quoted t=+4.63 from a run in which every dollar instrument was
+marked at a rate of 1.0, because the conversion pairs were named in the rate
+map and missing from the lake. The finding survived the correction; the
+session-open rule measured beside it did not, and was turned off.
 
 **What is deliberately not checked is the size of the move.** A rule
 refusing entries because the price has run against the signal would remove

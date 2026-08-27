@@ -428,15 +428,27 @@ def _execution_config(tickers, strategy=None):
 
 
 def _backtest_config(args, app_config) -> BacktestConfig:
-    """Build the pipeline config from CLI arguments and the app config."""
-    tickers = _universe(args) or list(app_config.market.tickers) or None
+    """Build the pipeline config from CLI arguments and the app config.
+
+    The conversion pairs are named in ``signal.reference_tickers`` rather
+    than added to ``tickers``. Putting them in the universe was tried and
+    is wrong: currency trades nearly around the clock and US shares do not,
+    so joining them into one hourly panel makes the index the union of two
+    calendars, the shares go NaN outside their session, and every signal in
+    the book dies. That is the mixed-session failure the universe was
+    narrowed to a single session to escape, walked straight back into.
+
+    They are attached to the price panel afterwards instead, on the traded
+    grid -- see ``backtest.runner.attach_reference_prices``.
+    """
+    universe = _universe(args) or list(app_config.market.tickers) or None
     return BacktestConfig(
-        tickers=tickers,
+        tickers=universe,
         series_ids=list(app_config.macro.series_ids) or None,
         interval=args.interval,
         start=args.start,
         end=args.end,
-        execution=_execution_config(tickers, app_config.strategy),
+        execution=_execution_config(universe, app_config.strategy),
         signal=dataclasses.replace(
             SignalConfig(),
             regime_mode=app_config.strategy.regime_mode,
@@ -447,6 +459,7 @@ def _backtest_config(args, app_config) -> BacktestConfig:
             hold_across_session_open=(
                 app_config.strategy.hold_across_session_open
             ),
+            reference_tickers=frozenset(fx_support_tickers()),
         ),
     )
 

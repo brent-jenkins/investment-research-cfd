@@ -945,3 +945,174 @@ def test_empty_frame_fx_views_do_not_raise():
     empty = ExecutionFrame()
     assert empty.fx_summary().empty
     assert empty.fx_total_cost == pytest.approx(0.0)
+
+
+# --------------------------------------------------------------------------- #
+# Reference prices: the rate the engine converts with
+#
+# M242 the reference series joined into the panel's index
+# M243 the pairs reaching the correlation and regime panels
+# M244 a rate left with holes instead of carried forward
+# M245 the existing columns disturbed by the attach
+# M246 an unavailable series passing silently
+# --------------------------------------------------------------------------- #
+def _equity_panel():
+    """A US session grid: five hourly bars a day, three days."""
+    stamps = []
+    for day in range(3):
+        start = pd.Timestamp("2026-08-24", tz="UTC") + pd.Timedelta(days=day)
+        stamps += [start + pd.Timedelta(hours=13, minutes=30) + pd.Timedelta(hours=h)
+                   for h in range(5)]
+    index = pd.DatetimeIndex(stamps, name="timestamp")
+    return pd.DataFrame({"AAPL": range(len(index)), "MSFT": range(len(index))},
+                        index=index, dtype="float64")
+
+
+class _PairRepository:
+    """A lake holding one currency pair, quoted around the clock."""
+
+    config = None
+
+    def __init__(self, stamps=None, closes=None):
+        if stamps is None:
+            # Hourly through the night, so the union of calendars would be
+            # far bigger than the equity grid.
+            stamps = pd.date_range("2026-08-24", periods=72, freq="h", tz="UTC")
+        if closes is None:
+            closes = np.linspace(0.70, 0.76, len(stamps))
+        self.frame = pd.DataFrame({
+            "timestamp": stamps, "ticker": "GBPUSD=X", "close": closes,
+        })
+
+    def load_market(self, tickers=None, interval=None, **kwargs):
+        return self.frame
+
+
+def _analysis_with(close):
+    from cfdinvest.preprocessing import AnalysisFrame
+
+    return AnalysisFrame(prices={"close": close})
+
+
+def test_the_rate_arrives_without_moving_the_grid():
+    """M242: the mixed-session failure, walked back into.
+
+    Currency trades nearly around the clock and US shares do not. Adding the
+    pairs to the universe makes the panel index the union of two calendars,
+    the shares go NaN outside their session, and every signal in the book
+    dies -- measured, not feared: it took the book from 1,109 trades a year
+    to zero.
+
+    So the series is reindexed onto the traded grid. The index it arrives on
+    must be the one it found.
+    """
+    from cfdinvest.backtest.runner import attach_reference_prices
+
+    close = _equity_panel()
+    analysis = _analysis_with(close)
+
+    attached = attach_reference_prices(
+        analysis, _PairRepository(), ["GBPUSD=X"], interval="1h"
+    )
+    panel = attached.prices["close"]
+
+    assert list(panel.index) == list(close.index), "the grid moved"
+    assert "GBPUSD=X" in panel.columns
+    assert panel["GBPUSD=X"].notna().all(), "the rate has holes in it"
+
+
+def test_the_rate_is_carried_forward_between_quotes():
+    """M244: a rate with holes falls back to the configured value.
+
+    A rate is a level that persists between observations -- the last quoted
+    rate *is* the rate until the next one. Reindexing without carrying
+    forward leaves NaN on any bar the vendor did not stamp, and the engine
+    treats an unreadable rate as 1.0, which is the whole bug.
+    """
+    from cfdinvest.backtest.runner import attach_reference_prices
+
+    close = _equity_panel()
+    # Quotes only once a day, well before the session opens.
+    sparse = pd.date_range("2026-08-24", periods=3, freq="D", tz="UTC")
+    repository = _PairRepository(stamps=sparse, closes=[0.70, 0.75, 0.80])
+
+    attached = attach_reference_prices(
+        _analysis_with(close), repository, ["GBPUSD=X"], interval="1h"
+    )
+    rate = attached.prices["close"]["GBPUSD=X"]
+
+    assert rate.notna().all()
+    assert rate.iloc[0] == pytest.approx(0.70)
+    assert rate.iloc[-1] == pytest.approx(0.80)
+    assert rate.is_monotonic_increasing
+
+
+def test_the_existing_columns_are_untouched():
+    """M245: an attach that rewrites what it was asked to extend."""
+    from cfdinvest.backtest.runner import attach_reference_prices
+
+    close = _equity_panel()
+    attached = attach_reference_prices(
+        _analysis_with(close), _PairRepository(), ["GBPUSD=X"], interval="1h"
+    )
+    panel = attached.prices["close"]
+
+    for column in close.columns:
+        assert np.allclose(panel[column].to_numpy(), close[column].to_numpy())
+
+
+def test_the_reference_series_never_reaches_the_derived_panels():
+    """M243: a currency pair in the correlation and regime computations.
+
+    The panels are built before this runs, and must stay that way. A rate is
+    for converting money, not for deciding what the market is doing -- and
+    moving the correlation regime with it would change every signal in the
+    book by a side effect of accounting.
+    """
+    from pathlib import Path
+
+    source = Path("cfdinvest/backtest/runner.py").read_text(encoding="utf-8")
+    body = source[source.index("def run_pipeline("):]
+    build = body.index("analysis_frame_from_repository")
+    attach = body.index("attach_reference_prices")
+
+    assert build < attach, (
+        "the reference series are attached before the panels are built, so "
+        "the correlations and regimes are computed over them"
+    )
+
+
+def test_a_series_that_cannot_be_read_is_reported_not_invented():
+    """M246: an absent rate passing quietly.
+
+    The engine's fallback is the configured rate, which is 1.0 -- a $150
+    share marked at £150. That fallback is correct as a fallback and must
+    never be reached silently.
+    """
+    from cfdinvest.backtest.runner import attach_reference_prices
+
+    class Empty:
+        config = None
+
+        def load_market(self, *a, **k):
+            return pd.DataFrame()
+
+    close = _equity_panel()
+    attached = attach_reference_prices(
+        _analysis_with(close), Empty(), ["GBPUSD=X"], interval="1h"
+    )
+
+    # The panel comes back usable and unchanged -- absence is not a crash.
+    assert "GBPUSD=X" not in attached.prices["close"].columns
+    assert list(attached.prices["close"].columns) == list(close.columns)
+
+
+def test_nothing_happens_when_nothing_is_asked_for():
+    """The common case: no reference series, no work, no change."""
+    from cfdinvest.backtest.runner import attach_reference_prices
+
+    close = _equity_panel()
+    analysis = _analysis_with(close)
+
+    assert attach_reference_prices(analysis, _PairRepository(), [], interval="1h") is analysis
+    assert attach_reference_prices(analysis, _PairRepository(), None, interval="1h") is analysis

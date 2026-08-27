@@ -104,6 +104,80 @@ def run_from_analysis(
     )
 
 
+def attach_reference_prices(analysis, repository, tickers, *, interval=None):
+    """Add reference series to the close panel, on the panel's own grid.
+
+    The execution layer reads its exchange rates out of
+    ``analysis.prices["close"]``, so a currency pair that is ingested but
+    never reaches that panel is a pair the engine still cannot see. Both
+    halves of that have now failed separately: the pairs were named in the
+    rate map but not fetched, and then fetched but not loaded.
+
+    They cannot simply join the universe. Currency trades nearly around the
+    clock and US shares do not, so a shared hourly panel takes the union of
+    two calendars, the shares go NaN outside their session, and every signal
+    dies -- the mixed-session failure the universe was narrowed to escape.
+    Measured rather than reasoned: loading five pairs that way took the book
+    from 1,109 trades a year to zero.
+
+    So they are **reindexed onto the traded grid** and forward-filled. The
+    index is untouched, which is the point: the correlations, the regimes and
+    every indicator were computed before this runs and cannot be moved by it.
+
+    Forward-filling is right here and would not be in a price panel used for
+    signals. A rate is a level that persists between observations -- the last
+    quoted rate *is* the rate until the next one -- where a stale share price
+    would be an invented bar.
+    """
+    import dataclasses as _dc
+
+    import pandas as pd
+
+    wanted = [str(t) for t in (tickers or ()) if str(t)]
+    if not wanted or analysis is None:
+        return analysis
+
+    close = (analysis.prices or {}).get("close")
+    if close is None or close.empty:
+        return analysis
+
+    missing = [t for t in wanted if t not in close.columns]
+    if not missing:
+        return analysis
+
+    try:
+        market = repository.load_market(
+            tickers=missing, interval=interval or repository.config.market.interval
+        )
+    except Exception as error:  # noqa: BLE001 - no rates is not an outage
+        logger.warning("Could not load reference series %s: %s", missing, error)
+        return analysis
+
+    if market is None or getattr(market, "empty", True):
+        logger.warning(
+            "No bars for reference series %s; every rate will fall back to "
+            "its configured value", missing,
+        )
+        return analysis
+
+    working = market.reset_index()
+    stamp = "timestamp" if "timestamp" in working.columns else working.columns[0]
+    name = "ticker" if "ticker" in working.columns else working.columns[1]
+    wide = working.pivot_table(index=stamp, columns=name, values="close")
+    wide.index = pd.to_datetime(wide.index, utc=True)
+
+    aligned = wide.reindex(close.index.union(wide.index)).ffill().reindex(close.index)
+    attached = close.join(aligned[[c for c in aligned.columns if c in missing]])
+
+    absent = [t for t in missing if t not in attached.columns]
+    if absent:
+        logger.warning("Reference series still absent after loading: %s", absent)
+
+    prices = dict(analysis.prices)
+    prices["close"] = attached
+    return _dc.replace(analysis, prices=prices)
+
+
 def run_pipeline(repository, config: BacktestConfig | None = None) -> PipelineResult:
     """Run the whole pipeline from the Parquet lake.
 
@@ -141,6 +215,15 @@ def run_pipeline(repository, config: BacktestConfig | None = None) -> PipelineRe
             settings.start,
             settings.end,
         )
+
+    # After the panels are built, deliberately: attaching before would put
+    # the pairs into the correlation and regime computations, and moving
+    # those is not what a currency rate is for.
+    analysis = attach_reference_prices(
+        analysis, repository,
+        getattr(settings.signal, "reference_tickers", ()) or (),
+        interval=settings.interval,
+    )
 
     return run_from_analysis(analysis, settings)
 

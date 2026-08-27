@@ -385,22 +385,22 @@ suggestion_confidence = 0.60
 
 # Take no signal action on the first bar of a session.
 #
-# The signal is computed on the last bar that closed -- at the open, that is
-# yesterday evening's -- while the fill happens at a live price containing
-# the whole overnight move. Measured over 2,125 round trips: entries on the
-# first bar of a session won 44.2% against 51.9% on every other bar, and
-# averaged -0.202% against -0.020% (208 trips, t=-2.26, p=0.025; the mean
-# sits at the 2.8th percentile of 2,000 random samples of the same size).
-# They carry a mean adverse move of 0.38% between the close they were
-# decided on and the price they filled at, against 0.02% elsewhere.
+# OFF, and it was briefly on. The case for it was that entries on the first
+# bar of a session won 44.2% against 51.9% everywhere else (t=-2.26,
+# p=0.025), and that the backtest returned 126.4% against 120.2%.
 #
-# Backtested: 126.4% against 120.2% CAGR, drawdown -18.2% against -18.4%,
-# Sharpe 2.58 against 2.49, with 4% fewer trades. That +6.2pp is one draw
-# and well inside what a twenty-name universe moves by on its own; the
-# trip-level evidence is what this rests on.
+# Both numbers were computed while every dollar instrument was being marked
+# at an exchange rate of 1.0 -- the conversion pairs were named in the rate
+# map and absent from the lake, so a $150 share was marked at £150. Re-run
+# with the rate attached, the trip-level finding falls to t=-1.63, p=0.104,
+# and the rule costs 1.1pp of CAGR (138.7% against 139.8%).
 #
-# It is NOT a rule against entering after a large adverse move -- those are
-# the best cohort measured, not the worst (57.7% win rate past 0.25%
-# adverse, against 41.2% for entries chasing a favourable move). The damage
-# is the opening bar itself, so that is what is held across.
-hold_across_session_open = true
+# So it is off. The code stays, tested and documented, because the effect
+# may be real and merely too small to see in two years of one regime -- but
+# a rule shipped on evidence that turned out to be an artefact has no claim
+# to stay on while it is re-earned.
+#
+# The defence against a stale decision at the open is now the last look in
+# advisor/livecheck.py, which re-evaluates the signal against the live price
+# before opening. That one survives the correction: t=+4.18, p=0.000038.
+hold_across_session_open = false
