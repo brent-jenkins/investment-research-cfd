@@ -294,3 +294,50 @@ def test_the_paper_book_cannot_reach_a_broker():
             for module in imported
             for word in ("broker.capital", "dealing", "urllib", "requests")
         ), f"{name} imports {sorted(imported)}"
+
+
+# --------------------------------------------------------------------------- #
+# M287 the broker's tradeable flag used as permission to trade
+# --------------------------------------------------------------------------- #
+def test_the_brokers_tradeable_flag_is_not_a_trading_gate():
+    """M287: the venue saying yes is not the same as it being sensible.
+
+    At 20:46 UTC, forty-six minutes after the US session closed, Capital.com
+    reported eighteen of twenty instruments as ``TRADEABLE``. It will happily
+    deal them -- at a median of 1.85x the in-session spread, and JNJ at 83.3bp
+    against 5.6bp in session.
+
+    So the gate is the exchange session, not the broker's flag. Owner's
+    decision, 2026-08-27, taken on that measurement plus the finding that the
+    signal does not predict the overnight move at all (49.4% right, p=0.375).
+
+    Asserted structurally because the mistake is so easy to make: the field is
+    right there in the market details, it is called ``tradable``, and reading
+    it as permission is the obvious thing to do.
+    """
+    dealing_source = Path("cfdinvest/broker/capital/dealing.py").read_text(
+        encoding="utf-8"
+    )
+    assert "tradable" not in dealing_source, (
+        "the dealing module reads the broker's tradeable flag; the session "
+        "calendar is what decides whether to trade"
+    )
+    assert "marketStatus" not in dealing_source
+
+
+def test_the_session_calendar_is_the_thing_that_says_when():
+    """And it says the regular session, for US equities.
+
+    The paper book already gates on this. Whatever places orders must gate on
+    the same one owner, or the two books diverge on which bars they traded.
+    """
+    import pandas as pd
+
+    from cfdinvest.schedule.market_calendar import describe
+
+    # 20:46 UTC, when Capital reported almost everything as tradeable.
+    after = describe(["AAPL", "JNJ"], pd.Timestamp("2026-08-27 20:46", tz="UTC"))
+    assert not after["is_open"].any(), "the calendar thinks the session is open"
+
+    during = describe(["AAPL", "JNJ"], pd.Timestamp("2026-08-27 15:00", tz="UTC"))
+    assert during["is_open"].all(), "the calendar thinks the session is shut"

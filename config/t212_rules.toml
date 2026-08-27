@@ -39,12 +39,22 @@
 # NKE was not. "Offers extended hours" and "is trading at this minute" are
 # different questions, and the sessions do not all start together.
 #
-# NOTHING TRADES ON IT. The strategy has no measured edge in that window:
-# 6,397 signals held into an overnight gap moved the right way 49.4% of the
-# time (mean +0.024%, t=+0.89, p=0.375), and no confidence band did better.
-# The spread there is unmeasured and thinner books are wider, against a
-# break-even near 6bp. It is recorded so the system knows what it does not
-# know.
+# NOTHING TRADES ON IT, and both halves of the reason are now measured.
+#
+# No edge: 6,397 signals held into an overnight gap moved the right way 49.4%
+# of the time (mean +0.024%, t=+0.89, p=0.375), and no confidence band did
+# better.
+#
+# And a real cost. Measured on Capital.com on 2026-08-27, the same twenty
+# instruments an hour apart either side of the 20:00 close: the spread
+# widened on nineteen of twenty, by a median of 1.85x. JNJ went from 5.6bp
+# to 83.3bp, XOM 7.7 to 52.9, JPM 3.4 to 24.3. Only TSLA tightened, which is
+# the one name with real after-hours volume. Against a break-even near 6bp
+# of friction that is decisive.
+#
+# Owner's decision, 2026-08-27: trade the regular session only. This had
+# been my recommendation on one measurement and one assumption; the
+# assumption is now the measurement.
 
 # ── CONFIRMED: 40 of 40 ──────────────────────────────
 
