@@ -1321,3 +1321,103 @@ def test_a_confirmed_breach_is_still_a_breach(recorded_lake):
     assert result.flags, "a confirmed position over the limit did not flag"
     assert result.severity == "critical"
     assert not result.advisory
+
+
+# --------------------------------------------------------------------------- #
+# Limits derived from the balance, never from a constant
+#
+# M274 a limit that does not move with the balance
+# M275 a balance figure hardcoded in the path that sizes real positions
+# M276 an unreadable balance defaulting to a number
+# M277 the concentration limit not applied to the derived gross
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("balance", [1_000.0, 2_000.0, 5_000.0, 37_512.44])
+def test_every_money_limit_scales_with_the_balance(balance):
+    """M274: a limit that stops meaning anything when the balance changes.
+
+    The defaults encode a £2,000 account -- £3,000 gross, £1,500 per
+    instrument. They were right for the account they were written for and
+    silently wrong for any other. The balance changes on the first
+    profitable day, on a deposit, and by a factor of two and a half between
+    the demo account and whatever a live one starts with.
+    """
+    limits = RiskLimits.for_balance(balance)
+
+    assert limits.account_balance_gbp == pytest.approx(balance)
+    assert limits.max_total_exposure_gbp == pytest.approx(balance * 2.5)
+    assert limits.max_exposure_per_instrument_gbp == pytest.approx(
+        balance * 2.5 * 0.40
+    )
+
+
+def test_doubling_the_balance_doubles_every_money_limit():
+    """The property, stated as a property rather than as four numbers."""
+    small = RiskLimits.for_balance(3_000.0)
+    large = RiskLimits.for_balance(6_000.0)
+
+    for field in ("account_balance_gbp", "max_total_exposure_gbp",
+                  "max_exposure_per_instrument_gbp"):
+        assert getattr(large, field) == pytest.approx(getattr(small, field) * 2), (
+            f"{field} did not scale with the balance"
+        )
+    # And the ratios do not move, because they are the thing being held fixed.
+    assert small.max_instrument_concentration_pct == pytest.approx(
+        large.max_instrument_concentration_pct
+    )
+
+
+def test_the_per_instrument_limit_is_a_share_of_the_derived_gross():
+    """M277: a concentration limit computed against the wrong base.
+
+    40% of gross, not 40% of the balance. At 2.5x leverage those differ by
+    the leverage factor, and taking the smaller one silently would make the
+    limit bind on positions the strategy was measured taking.
+    """
+    limits = RiskLimits.for_balance(5_000.0, concentration=0.40)
+
+    assert limits.max_exposure_per_instrument_gbp == pytest.approx(5_000.0)
+    assert limits.max_exposure_per_instrument_gbp == pytest.approx(
+        limits.max_total_exposure_gbp * 0.40
+    )
+
+
+def test_a_balance_that_could_not_be_read_is_refused():
+    """M276: sizing real positions against an invented account.
+
+    Every size downstream is a fraction of the balance, so a default here
+    would not be a small error -- it would be the whole basis of every
+    position, invented.
+    """
+    for bad in (0, -1.0, None):
+        with pytest.raises(ValueError):
+            RiskLimits.for_balance(bad)
+
+
+def test_the_broker_reports_a_balance_rather_than_the_code_assuming_one():
+    """The account reader keeps absence absent."""
+    from cfdinvest.broker.capital.client import CapitalAccount
+
+    empty = CapitalAccount()
+    assert empty.balance is None
+    assert not empty.ok, "an account with no balance must not read as usable"
+
+
+def test_no_balance_constant_appears_where_sizing_happens():
+    """M275: a number that will be silently wrong the day the account changes.
+
+    The point is not that £2,000 is the wrong figure. It is that any figure
+    here is wrong, because the balance is the broker's to report and ours to
+    read -- including when a live account starts at something else entirely.
+    """
+    from pathlib import Path
+
+    for module in (
+        "cfdinvest/broker/capital/client.py",
+        "cfdinvest/broker/capital/__init__.py",
+    ):
+        source = Path(module).read_text(encoding="utf-8")
+        for figure in ("2000", "2_000", "5000", "5_000"):
+            assert figure not in source, (
+                f"{module} contains {figure}, which looks like an account "
+                "balance; balances are read, never written"
+            )

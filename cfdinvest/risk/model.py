@@ -77,6 +77,45 @@ class RiskLimits:
     max_instrument_concentration_pct: float = 0.40
     max_drawdown_pct: float = 0.20
 
+    @classmethod
+    def for_balance(
+        cls,
+        balance: float,
+        *,
+        max_leverage: float = 2.5,
+        concentration: float = 0.40,
+    ) -> "RiskLimits":
+        """Limits derived from the balance the broker reports, as ratios.
+
+        Every money figure in this class is otherwise a constant, and the
+        defaults encode a £2,000 account -- £3,000 gross, £1,500 per
+        instrument. Those were right for the account they were written for
+        and silently wrong for any other, which is the whole hazard: a limit
+        that does not move with the balance is a limit that stops meaning
+        anything the moment the balance changes.
+
+        It changes on the first profitable day, on a deposit, and by a
+        factor of two and a half between the demo account and whatever a
+        live one starts with. So nothing here holds a balance; it holds
+        ratios, and the balance arrives from the broker each time.
+
+        ``max_leverage`` is the strategy's own, not a new number: the engine
+        already caps gross exposure at ``max_leverage * equity`` and the
+        config records why 2.5 rather than more. ``concentration`` is the
+        share of gross any one instrument may take.
+        """
+        if not balance or balance <= 0:
+            raise ValueError(
+                f"balance must be > 0 to derive limits from it, got {balance!r}"
+            )
+        gross = float(balance) * float(max_leverage)
+        return cls(
+            account_balance_gbp=float(balance),
+            max_total_exposure_gbp=gross,
+            max_exposure_per_instrument_gbp=gross * float(concentration),
+            max_instrument_concentration_pct=float(concentration),
+        )
+
     def __post_init__(self) -> None:
         if self.account_balance_gbp <= 0:
             raise ValueError(

@@ -136,6 +136,30 @@ class CapitalSession:
 
 
 @dataclass(frozen=True, slots=True)
+class CapitalAccount:
+    """What the account holds, as the broker reports it.
+
+    ``balance`` and ``available`` are different questions and both are
+    needed. The leverage cap is a statement about equity, so it reads the
+    balance; whether a position can actually be opened right now depends on
+    what is left after the margin already committed, which is ``available``.
+    Using one for the other silently permits a trade the account cannot
+    fund, or refuses one it can.
+    """
+
+    account_id: str = ""
+    currency: str = ""
+    balance: float | None = None
+    available: float | None = None
+    profit_loss: float | None = None
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error and self.balance is not None
+
+
+@dataclass(frozen=True, slots=True)
 class CapitalMarket:
     """One instrument's prices and dealing rules, as read."""
 
@@ -255,6 +279,53 @@ def open_session(
             error="authenticated but no CST / X-SECURITY-TOKEN in the response",
         )
     return session
+
+
+def fetch_account(
+    session: CapitalSession,
+    config: CapitalConfig | None = None,
+    *,
+    opener=None,
+) -> CapitalAccount:
+    """The preferred account's balance. Never raises.
+
+    An unreadable balance comes back absent rather than as a number, because
+    every size downstream is a fraction of it -- a default here would size
+    real positions against an invented account.
+    """
+    settings = config or CapitalConfig.from_env()
+    if not session.ok:
+        return CapitalAccount(error=session.error or "no session")
+
+    read = opener or _read
+    try:
+        document, _ = read(
+            f"{session.host}/accounts", headers=session.headers(settings.api_key)
+        )
+    except urllib.error.HTTPError as error:
+        return CapitalAccount(error=f"HTTP {error.code}")
+    except Exception as error:  # noqa: BLE001
+        return CapitalAccount(error=f"{type(error).__name__}: {error}")
+
+    accounts = (document or {}).get("accounts") or []
+    if not accounts:
+        return CapitalAccount(error="no accounts in the response")
+
+    chosen = next(
+        (a for a in accounts if str(a.get("accountId") or "") == session.account_id),
+        None,
+    )
+    if chosen is None:
+        chosen = next((a for a in accounts if a.get("preferred")), accounts[0])
+
+    balance = (chosen.get("balance") or {})
+    return CapitalAccount(
+        account_id=str(chosen.get("accountId") or ""),
+        currency=str(chosen.get("currency") or ""),
+        balance=_number(balance.get("balance")),
+        available=_number(balance.get("available")),
+        profit_loss=_number(balance.get("profitLoss")),
+    )
 
 
 def _number(value) -> float | None:
