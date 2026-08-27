@@ -769,7 +769,7 @@ def _command_paper_book(args, app_config, smtp=None, transport=None) -> int:
     Silence when nothing happened, which is most passes. Every cost is the
     real one, from the recorded Trading 212 table.
     """
-    from cfdinvest.advisor.papertrade_run import run_all_cohorts
+    from cfdinvest.advisor.papertrade_run import cohorts_for, run_all_cohorts
     from cfdinvest.livequotes.poller import poll_live_quotes
     from cfdinvest.persist import readers
 
@@ -820,6 +820,20 @@ def _command_paper_book(args, app_config, smtp=None, transport=None) -> int:
     # experiment.
     if not getattr(args, "no_email", False):
         fresh = papertrade.load_book(app_config, account)[before:]
+
+        # One arm only. The book runs four thresholds side by side, and the
+        # mail was carrying every event from all of them tagged by arm -- so
+        # a single signal on ADBE arrived as four lines and read as the same
+        # stock over and over. Sixteen mails in an afternoon, describing a
+        # book nobody could trade: you can only hold one of four parallel
+        # simulations.
+        #
+        # The baseline arm, read from the strategy's own entry bar rather
+        # than named here. Hardcoding it is exactly how the arms drifted
+        # from the engine once already.
+        arm = cohorts_for(app_config.strategy)[0][0]
+        fresh = [row for row in fresh if str(row.get("cohort") or "") == arm]
+
         if fresh:
             from cfdinvest.schedule.paper_alert import send_paper_alert
 
