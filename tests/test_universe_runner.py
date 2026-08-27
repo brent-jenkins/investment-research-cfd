@@ -221,3 +221,65 @@ def test_every_recorded_screen_carries_its_decision_date(screened_lake, capsys):
         stamp = str(row.get("as_of") or "")
         assert stamp.strip(), "a selection was recorded with no decision date"
         assert pd.Timestamp(stamp) is not pd.NaT
+
+
+def test_the_daily_ingest_fetches_every_candidate_the_screen_ranks(
+    tmp_path, monkeypatch
+):
+    """M266: named in the configuration, never fetched.
+
+    The screen ranks whatever the lake holds. With only the traded universe
+    in it, a screen of forty-nine candidates silently becomes a re-ranking
+    of the twenty held names and reports "it would add: nothing" -- the
+    reassuring answer, reached by being unable to see the alternatives.
+
+    This is the third thing today found named in the configuration and never
+    fetched, after the currency pairs twice over. The pattern is the same
+    each time: a list that is correct, and nothing that acts on it.
+    """
+    from cfdinvest.config import (
+        AppConfig, MarketDataConfig, PathConfig, UniverseConfig,
+    )
+    from cfdinvest.schedule import app
+    from cfdinvest.schedule import runner as runner_module
+
+    config = AppConfig(
+        paths=PathConfig(data_root=tmp_path),
+        market=MarketDataConfig(tickers=("AAA", "BBB"), interval="1h"),
+        universe=UniverseConfig(candidates=("AAA", "BBB", "CCC", "DDD")),
+    )
+
+    asked: list[list[str]] = []
+    monkeypatch.setattr(
+        runner_module, "_refresh",
+        lambda repository, tickers, settings: asked.append(
+            [str(t) for t in tickers]
+        ),
+    )
+
+    app.run_daemon_job("ingest-daily", parsed_run_once(), config)
+
+    assert asked, "the daily job fetched nothing"
+    # The last call is the daily top-up; the first is the trading interval.
+    daily = asked[-1]
+    assert {"CCC", "DDD"} <= set(daily), (
+        f"the daily top-up asked for {daily} -- the screen's candidates are "
+        "missing, so it can only ever rank what is already traded"
+    )
+    assert {"AAA", "BBB"} <= set(daily), "the traded universe was dropped"
+
+    # And the intraday job does not: those instruments are not traded, and
+    # the screen reads daily bars.
+    asked.clear()
+    app.run_daemon_job("ingest-intraday", parsed_run_once(), config)
+    assert asked, "the intraday job fetched nothing"
+    assert not ({"CCC", "DDD"} & set(asked[-1])), (
+        "the intraday job is fetching instruments nothing trades"
+    )
+
+
+def parsed_run_once():
+    """Real arguments from the real parser, as the daemon builds them."""
+    from cfdinvest.schedule import app
+
+    return app.build_parser().parse_args(["--no-email", "run-once"])

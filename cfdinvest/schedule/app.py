@@ -341,6 +341,27 @@ def _with_fx_support(tickers) -> list[str]:
     return wanted
 
 
+def _with_screen_pool(tickers, app_config) -> list[str]:
+    """The list, plus every candidate the universe screen ranks.
+
+    Daily bars only. The screen measures liquidity and volatility on daily
+    data -- they belong to an instrument rather than to the bar size it is
+    traded on -- and the candidates are not traded, so the intraday job has
+    no reason to fetch them.
+
+    Without this the screen ranks whatever happens to be in the lake, which
+    is the traded universe, and re-ranking the held names against each other
+    reports "it would add: nothing". That is the reassuring answer arrived at
+    by not being able to see the alternatives -- the third time today that a
+    thing named in the configuration was never fetched.
+    """
+    wanted = list(tickers or [])
+    for candidate in getattr(app_config.universe, "candidates", ()) or ():
+        if candidate not in wanted:
+            wanted.append(str(candidate))
+    return wanted
+
+
 def _execution_config(tickers, strategy=None):
     """The cost model, built from what the broker actually charges.
 
@@ -894,7 +915,10 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
                 import dataclasses as _dc
 
                 runner_module._refresh(
-                    repository, _with_fx_support(backtest.tickers),
+                    repository,
+                    _with_screen_pool(
+                        _with_fx_support(backtest.tickers), app_config
+                    ),
                     _dc.replace(backtest, interval=_SCREENING_INTERVAL),
                 )
             except Exception as error:  # noqa: BLE001
