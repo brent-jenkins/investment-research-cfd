@@ -239,7 +239,7 @@ labels in `risk.compute_regime_risk`, scheduler status in
 
 ## The dashboard
 
-Four pages, deliberately. It carried twenty-three and almost none were
+Five pages, deliberately. It carried twenty-three and almost none were
 read.
 
 - **Dashboard** — what the paper book has done: the four arms as one

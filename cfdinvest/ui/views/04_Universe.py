@@ -1,0 +1,145 @@
+"""The universe screen — what the rule would pick, and what is traded.
+
+The screen has run monthly since 2026-08-27 and been visible to nobody. It
+appends a selection to a store and prints to a terminal, so a month where
+three names drifted out of the rule's answer was recorded and then sat
+there. An alarm that rings where no one is standing is not an alarm.
+
+**Nothing here changes anything.** Editing the traded universe stays a human
+act at the command line, and `config.toml` says so: the screen "reports the
+difference and records it, and never edits this file". That is the right
+arrangement and this page does not soften it -- there is no button, because
+the moment there is one the question stops being "should this change?" and
+becomes "why not, it is only a click".
+
+The reason to be slow about it is measured. Consecutive screens correlate at
++0.97 to +0.99 and the selection moves by one or two names a month, so
+almost every difference this page shows is noise wearing the clothes of a
+signal. The pool is also drawn with hindsight -- US large caps that are
+large *now* -- so the screen is reproducible while the thing it screens is
+not. Drift is worth seeing and rarely worth acting on.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_ROOT = str(Path(__file__).resolve().parents[3])
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+import pandas as pd  # noqa: E402
+import streamlit as st  # noqa: E402
+
+from cfdinvest.config import load_config  # noqa: E402
+from cfdinvest.ui import components  # noqa: E402
+
+components.page_setup(
+    st,
+    "Universe",
+    icon="🔭",
+    subtitle="What the screening rule would pick, beside what is actually "
+    "traded. Read-only: changing the universe stays a human act.",
+)
+
+settings = load_config()
+traded = list(settings.market.tickers or ())
+
+try:
+    from cfdinvest.universe.screen import load_screens
+
+    screens = load_screens(settings)
+except Exception as error:  # noqa: BLE001
+    screens = []
+    st.warning(f"The selection store could not be read: {error}")
+
+# --- what is traded now ---------------------------------------------------- #
+st.subheader("Traded")
+st.caption(
+    "From `market.tickers`. Changing it is a human act at the command line; "
+    "the monthly screen reports and records, and never edits it."
+)
+st.write(", ".join(traded) if traded else "—")
+
+if not screens:
+    # Absent is not the same as agreeing. A page that rendered an empty
+    # drift table would read as "nothing has moved", which is a claim
+    # nobody has made.
+    st.info(
+        "No screen has been recorded yet, so there is nothing to compare "
+        "against. The monthly job runs on the first at 03:10 UTC, or "
+        "`cfdinvest-universe screen` runs it now."
+    )
+    st.stop()
+
+latest = screens[-1]
+selected = list(latest.get("selected") or ())
+
+# --- the rule's answer against the traded list ----------------------------- #
+st.subheader("Drift")
+joined = [t for t in selected if t not in traded]
+left = [t for t in traded if t not in selected]
+
+columns = st.columns(3)
+columns[0].metric("Screened", len(selected))
+columns[1].metric("Would join", len(joined))
+columns[2].metric("Would leave", len(left))
+
+if not joined and not left:
+    st.success("The rule's answer matches what is traded.")
+else:
+    st.caption(
+        f"As of {str(latest.get('as_of') or 'an unrecorded date')[:19]}. "
+        "One or two names a month is the normal amount of movement; "
+        "consecutive screens correlate at +0.97 to +0.99, so a small "
+        "difference is usually noise rather than news."
+    )
+    st.dataframe(
+        pd.DataFrame(
+            [{"instrument": t, "difference": "would join"} for t in joined]
+            + [{"instrument": t, "difference": "would leave"} for t in left]
+        ),
+        hide_index=True,
+        width="stretch",
+    )
+
+capped = list(latest.get("sector_capped") or ())
+if capped:
+    st.caption(
+        "Held back by the sector cap rather than by rank: "
+        + ", ".join(capped)
+    )
+
+for note in latest.get("notes") or ():
+    st.caption(str(note))
+
+# --- the history ------------------------------------------------------------ #
+st.subheader("Recorded screens")
+st.caption(
+    "Append-only. A selection is a decision taken on evidence that has since "
+    "moved, and one that can be edited afterwards is evidence of nothing."
+)
+
+rows = []
+previous: set[str] = set()
+for row in screens:
+    names = set(row.get("selected") or ())
+    rows.append({
+        "as of": str(row.get("as_of") or "?")[:19],
+        "selected": len(names),
+        "joined": len(names - previous) if previous else 0,
+        "left": len(previous - names) if previous else 0,
+        "vs traded": len(names.symmetric_difference(traded)),
+    })
+    previous = names
+
+st.dataframe(
+    pd.DataFrame(rows[::-1]), hide_index=True, width="stretch"
+)
+
+st.caption(
+    "The pool is US large caps that are large *now*, so it is drawn with "
+    "hindsight: screening within it is reproducible, the pool itself is not "
+    "a measurement. See `cfdinvest/universe/README.md`."
+)

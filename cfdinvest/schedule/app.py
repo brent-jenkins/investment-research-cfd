@@ -1049,15 +1049,29 @@ def _send_capital_trades(
                     f"  {intent.action.upper():6s} {intent.ticker:6s} {why}"
                 )
         if refused:
-            lines += ["", "Refused before reaching the broker:"]
+            # Counted, not listed. A refusal is the normal outcome of a
+            # limit doing its job and there can be a dozen a pass; spelling
+            # each one out is how a mail stops being read, and they are all
+            # in the order store with their reasons intact. A *failure* is
+            # different and stays in full above.
+            reasons: dict[str, int] = {}
             for intent in refused:
-                lines.append(f"  {intent.ticker:6s} {intent.reason}")
+                key = str(intent.reason or "refused").split(":")[0]
+                reasons[key] = reasons.get(key, 0) + 1
+            lines += ["", "Not opened: " + ", ".join(
+                f"{count} {reason}" for reason, count in sorted(reasons.items())
+            )]
 
         balance = getattr(account, "balance", None)
         if balance is not None:
             lines += ["", f"Balance: {balance:,.2f} "
                           f"{getattr(account, 'currency', '') or ''}".rstrip()]
 
+        if not done and not failed:
+            logger.info(
+                "Capital: %d refused and nothing placed; no mail sent", len(refused)
+            )
+            return
         subject = (
             f"{len(done)} placed, {len(failed)} failed "
             f"on the Capital {where} account"
@@ -1417,6 +1431,8 @@ def _command_paper_book(args, app_config, smtp=None, transport=None) -> int:
         latest, prices, config=app_config, account=account,
         rules=rules, venue=venue, live_armed=live_armed,
         rebalance_threshold=strategy.rebalance_threshold,
+        open_delay_minutes=strategy.open_delay_minutes,
+        max_opens_per_pass=strategy.max_opens_per_pass,
     )
 
     # The events this pass appended, read back from the book rather than

@@ -942,15 +942,22 @@ def test_every_page_file_appears_in_the_navigation():
 
 
 def test_the_pages_directory_matches_the_specified_layout():
-    """Three pages, deliberately.
+    """Five pages, deliberately.
 
     The dashboard carried twenty-three during development and almost none
     of them were read. This is a research period: the questions that matter
-    are what the paper book has done, whether the machine is healthy, and
-    what the model wants today. Everything else was removed rather than
+    are what the shadow book has done, whether the machine is healthy, what
+    the model wants today, what the account holds, and whether the traded
+    universe still matches the rule. Everything else was removed rather than
     left to rot behind a nav item, and git holds it if it is wanted back.
+
+    Universe joined on 2026-08-28. The monthly screen had run since
+    2026-08-27 and appeared nowhere: it appended a selection to a store and
+    printed to a terminal, so a month in which names drifted out of the
+    rule's answer was recorded and then sat there.
     """
-    expected = {"00_Dashboard.py", "01_Status.py", "02_Signals.py", "03_Broker.py"}
+    expected = {"00_Dashboard.py", "01_Status.py", "02_Signals.py",
+                "03_Broker.py", "04_Universe.py"}
     assert {p.name for p in (UI / "views").glob("*.py")} == expected
 
 

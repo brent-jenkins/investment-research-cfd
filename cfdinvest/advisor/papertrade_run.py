@@ -226,6 +226,38 @@ def _market_open(ticker: str, now) -> bool:
         return True
 
 
+def _past_the_open(ticker: str, now, delay_minutes) -> bool:
+    """Whether this market has been open for ``delay_minutes`` already.
+
+    Asked of the market calendar -- "was it *also* open that long ago" --
+    rather than computed from a session start, so daylight saving, holidays
+    and per-instrument sessions are handled by the component that already
+    knows about them.
+
+    The calendar covers the regular session only: it reports nothing open at
+    13:29 UTC and everything open at 13:31, so pre-market cannot answer the
+    question early. That is the way this check fails silently if it ever
+    changes, which is why a test pins it.
+
+    Fails **closed**: a calendar that cannot be read means the answer is not
+    known, and not knowing is not permission.
+    """
+    delay = int(delay_minutes or 0)
+    if delay <= 0:
+        return True
+    try:
+        import pandas as pd
+
+        from cfdinvest.schedule import scheduler
+
+        return bool(scheduler.any_open([ticker], now - pd.Timedelta(minutes=delay)))
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            "%s: no calendar for the opening window (%s); not opening", ticker, error
+        )
+        return False
+
+
 def _reports_within(ticker: str, now, days: int, earnings) -> bool:
     """Whether a reporting date falls inside the next ``days``."""
     import pandas as pd
@@ -267,6 +299,8 @@ def run_paper_pass(
     venue: str = "",
     live_armed: bool | None = None,
     rebalance_threshold: float | None = None,
+    open_delay_minutes: int | None = None,
+    max_opens_per_pass: int | None = None,
 ) -> dict[str, Any]:
     """Close what is due and open what qualifies. Never raises.
 
@@ -290,6 +324,16 @@ def run_paper_pass(
     # which is what every pass before 2026-08-28 used and what the tests
     # still exercise -- the switch is made by the caller, not assumed here.
     rules = load_rules() if rules is None else rules
+    # The same two guards the account applies, on the same settings. They
+    # live here as well as in the bridge because the book is what decides:
+    # guarding only the follower makes the two enter at different prices,
+    # and the gap between them then measures the timing difference rather
+    # than how wrong the simulation is.
+    strategy = getattr(config, "strategy", None)
+    if open_delay_minutes is None:
+        open_delay_minutes = int(getattr(strategy, "open_delay_minutes", 0) or 0)
+    if max_opens_per_pass is None:
+        max_opens_per_pass = getattr(strategy, "max_opens_per_pass", None)
     if rebalance_threshold is None:
         rebalance_threshold = float(
             getattr(getattr(config, "strategy", None), "rebalance_threshold", 0.25)
@@ -429,6 +473,7 @@ def run_paper_pass(
         and _confidence_of(row) >= threshold
         and prices.get(ticker) is not None
         and _market_open(ticker, now)
+        and _past_the_open(ticker, now, open_delay_minutes)
     ]
     rechecked = (
         livecheck.reevaluate(candidates, prices, config=config, at=now)
@@ -458,6 +503,12 @@ def run_paper_pass(
             continue
         if not _market_open(ticker, now):
             skip("market closed")
+            continue
+        # The bell is the dearest moment of the day to enter: the opening
+        # hour's median spread is 9.26bp against 7.14bp in the core session.
+        # Closes are never delayed -- they are handled above, before this.
+        if not _past_the_open(ticker, now, open_delay_minutes):
+            skip("within the opening window")
             continue
 
         last_close = closed_at.get(ticker)
@@ -503,6 +554,31 @@ def run_paper_pass(
             continue
         events.append(trade)
         opened += 1
+
+    # At most so many new positions per pass, highest conviction first --
+    # the re-evaluated conviction where there is one, because if only three
+    # go through they should be the three the strategy believes in now.
+    #
+    # Closes are never deferred, so only the opens are counted and cut.
+    if max_opens_per_pass is not None:
+        fresh = [e for e in events if e.event == "open"]
+        if len(fresh) > int(max_opens_per_pass):
+            def conviction(event):
+                seen = (rechecked or {}).get(event.ticker) or {}
+                return float(
+                    seen.get("confidence")
+                    if seen.get("confidence") is not None
+                    else (event.confidence or 0.0)
+                )
+
+            keep = sorted(fresh, key=conviction, reverse=True)[:int(max_opens_per_pass)]
+            kept = {id(e) for e in keep}
+            deferred = len(fresh) - len(keep)
+            events = [e for e in events if e.event != "open" or id(e) in kept]
+            opened = len(keep)
+            skipped["deferred to a later pass"] = (
+                skipped.get("deferred to a later pass", 0) + deferred
+            )
 
     written = papertrade.record(events, config, account)
     summary = {

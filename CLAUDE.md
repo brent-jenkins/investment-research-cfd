@@ -259,7 +259,7 @@ it exists to prevent.
 | `confirm/` `journal/` `insights/` `bias/` | What you did, and what it says |
 | `simulate/` `metastrategy/` | Rehearsal; risk posture |
 | `accounts/` | Registry and router |
-| `ui/` | 21 Streamlit pages. Optional install. |
+| `ui/` | 5 Streamlit pages. Optional install. |
 
 **Where things are computed once and read everywhere:** expectancy in
 `analytics/`, regime labels in `risk.compute_regime_risk`, scheduler status in

@@ -412,3 +412,93 @@ def test_both_capital_mails_build_a_message_that_exists():
             f"{name} builds a message class that does not exist"
         )
         assert "_plain_message(" in source
+
+
+def test_a_pass_that_placed_nothing_sends_no_mail():
+    """M383: a mail every pass, which is how a channel stops being read.
+
+    Refusals are the normal outcome of limits doing their job and there can
+    be a dozen a pass. They are all in the order store with their reasons
+    intact; the mail is for what *happened*.
+    """
+    from dataclasses import dataclass
+
+    from cfdinvest.schedule import app
+    from cfdinvest.schedule.notify import RecordingTransport, SmtpConfig
+
+    @dataclass
+    class Intent:
+        ticker: str
+        action: str = "refused"
+        direction: str = "long"
+        target_units: float = 0.0
+        reason: str = "deferred: 3 opens already this pass, 5 waiting"
+
+    @dataclass
+    class Account:
+        balance: float = 5000.0
+        currency: str = "GBP"
+
+    transport = RecordingTransport()
+    app._send_capital_trades(
+        [], [Intent("AAPL"), Intent("META")], Account(), "demo",
+        SmtpConfig(sender="a@b.c", recipients=("you@example.com",)), transport,
+    )
+    assert transport.messages == [], "a mail was sent for a pass that did nothing"
+
+
+def test_refusals_are_counted_rather_than_listed():
+    """One summary line, not one line each.
+
+    Nine "deferred" lines per pass buries the three that matter. A failure
+    is different and stays in full, because that is the one needing a
+    person.
+    """
+    from dataclasses import dataclass
+
+    from cfdinvest.schedule import app
+    from cfdinvest.schedule.notify import RecordingTransport, SmtpConfig
+
+    @dataclass
+    class Intent:
+        ticker: str
+        action: str
+        direction: str = "long"
+        target_units: float = 2.0
+        reason: str = ""
+
+    @dataclass
+    class Result:
+        ok: bool = True
+        size: float = 4.0
+        level: float = 100.0
+        error: str = ""
+        reason: str = ""
+
+    @dataclass
+    class Account:
+        balance: float = 5000.0
+        currency: str = "GBP"
+
+    refused = [
+        Intent(t, "refused", reason="deferred: 3 opens already this pass, 5 waiting")
+        for t in ("AAPL", "META", "NKE")
+    ] + [
+        Intent(t, "refused", reason="no longer clears the bar")
+        for t in ("GOOGL", "TSLA")
+    ]
+
+    transport = RecordingTransport()
+    app._send_capital_trades(
+        [(Intent("MSFT", "open"), Result()),
+         (Intent("NKE", "close"), Result(ok=False, error="POSITION STILL OPEN"))],
+        refused, Account(), "demo",
+        SmtpConfig(sender="a@b.c", recipients=("you@example.com",)), transport,
+    )
+    body = transport.messages[0].get_content()
+
+    assert "3 deferred" in body and "2 no longer clears the bar" in body
+    assert body.count("deferred") == 1, "the refusals were listed one by one"
+    # What happened is still spelled out in full, failures included.
+    assert "MSFT" in body
+    assert "POSITION STILL OPEN" in body, "a failure was summarised away"

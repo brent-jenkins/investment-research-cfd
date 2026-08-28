@@ -49,6 +49,7 @@ PAGES: tuple[tuple[str, str, str], ...] = (
     ("views/01_Status.py", "System status", "🩺"),
     ("views/02_Signals.py", "Signals", "🧭"),
     ("views/03_Broker.py", "Broker", "🏦"),
+    ("views/04_Universe.py", "Universe", "🔭"),
 )
 
 def _sign_in() -> None:
