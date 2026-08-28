@@ -73,6 +73,42 @@ implied_leverage = 5.0
 # is about $25 of notional, so a position smaller than that cannot be taken
 # at all. The bridge refuses rather than rounding up, which is why these are
 # here.
+# Instrument currency, from the same API read. Every one of the twenty is
+# USD against a GBP account, which is why the exchange rate is not optional
+# here: getting it upside down misstates every position by the square of the
+# rate, and that has happened on this project before.
+[currency]
+NVDA = "USD"
+AAPL = "USD"
+MSFT = "USD"
+AMZN = "USD"
+GOOGL = "USD"
+META = "USD"
+TSLA = "USD"
+AMD = "USD"
+AVGO = "USD"
+NFLX = "USD"
+ADBE = "USD"
+ORCL = "USD"
+JPM = "USD"
+XOM = "USD"
+JNJ = "USD"
+INTC = "USD"
+NKE = "USD"
+LULU = "USD"
+COST = "USD"
+CAT = "USD"
+
+# Whether a separate conversion fee is charged on the result.
+#
+# Trading 212 charges 0.5%. Capital publishes no such fee -- it converts at
+# spot -- so this is false for every instrument. Recorded as a measurement of
+# the published terms rather than left absent, because the FX layer reads an
+# absent flag as "not known" and would report the cost unverified forever.
+# If a fee is ever observed on a statement, this is the line that is wrong.
+[fx_conversion_fee_charged]
+default = false
+
 [min_deal_size]
 NVDA = 0.1
 AAPL = 0.1

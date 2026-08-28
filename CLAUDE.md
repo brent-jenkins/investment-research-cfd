@@ -11,9 +11,20 @@ yourself. It has never placed one.
 These are standing instructions from the project owner, not preferences.
 
 - **Trading 212 is never automated.** No T212 endpoints, public or private,
-  and no automation of its interface. This is not a preference either — the
-  owner confirmed there is no CFD API, so any automation would mean driving
-  the web UI, which breaches their terms.
+  and no automation of its interface. Trading 212 has no CFD API, so any
+  automation would mean driving the web UI, which breaches their terms.
+
+  **This was never a rule, and listing it here as one was a mistake**
+  (owner, 2026-08-28). It records a *limitation of what T212 makes
+  available*, not a choice about how this project should work. Automation
+  was wanted; it simply could not be had, and the manual-trading assistant
+  exists because hand-placing trades from its notifications was the only
+  route left. Reading it as a principle is what made the rest of the
+  project T212-shaped — a venue's missing API became the architecture.
+
+  It still holds, because the API still does not exist. It constrains T212
+  and nothing else, and it is not a reason to keep any other component
+  named, built or focused around that broker.
 - **Execution is opt-in, explicit, and off by default.** A broker client may
   exist; it may not place an order because a config file drifted. Anything
   that can trade says so in its name, is gated on an explicit setting, and

@@ -363,35 +363,47 @@ def _with_screen_pool(tickers, app_config) -> list[str]:
 
 
 def _execution_config(tickers, strategy=None):
-    """The cost model, built from what the broker actually charges.
+    """The cost model, built from what the venue being traded charges.
 
     The engine has always been able to take per-asset financing rates and a
     currency map; nothing populated them, so every run financed the whole
-    universe at a flat 8% long and *earned* 2% short. Trading 212 charges
-    both sides on everything recorded -- 25.33% to hold a US share long,
-    9.16% to hold one short -- and the difference over the 2005-2026 run was
-    £24,666 of understated cost, most of it from shorts that were being paid
-    to exist.
+    universe at a flat 8% long and *earned* 2% short. Charging both sides on
+    everything recorded was worth £24,666 of understated cost over the
+    2005-2026 run, most of it from shorts that were being paid to exist.
 
-    Anything with no recorded pair keeps the house rate. That is a real
-    approximation and it is logged by name rather than absorbed, because a
-    run financed partly at broker rates and partly at a default has a total
-    that is neither and looks like neither.
+    **The venue is now Capital**, because that is where the orders go.
+    Financing at 7.86%/yr long against the 25.33% previously charged is a
+    factor of 3.2 on the dominant cost line, and an engine costed on a
+    broker the account does not use produces signals sized for the wrong
+    world. The rates come from ``config/capital_rules.toml``, read from the
+    broker's API, and no network is touched here -- this runs long before
+    market open and must not depend on a broker being awake.
+
+    The financing figure is corroborated rather than confirmed; see the
+    terms file. Anything with no recorded pair keeps the house rate, logged
+    by name rather than absorbed, because a run financed partly at venue
+    rates and partly at a default has a total that is neither and looks like
+    neither.
     """
     from cfdinvest.config import StrategyConfig
     from cfdinvest.execution import ExecutionConfig
     from cfdinvest.execution.fx import FXConfig
     from cfdinvest.execution.state import HysteresisThresholds
+    from cfdinvest.advisor.capital_venue import static_rules
     from cfdinvest.ingestion.earnings import load_earnings_dates
     from cfdinvest.livehelper import broker_costs
 
     strategy = strategy or StrategyConfig()
     universe = list(tickers or ())
     try:
-        rates = broker_costs.financing_overrides(universe)
-        currencies = broker_costs.instrument_currencies(universe)
-        fee_flags = broker_costs.fx_fee_flags(universe)
-        missing = broker_costs.unpriced(universe)
+        # `broker_costs` was already venue-agnostic -- every reader takes an
+        # optional table and only the default was tied to one broker. So the
+        # switch is which table is handed in, not new machinery.
+        venue_table = static_rules(universe)
+        rates = broker_costs.financing_overrides(universe, venue_table)
+        currencies = broker_costs.instrument_currencies(universe, venue_table)
+        fee_flags = broker_costs.fx_fee_flags(universe, venue_table)
+        missing = broker_costs.unpriced(universe, venue_table)
     except Exception as error:  # noqa: BLE001 - an unreadable table is not an outage
         logger.warning(
             "Could not read the broker rules; financing falls back to the "
@@ -409,9 +421,11 @@ def _execution_config(tickers, strategy=None):
             len(missing), len(universe), ", ".join(missing),
         )
     logger.info(
-        "Financing %d instruments at recorded broker rates; %d of %d pay the "
-        "conversion fee.",
-        len(rates), sum(fee_flags.values()), len(fee_flags),
+        "Financing %d instruments at Capital's recorded rates (read %s, "
+        "confirmed against a charge: %s); %d of %d pay a conversion fee.",
+        len(rates), getattr(venue_table, "read_on", "") or "unknown",
+        getattr(venue_table, "financing_verified", "unknown"),
+        sum(fee_flags.values()), len(fee_flags),
     )
 
     try:
@@ -842,6 +856,7 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         return EXIT_OK
 
     opened = closed = resized = 0
+    outcomes: list[tuple] = []
     for intent in report.actionable:
         if intent.action == "close":
             result = dealing_module.close_position(intent.deal_id, session, settings)
@@ -858,12 +873,21 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
                 opened += 1 if intent.action == "open" else 0
                 resized += 1 if intent.action == "resize" else 0
         order_store.record_result(intent, result, app_config, account_name, now=now)
+        outcomes.append((intent, result))
         if result.error:
             logger.warning(
                 "Capital: %s %s failed: %s", intent.action, intent.ticker, result.error
             )
 
-    refused = sum(1 for i in report.intents if i.action == "refused")
+    refused_intents = [i for i in report.intents if i.action == "refused"]
+    if outcomes or refused_intents:
+        if not getattr(args, "no_email", False):
+            _send_capital_trades(
+                outcomes, refused_intents, account, settings.broker.environment,
+                smtp, transport,
+            )
+
+    refused = len(refused_intents)
     logger.info(
         "Capital: opened %d, resized %d, closed %d, refused %d, balance %.2f",
         opened, resized, closed, refused, account.balance or 0.0,
@@ -890,6 +914,92 @@ def _capital_fx_rate(markets, account_currency: str) -> float:
     return 1.0 / float(rate) if rate else 1.0
 
 
+def _plain_message(subject: str, lines, smtp=None):
+    """A plain-text email in the shape ``notify.send`` takes.
+
+    Every helper in ``notify`` composes one specific report, so there was no
+    way to send an arbitrary body. Two call sites here invented
+    ``notify.Message``, which does not exist, and both caught the resulting
+    AttributeError and logged it -- so the halt alert, whose entire job is
+    to be noticed, has never once sent.
+    """
+    from email.message import EmailMessage
+
+    from cfdinvest.schedule.notify import SmtpConfig
+
+    settings = smtp or SmtpConfig.from_env()
+    message = EmailMessage()
+    message["Subject"] = f"[CFDInvest] {subject}"
+    message["From"] = getattr(settings, "sender", None) or "cfdinvest@localhost"
+    message["To"] = ", ".join(getattr(settings, "recipients", ()) or [])
+    message.set_content("\n".join(str(line) for line in lines))
+    return message
+
+
+def _send_capital_trades(
+    outcomes, refused, account, environment, smtp, transport
+) -> None:
+    """What the account did this pass. Never raises.
+
+    Distinct from the shadow book's mail, which reports what the simulation
+    decided. The two are usually the same and the interesting moments are
+    exactly when they are not: an order the broker refused, or accepted and
+    never confirmed, appears here and nowhere else.
+
+    A failure is reported as loudly as a fill. A mail listing only what
+    worked would read as a complete account of the pass and would not be
+    one.
+    """
+    from cfdinvest.schedule import notify
+
+    try:
+        where = str(environment or "unknown").lower()
+        lines = [
+            f"Capital.com {where} account -- this pass.",
+            "",
+        ]
+        done = [(i, r) for i, r in outcomes if getattr(r, "ok", False)]
+        failed = [(i, r) for i, r in outcomes if not getattr(r, "ok", False)]
+
+        if done:
+            lines.append("Placed:")
+            for intent, result in done:
+                size = getattr(result, "size", None) or intent.target_units
+                level = getattr(result, "level", None)
+                lines.append(
+                    f"  {intent.action.upper():6s} {intent.ticker:6s} "
+                    f"{intent.direction or '':5s} {size:g} units"
+                    + (f" at {level:g}" if level else "")
+                )
+        if failed:
+            lines += ["", "FAILED -- the account may not match the record:"]
+            for intent, result in failed:
+                why = getattr(result, "error", "") or getattr(result, "reason", "")
+                lines.append(
+                    f"  {intent.action.upper():6s} {intent.ticker:6s} {why}"
+                )
+        if refused:
+            lines += ["", "Refused before reaching the broker:"]
+            for intent in refused:
+                lines.append(f"  {intent.ticker:6s} {intent.reason}")
+
+        balance = getattr(account, "balance", None)
+        if balance is not None:
+            lines += ["", f"Balance: {balance:,.2f} "
+                          f"{getattr(account, 'currency', '') or ''}".rstrip()]
+
+        subject = (
+            f"{len(done)} placed, {len(failed)} failed "
+            f"on the Capital {where} account"
+        )
+        notify.send(
+            _plain_message(subject, lines, smtp),
+            config=smtp, transport=transport,
+        )
+    except Exception as error:  # noqa: BLE001 - a lost mail is not an outage
+        logger.warning("Could not send the Capital trade mail: %s", error)
+
+
 def _send_bridge_halt(report, smtp, transport) -> None:
     """Say loudly that the account and the record disagree. Never raises."""
     from cfdinvest.schedule import notify
@@ -911,10 +1021,7 @@ def _send_bridge_halt(report, smtp, transport) -> None:
             body += ["", f"In the record, not in the account: "
                          f"{', '.join(report.missing)}"]
         notify.send(
-            notify.Message(
-                subject="cfdinvest: the demo account and the record disagree",
-                body="\n".join(body),
-            ),
+            _plain_message("the account and the record disagree", body, smtp),
             config=smtp, transport=transport,
         )
     except Exception as error:  # noqa: BLE001

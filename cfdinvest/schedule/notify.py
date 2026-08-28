@@ -377,8 +377,12 @@ def build_advisor_alert(alerts, config: SmtpConfig | None = None) -> EmailMessag
     )
     lines.append("")
     lines.append(
-        "This system places no trades and never has. You place them "
-        "yourself in the Trading 212 app."
+        "This alert is advisory: nothing here has been placed for you, and "
+        "acting on it means placing it yourself."
+    )
+    lines.append(
+        "Automated dealing runs separately, on the Capital.com demo "
+        "account only, and reports its own fills in its own mail."
     )
 
     message = EmailMessage()

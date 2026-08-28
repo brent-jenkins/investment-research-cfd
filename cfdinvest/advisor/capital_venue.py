@@ -40,7 +40,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ __all__ = [
     "CapitalRuleTable",
     "load_capital_terms",
     "rules_from_quotes",
+    "static_rules",
 ]
 
 #: The broker, without the account. Never written to a row on its own --
@@ -189,6 +190,57 @@ def load_capital_terms(path=None) -> dict[str, Any]:
         )
     with location.open("rb") as handle:
         return tomllib.load(handle)
+
+
+def static_rules(
+    tickers: Iterable[str] | None = None,
+    terms: Mapping[str, Any] | None = None,
+) -> CapitalRuleTable:
+    """The terms that do not need a quote: financing, margin, currency.
+
+    Everything here comes from ``config/capital_rules.toml`` and no network
+    is touched, which is what the backtest configuration needs -- it runs
+    long before market open and must not depend on a broker being awake.
+
+    No spread. The engine charges that separately from its own setting, and
+    inventing one here would put a second spread owner in the project.
+    """
+    document = terms if terms is not None else load_capital_terms()
+    financing = document.get("financing", {}) or {}
+    margin = document.get("margin", {}) or {}
+    minimums = document.get("min_deal_size", {}) or {}
+    currencies = document.get("currency", {}) or {}
+    fees = document.get("fx_conversion_fee_charged", {}) or {}
+
+    long_rate = float(financing.get("long_annual", 0.0)) or None
+    short_rate = float(financing.get("short_annual", 0.0)) or None
+    verified = bool(financing.get("financing_verified", False))
+    leverage = float(margin.get("implied_leverage", 0.0)) or None
+    default_fee = fees.get("default")
+
+    wanted = [str(t).upper() for t in (tickers or currencies.keys()) if str(t)]
+    built = {
+        name: CapitalInstrumentRules(
+            ticker=name,
+            leverage=leverage,
+            financing_annual_long=long_rate,
+            financing_annual_short=short_rate,
+            financing_rate=long_rate,
+            currency=currencies.get(name) or currencies.get(name.upper()),
+            min_quantity=_number(minimums.get(name)),
+            fx_fee_applies=(
+                bool(fees[name]) if name in fees
+                else (None if default_fee is None else bool(default_fee))
+            ),
+            available=True,
+            financing_verified=verified,
+        )
+        for name in wanted
+    }
+    return CapitalRuleTable(
+        rules=built, financing_verified=verified,
+        read_on=str((document.get("source", {}) or {}).get("read_on", "")),
+    )
 
 
 def rules_from_quotes(

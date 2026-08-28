@@ -899,8 +899,20 @@ def test_the_alert_email_says_what_to_do_and_what_it_cannot_do():
 
     assert "Apple" in body and "units" in body
     assert "Live-Execution Helper" in body
-    # The constraint that has held since the first commit.
-    assert "places no trades" in body
+    # It must say that acting on this alert is the reader's own act. It used
+    # to claim the system "places no trades and never has", which stopped
+    # being true on 2026-08-27 when the daemon was permitted to deal on the
+    # demo account -- a false sentence in the one mail whose job is to tell
+    # somebody what to do by hand.
+    assert "advisory" in body
+    assert "placing it yourself" in body
+    assert "places no trades" not in body, (
+        "the mail claims the system never trades; it deals on the demo "
+        "account, and the alert must not say otherwise"
+    )
+    # And it must say where the automation does run, so the two are not
+    # confused for each other.
+    assert "demo" in body
 
 
 def test_the_advisor_runs_on_the_quote_cadence():

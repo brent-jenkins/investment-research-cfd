@@ -242,8 +242,13 @@ def test_the_runner_enables_fx_and_charges_on_the_result(monkeypatch, table):
     """The three things the nightly run was not doing. M58."""
     import cfdinvest.schedule.app as app
 
+    # The venue table, not the Trading 212 loader: `_execution_config` reads
+    # whichever table it is handed, and since 2026-08-28 that is Capital's.
+    # What is asserted below is the *wiring* -- that per-instrument currency
+    # and fee flags reach the engine at all -- which is venue-independent
+    # and was the point of M58.
     monkeypatch.setattr(
-        "cfdinvest.livehelper.t212_rules.load_rules", lambda *a, **k: table
+        "cfdinvest.advisor.capital_venue.static_rules", lambda *a, **k: table
     )
     config = app._execution_config(["^GSPC", "^GDAXI"])
 
@@ -255,13 +260,18 @@ def test_the_runner_enables_fx_and_charges_on_the_result(monkeypatch, table):
 
 
 def test_an_unreadable_table_does_not_stop_the_run(monkeypatch):
-    """A missing rules file is the normal state, not an outage."""
+    """A missing terms file is the normal state, not an outage.
+
+    The run falls back to the house rate for the whole universe and says so
+    -- it does not stop, and it does not quietly finance half the book at
+    one venue's rates and half at a default.
+    """
     import cfdinvest.schedule.app as app
 
     def explode(*args, **kwargs):
         raise OSError("no such file")
 
-    monkeypatch.setattr("cfdinvest.livehelper.t212_rules.load_rules", explode)
+    monkeypatch.setattr("cfdinvest.advisor.capital_venue.static_rules", explode)
     config = app._execution_config(["^GSPC"])
 
     assert config.financing_rates is None
