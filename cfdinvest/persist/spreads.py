@@ -126,6 +126,7 @@ def spread_summary(
     tickers: Sequence[str] | None = None,
     in_session_only: bool = True,
     minimum: int = MIN_OBSERVATIONS,
+    scope: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Per instrument: the median spread, its sample, and whether to use it.
 
@@ -135,6 +136,13 @@ def spread_summary(
     ``usable`` is the whole point. A median of three readings is arithmetic,
     not a measurement, and the cost model needs to know which it is holding —
     so the figure is always reported and the *claim* is what gets withheld.
+
+    ``scope`` selects one series. Traded instruments are read every fifteen
+    minutes and candidates once a day, so a ticker that has been both would
+    otherwise have the two cadences pooled into one median — dominated by
+    whichever was sampled more often, and describing neither. Rows written
+    before the scope existed carry none and count as ``traded``, which is
+    what they were.
     """
     import statistics
 
@@ -145,6 +153,8 @@ def spread_summary(
     for row in readings:
         ticker = str(row.get("ticker") or "")
         if not ticker or (wanted is not None and ticker not in wanted):
+            continue
+        if scope is not None and str(row.get("scope") or "traded") != scope:
             continue
         if in_session_only and not row.get("session_open"):
             continue

@@ -106,6 +106,12 @@ JOBS: tuple[str, ...] = (
     "paper-book",
     "trade-capital",
     "ingest-daily",
+    # After the daily ingest, before the snapshots: the screen's cost term
+    # is an observation like any other and belongs with the housekeeping,
+    # not on the trading cadence. The candidates are not traded, so nothing
+    # needs their spread this minute -- only a history by the first of the
+    # month.
+    "record-candidate-spreads",
     "monitoring-snapshot",
     "risk-snapshot",
     "prune-runs",
@@ -231,6 +237,9 @@ def jobs_due(
 
     if _due_daily(moment, history.get("ingest-daily"), INGEST_AT_UTC):
         due.append("ingest-daily")
+        # On the same appointment as the ingest it follows: one reading a
+        # day over forty-nine names, against fifteen minutes over nineteen.
+        due.append("record-candidate-spreads")
 
     # Once a day, not on the intraday cadence: the snapshots and the prune
     # describe a day, and taken every fifteen minutes they would be ninety

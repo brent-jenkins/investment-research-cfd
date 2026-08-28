@@ -1112,6 +1112,42 @@ def _send_bridge_halt(report, smtp, transport) -> None:
         logger.warning("Could not send the halt alert: %s", error)
 
 
+def _command_record_candidate_spreads(args, app_config) -> int:
+    """The same reading, over the screen's candidates, once a day.
+
+    Gives the screen a cost term with real provenance. Until this existed it
+    ranked on liquidity, volatility and continuity alone -- none of which
+    can see that an instrument costs four times the median to trade, which
+    is how INTC stayed in the universe for months.
+
+    The traded names are excluded: they already have a fifteen-minute
+    series and reading them twice would put two cadences in one file under
+    one scope.
+    """
+    traded = set(app_config.market.tickers or ())
+    pool = [
+        t for t in (getattr(app_config.universe, "candidates", ()) or ())
+        if t not in traded
+    ]
+    if not pool:
+        logger.debug("No candidates outside the traded list; nothing to read")
+        return EXIT_OK
+
+    return _command_record_spreads(
+        _spread_args(args, pool, "candidate"), app_config
+    )
+
+
+def _spread_args(args, tickers, scope):
+    """A copy of ``args`` naming which instruments to read and why."""
+    import copy
+
+    clone = copy.copy(args)
+    clone.spread_tickers = list(tickers)
+    clone.spread_scope = scope
+    return clone
+
+
 def _command_record_spreads(args, app_config) -> int:
     """Read what a trade costs right now, and append it. Never fails a run.
 
@@ -1130,9 +1166,15 @@ def _command_record_spreads(args, app_config) -> int:
     from cfdinvest.schedule.market_calendar import describe
 
     account = getattr(args, "account", None)
-    tickers = list(app_config.market.tickers or ())
+    tickers = list(
+        getattr(args, "spread_tickers", None) or app_config.market.tickers or ()
+    )
     if not tickers:
         return EXIT_OK
+    # Which list this reading covers. Written onto every row so a later
+    # reader can tell a traded instrument's fifteen-minute series from a
+    # candidate's daily one, and never pool the two into one median.
+    scope = str(getattr(args, "spread_scope", "") or "traded")
 
     settings = capital.CapitalConfig.from_env()
     if not settings.complete:
@@ -1174,14 +1216,15 @@ def _command_record_spreads(args, app_config) -> int:
             "funding_short_raw": row.funding_short,
             "market_status": row.tradable,
             "session_open": open_now.get(row.ticker),
+            "scope": scope,
             "error": row.error,
         })
 
     written = store.record_spreads(observations, app_config, account)
     priced = sum(1 for row in rows if row.ok)
     logger.info(
-        "Spreads: recorded %d reading(s), %d priced of %d",
-        written, priced, len(rows),
+        "Spreads (%s): recorded %d reading(s), %d priced of %d",
+        scope, written, priced, len(rows),
     )
     return EXIT_OK
 
@@ -1556,6 +1599,10 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         )
     elif name == "prune-runs":
         _command_prune_runs(_job_args(args, "prune-runs"), app_config)
+    elif name == "record-candidate-spreads":
+        _command_record_candidate_spreads(
+            _job_args(args, "poll-live-quotes"), app_config
+        )
     elif name == "record-spreads":
         _command_record_spreads(_job_args(args, "poll-live-quotes"), app_config)
     elif name == "trade-capital":
