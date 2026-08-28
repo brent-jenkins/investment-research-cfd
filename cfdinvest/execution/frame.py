@@ -176,6 +176,31 @@ class ExecutionConfig:
     time_stop_threshold: float = 0.0
 
     # -- risk ------------------------------------------------------------- #
+    #: The most positions that may be open at once. ``None`` places no
+    #: limit, which is what every recorded run assumed.
+    #:
+    #: Until this existed the *universe* was the position limit: nothing in
+    #: the engine counted positions, so holding the traded list to eight
+    #: names was the only thing keeping the book to eight. That conflated
+    #: two questions -- which instruments are worth watching, and how many
+    #: can be held at once -- and answered the second by deciding the first
+    #: a month in advance.
+    #:
+    #: Separating them measured better. Every one of the forty-nine
+    #: candidates eligible with eight slots returned 13.6% against 7.5% for
+    #: a monthly list of eight, and was ahead in both halves of the span
+    #: (0.64/1.11 against 0.58/0.58 return-per-drawdown). Six slots measured
+    #: better still on a risk-adjusted basis. The gain is *eligibility*, not
+    #: the cap: an uncapped book scored higher again, and is unavailable
+    #: only because thirty-one concurrent positions fails on minimum deal
+    #: sizes long before it fails on margin.
+    #:
+    #: Incumbents keep their slots. A position already open is not
+    #: reconsidered against a newcomer, because churning one name out for a
+    #: marginally better-ranked one pays a round trip to act on a difference
+    #: the ranking is not accurate enough to resolve -- the same reason the
+    #: universe is not reselected weekly.
+    max_open_positions: int | None = None
     #: Cap on gross notional divided by equity.
     max_leverage: float = 5.0
     #: The largest share of the *gross ceiling* any one instrument may take.

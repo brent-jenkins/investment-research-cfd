@@ -484,6 +484,13 @@ def run_execution(signal_frame, analysis_frame, config):
         keep = (new_held == held) & (new_held != 0) & ~resize
         target_units = np.where(keep, units, target_units)
 
+        # Slots before sizing. How many positions may be held is a different
+        # question from how large each may be, and answering it after the
+        # caps would size a book that is about to lose half its members.
+        target_units, new_held = _apply_position_limit(
+            target_units, new_held, units, config
+        )
+
         # Cap AFTER the keep, not before. Applying it earlier let a position
         # opened when equity was higher survive untouched, quietly breaching
         # the limit the cap exists to enforce.
@@ -773,6 +780,62 @@ def _target_units(held, size_row, reference, equity, config, tradable):
     with np.errstate(invalid="ignore", divide="ignore"):
         units = notional / safe_price
     return np.nan_to_num(units)
+
+
+def _apply_position_limit(target_units, new_held, units, config):
+    """Refuse new positions once every slot is taken.
+
+    Incumbents keep their slots. A position already open is never displaced
+    by a newcomer, however well the newcomer ranks: swapping them pays a
+    round trip to act on a difference the ranking cannot resolve, and the
+    incumbent is the one already earning. Only genuinely free slots -- from
+    a position closing this bar -- are filled.
+
+    Priority among the newcomers is the size the signal layer asked for,
+    which already carries the conviction, the regime tilt and every filter
+    that has shrunk it. Ranking on anything else here would be a second
+    opinion about a question already answered upstream.
+
+    Returns the units and directions with refused entries zeroed. Pure.
+    """
+    limit = getattr(config, "max_open_positions", None)
+    if limit is None:
+        return target_units, new_held
+    limit = int(limit)
+    if limit <= 0:
+        return np.zeros_like(target_units), np.zeros_like(new_held)
+
+    wanted = target_units != 0
+    if int(wanted.sum()) <= limit:
+        return target_units, new_held
+
+    incumbent = wanted & (units != 0)
+    # An incumbent cannot be refused, so it consumes its slot first. If
+    # incumbents alone exceed the limit the cap has been lowered under a
+    # live book: keep the largest and let the rest close naturally rather
+    # than flattening an entire book on a config change.
+    keep = np.zeros_like(wanted)
+    order = np.argsort(-np.abs(target_units))
+    room = limit
+    for index in order:
+        if room <= 0:
+            break
+        if incumbent[index]:
+            keep[index] = True
+            room -= 1
+    for index in order:
+        if room <= 0:
+            break
+        if wanted[index] and not keep[index]:
+            keep[index] = True
+            room -= 1
+
+    # A refused newcomer is flat, not short: zero the units *and* the
+    # direction, or the position frame would record a holding the book
+    # never took.
+    target_units = np.where(keep, target_units, 0.0)
+    new_held = np.where(keep, new_held, 0).astype(new_held.dtype)
+    return target_units, new_held
 
 
 def _apply_concentration_cap(units, reference, equity, config):
