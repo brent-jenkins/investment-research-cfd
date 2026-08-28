@@ -276,7 +276,10 @@ def test_the_paper_book_does_not_import_dealing():
     import ast
     from pathlib import Path
 
-    for name in ("papertrade.py", "papertrade_run.py"):
+    # capital_venue.py joined the list on 2026-08-28. It supplies the book's
+    # cost basis from a broker's published terms, which is exactly the kind
+    # of file that would acquire a broker import by accident.
+    for name in ("papertrade.py", "papertrade_run.py", "capital_venue.py"):
         source = (Path("cfdinvest/advisor") / name).read_text(encoding="utf-8")
         assert "dealing" not in source, f"{name} references dealing"
         tree = ast.parse(source)

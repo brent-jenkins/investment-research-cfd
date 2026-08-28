@@ -1,0 +1,96 @@
+# Capital.com dealing rules and financing, read from the broker's own API.
+#
+# The equivalent of `t212_rules.toml`, and it exists for the same reason:
+# one table, with provenance on every figure, rather than numbers that look
+# measured because they are written down. The difference is that these were
+# not read off an app by hand -- they come from `GET /markets/{epic}` on the
+# demo account, so the source is the broker and the date is when it was
+# asked.
+#
+# Read by `cfdinvest.backtest.capital`. Nothing writes to it.
+#
+# ---------------------------------------------------------------------------
+# THE FINANCING UNIT, AND WHY IT IS STATED AS A PERCENTAGE PER DAY
+#
+# `overnightFee.longRate` comes back as -0.0215402 with
+# `swapChargeInterval: 1440` (minutes, so daily). That figure is ambiguous
+# on its face -- as a fraction it is 2.15%/day and therefore 786%/yr, and as
+# a percentage it is 0.0215%/day and therefore 7.86%/yr. A direct
+# measurement was attempted on 2026-08-27 with a 0.01-unit NFLX position and
+# failed: the position was too small and the charge came back as 0.00.
+#
+# It is recorded as the percentage reading, 7.86%/yr, on two independent
+# grounds rather than on preference:
+#
+#   1. It implies a markup of about 2.9% over a ~5% benchmark, which is an
+#      ordinary CFD financing spread. The fraction reading implies a markup
+#      of 781%, which no broker charges and which would make every position
+#      unprofitable within days -- contradicted by the account existing.
+#   2. Trading 212 charges 25.33%/yr long on US shares, measured. Capital was
+#      independently observed to be about three times cheaper long, and
+#      25.33 / 7.86 = 3.22.
+#
+# This is corroboration, not confirmation. It has NOT been settled by
+# observing an actual overnight charge on a position large enough to produce
+# one, and until it is, any backtest resting on it should say so. The
+# `financing_verified` flag below is what says so, and the backtest reports
+# it rather than assuming it.
+# ---------------------------------------------------------------------------
+
+[source]
+broker = "Capital.com"
+account = "demo"
+endpoint = "GET /markets/{epic}"
+read_on = "2026-08-28"
+note = "All twenty instruments returned identical financing and margin."
+
+[financing]
+# Percent per day, charged every 1440 minutes at 21:00 UTC.
+long_pct_per_day = -0.0215402
+short_pct_per_day = -0.000682
+charge_interval_minutes = 1440
+# The same figures annualised, which is what the execution engine wants.
+long_annual = 0.0786
+short_annual = 0.00249
+# False until an actual charge on a position large enough to produce one has
+# been observed. See the note above. Nothing may report a financing cost as
+# measured while this is false.
+financing_verified = false
+verification_note = """
+The 2026-08-27 probe (NFLX, 0.01 units) was too small: the charge rounded to
+zero. Settling this needs a position held across 21:00 UTC that is large
+enough for the charge to be visible in the balance.
+"""
+
+[margin]
+# Identical for all twenty. 20% margin is 5x leverage -- the same as T212,
+# so the leverage assumption carries over unchanged.
+factor_percent = 20
+implied_leverage = 5.0
+
+# Minimum deal size in units, per instrument. These DIFFER between
+# instruments and they bind at this account size: INTC's minimum of 1 unit
+# is about $25 of notional, so a position smaller than that cannot be taken
+# at all. The bridge refuses rather than rounding up, which is why these are
+# here.
+[min_deal_size]
+NVDA = 0.1
+AAPL = 0.1
+MSFT = 0.01
+AMZN = 0.1
+GOOGL = 0.1
+META = 0.01
+TSLA = 0.1
+AMD = 0.1
+AVGO = 0.1
+NFLX = 0.01
+ADBE = 0.1
+ORCL = 0.1
+JPM = 0.1
+XOM = 0.1
+JNJ = 0.1
+INTC = 1.0
+NKE = 0.1
+LULU = 0.1
+COST = 0.01
+CAT = 0.1

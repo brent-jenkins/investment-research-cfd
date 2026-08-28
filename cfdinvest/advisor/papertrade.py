@@ -72,7 +72,16 @@ PAPER_DIR = "paper"
 #: for why this is notional rather than margin.
 STAKE_GBP = 1000.0
 
-SCHEMA_VERSION = 1
+#: Bumped to 2 on 2026-08-28, when the book stopped charging Trading 212's
+#: costs and started charging Capital.com's. Rows written before and after
+#: are struck on different terms and are not comparable trade for trade.
+#:
+#: Version 1 rows carry no version field at all -- it was defined here and
+#: never written -- so a reader treats an absent version as 1. That gap is
+#: exactly why the venue is now stamped on every row: a record that mixes
+#: two cost bases without saying so is not the unforgeable record this book
+#: exists to be.
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +117,27 @@ class PaperTrade:
     #: only six of the forty instruments have a published figure.
     spread_source: str = ""
     margin_gbp: float | None = None
+
+    #: Which broker's terms this trade was struck on, and under which
+    #: version of the book's rules. Absent means version 1 and Trading 212,
+    #: because that is what every row written before 2026-08-28 was.
+    venue: str = ""
+    schema_version: int = SCHEMA_VERSION
+
+    #: Whether the live order path was armed at the moment this was decided.
+    #:
+    #: Recorded here rather than "did the broker place it", which is only
+    #: knowable after the broker replies and would mean editing a row after
+    #: the outcome -- the one thing this book must never do. What the broker
+    #: actually did lives in the append-only order store; join the two on
+    #: timestamp and ticker to see both.
+    #:
+    #: This module names no broker and imports none; a test asserts it. The
+    #: flag is handed in by the caller, which is the only thing that knows.
+    #:
+    #: So this answers "was this trade supposed to be mirrored?", which is
+    #: the question that makes a later mismatch interpretable.
+    live_armed: bool | None = None
 
     #: Only on a close.
     opened_at: str = ""
@@ -198,6 +228,8 @@ def open_trade(
     stake: float = STAKE_GBP,
     state: Mapping[str, Any] | None = None,
     cohort: str = "",
+    venue: str = "",
+    live_armed: bool | None = None,
 ) -> PaperTrade | None:
     """A £1,000 position at ``price``. ``None`` if it cannot be struck.
 
@@ -261,6 +293,8 @@ def open_trade(
         fx_fee_applies=getattr(entry, "fx_fee_applies", None),
         spread_cost_gbp=spread_cost,
         spread_source=spread_source,
+        venue=str(venue),
+        live_armed=live_armed,
         margin_gbp=ticket.margin_gbp,
         missing=ticket.missing,
         confidence=_number((state or {}).get("confidence")),
@@ -308,12 +342,29 @@ def _spread_cost(
     table, so the backtest and the paper book cannot disagree about what a
     share costs to cross.
 
-    Which of the two it was is returned alongside and written into the
-    book. An estimated cost and a measured one are different claims.
+    Which it was is returned alongside and written into the book. There are
+    now three claims, not two: "measured" where the venue quoted a live bid
+    and offer at the moment of the decision, "recorded" where a broker
+    published a typical figure, and "estimated" where neither existed and
+    the execution layer's class table stood in. They are different evidence
+    and the book must not let them look alike.
     """
     typical = getattr(entry, "spread_typical", None)
     if typical is not None:
-        return abs(float(typical)) * quantity * rate, "recorded"
+        # A venue that quotes a live bid and offer supplies a *measured*
+        # spread, which is a stronger claim than a figure copied off a
+        # published table. The two must not read alike in the book, so the
+        # entry names its own evidence and the default stays "recorded".
+        label = getattr(entry, "spread_source_label", None) or "recorded"
+        return abs(float(typical)) * quantity * rate, str(label)
+
+    # The class table below is Trading 212's fallback, for instruments it
+    # publishes no spread for. A venue that quotes live on everything it
+    # deals has no use for it: silence there means "not dealable", and
+    # estimating would put two brokers' terms in one row. Defaults to
+    # allowed, so the Trading 212 path is unchanged.
+    if not getattr(entry, "allows_table_estimate", True):
+        return None, ""
 
     try:
         from cfdinvest.execution.fills import DEFAULT_SPREAD_BPS
@@ -358,6 +409,7 @@ def value_trade(
     *,
     reason: str = "",
     days_held: float | None = None,
+    live_armed: bool | None = None,
 ) -> PaperTrade:
     """Close an open paper trade and account for it fully.
 
@@ -427,6 +479,12 @@ def value_trade(
         fx_fee_applies=trade.get("fx_fee_applies"),
         spread_cost_gbp=spread,
         spread_source=str(trade.get("spread_source") or ""),
+        # Carried from the opening row, never re-derived. A position opened
+        # on Trading 212's terms is closed on them too, whatever the book is
+        # charging by the time it closes -- otherwise the switch would
+        # rewrite the cost basis of trades already running.
+        venue=str(trade.get("venue") or ""),
+        live_armed=live_armed,
         opened_at=str(opened),
         days_held=float(days_held),
         gross_pnl_gbp=result.gross_pnl_gbp,

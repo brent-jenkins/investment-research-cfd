@@ -1063,6 +1063,70 @@ def _command_poll_live_quotes(args, app_config) -> int:
 _SCREENING_INTERVAL = "1d"
 
 
+def _capital_marks(tickers) -> dict:
+    """Live bid/offer/mid per instrument from Capital, or an empty dict.
+
+    One batch call for the whole universe. Never raises: the book must keep
+    recording when a broker is unreachable, and an empty result is read by
+    the caller as "price it the old way and say so", which is a statement
+    rather than a silence.
+    """
+    wanted = [str(t) for t in tickers if str(t)]
+    if not wanted:
+        return {}
+    try:
+        from cfdinvest.broker.capital import client as capital
+
+        settings = capital.CapitalConfig.from_env()
+        if not settings.complete:
+            logger.debug("No Capital credentials; the book prices on the table")
+            return {}
+        session = capital.open_session(settings)
+        if not session.ok:
+            logger.warning("Capital: could not authenticate for marks: %s", session.error)
+            return {}
+        marks = {}
+        for market in capital.fetch_market_details(wanted, session, settings):
+            if not getattr(market, "ok", False):
+                continue
+            bid, offer = getattr(market, "bid", None), getattr(market, "offer", None)
+            try:
+                bid, offer = float(bid), float(offer)
+            except (TypeError, ValueError):
+                continue
+            if not (bid > 0 and offer >= bid):
+                continue
+            marks[str(market.ticker).upper()] = {
+                "bid": bid, "offer": offer, "mid": (bid + offer) / 2.0,
+                "currency": getattr(market, "currency", "") or "",
+            }
+        return marks
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Capital marks unavailable: %s", error)
+        return {}
+
+
+def _live_armed() -> bool | None:
+    """Whether the live order path was armed when this pass was decided.
+
+    Recorded on the book row, and deliberately not "did the broker place
+    it" -- that is only knowable after the broker replies, and writing it
+    would mean editing a row after the outcome. What the broker actually did
+    is in the append-only order store.
+
+    ``None`` rather than ``False`` when it cannot be determined: not knowing
+    and knowing it was off are different statements, and only one of them
+    should read as reassurance later.
+    """
+    try:
+        from cfdinvest.broker.capital import dealing as gate
+
+        return not gate.DealingConfig.from_env().refusal()
+    except Exception as error:  # noqa: BLE001
+        logger.debug("Could not read the live gate: %s", error)
+        return None
+
+
 def _command_paper_book(args, app_config, smtp=None, transport=None) -> int:
     """One pass of the simulated book, and an email if it did anything.
 
@@ -1115,9 +1179,47 @@ def _command_paper_book(args, app_config, smtp=None, transport=None) -> int:
         if value is not None
     }
 
+    # Price the book on Capital's own quotes where they can be had.
+    #
+    # The book and the demo account are meant to hold the same intended
+    # positions, so the gap between them measures how wrong the simulation
+    # is. While the book charged Trading 212 and the account paid Capital,
+    # that gap measured two things at once and neither could be read off it.
+    #
+    # Falls back to the Trading 212 table, loudly, rather than skipping a
+    # pass: a book that stops recording when a broker is unreachable has a
+    # hole exactly where the interesting days are. The venue is stamped on
+    # every row either way, so a mixed run stays readable afterwards.
+    venue, rules = "t212", None
+    capital_marks = _capital_marks(sorted(set(t for t in wanted if "=X" not in t)))
+    if capital_marks:
+        try:
+            from cfdinvest.advisor.capital_venue import VENUE, rules_from_quotes
+
+            rules = rules_from_quotes(capital_marks)
+            venue = VENUE
+            prices.update({
+                ticker: quote["mid"] for ticker, quote in capital_marks.items()
+                if quote.get("mid")
+            })
+        except Exception as error:  # noqa: BLE001 - a pass is worth more than a venue
+            logger.warning(
+                "Capital terms unavailable (%s); the book falls back to the "
+                "Trading 212 table for this pass", error,
+            )
+            venue, rules = "t212", None
+    else:
+        logger.warning(
+            "No Capital quotes this pass; the book falls back to the "
+            "Trading 212 table and says so in every row it writes."
+        )
+
+    live_armed = _live_armed()
+
     before = len(papertrade.load_book(app_config, account))
     summaries = run_all_cohorts(
         latest, prices, config=app_config, account=account,
+        rules=rules, venue=venue, live_armed=live_armed,
     )
 
     # The events this pass appended, read back from the book rather than

@@ -263,6 +263,9 @@ def run_paper_pass(
     blackout_days: int = 2,
     cohort: str = "",
     recheck: bool = True,
+    rules=None,
+    venue: str = "",
+    live_armed: bool | None = None,
 ) -> dict[str, Any]:
     """Close what is due and open what qualifies. Never raises.
 
@@ -280,7 +283,10 @@ def run_paper_pass(
     if now.tzinfo is None:
         now = now.tz_localize("UTC")
 
-    rules = load_rules()
+    # Whose terms this book is charging. Absent means Trading 212's table,
+    # which is what every pass before 2026-08-28 used and what the tests
+    # still exercise -- the switch is made by the caller, not assumed here.
+    rules = load_rules() if rules is None else rules
     try:
         earnings = load_earnings_dates(config, account)
     except Exception:  # noqa: BLE001
@@ -332,7 +338,8 @@ def run_paper_pass(
         elif held >= time_stop_days:
             # Behind after a day, financing included, is the exit the
             # backtest actually rewarded.
-            valued = papertrade.value_trade(position, price, now.isoformat())
+            valued = papertrade.value_trade(
+                position, price, now.isoformat(), live_armed=live_armed)
             if valued.net_pnl_gbp is not None and valued.net_pnl_gbp <= 0:
                 reason = "time stop"
         if not reason and direction == "flat" and held >= time_stop_days:
@@ -340,7 +347,9 @@ def run_paper_pass(
 
         if reason:
             events.append(
-                papertrade.value_trade(position, price, now.isoformat(), reason=reason)
+                papertrade.value_trade(
+                    position, price, now.isoformat(), reason=reason,
+                    live_armed=live_armed)
             )
             live.pop(ticker, None)
 
@@ -429,7 +438,7 @@ def run_paper_pass(
         trade = papertrade.open_trade(
             ticker, direction, price, now.isoformat(), rules=rules,
             fx_rate=_fx_rate_for(ticker, rules, prices),
-            cohort=cohort,
+            cohort=cohort, venue=venue, live_armed=live_armed,
             state={
                 "confidence": confidence,
                 "regime": str(row.get("reason") or "").rsplit("@", 1)[-1].strip(),
