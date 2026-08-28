@@ -669,37 +669,6 @@ def _refresh_events(config, tickers) -> None:
     except Exception as error:  # noqa: BLE001
         logger.warning("Could not refresh the filings: %s", error)
 
-    # Insider transactions. Collected rather than traded on: an open-market
-    # purchase measured +1.04% market-adjusted over the following session
-    # (n=105, p=0.0009) where every price-derived feature this project has
-    # tested measured nothing, but 105 observations across three years is
-    # far too thin to size on. The only way to earn a sample that would
-    # justify it is to start recording, and the events are rare enough --
-    # roughly thirty a year across the whole pool -- that waiting to build
-    # this until it was needed would mean waiting years afterwards too.
-    #
-    # Incremental by filing date, so a daily pass fetches the handful of new
-    # documents rather than the thirty-five thousand in the archive.
-    try:
-        from cfdinvest.ingestion import insiders as insiders_module
-
-        stored = insiders_module.load_insiders(config)
-        latest = max(
-            (str(row.get("filed") or "")
-             for rows in stored.values() for row in rows),
-            default=None,
-        )
-        found = insiders_module.fetch_insiders(universe, since=latest)
-        if found:
-            total = insiders_module.store_insiders(found, config)
-            fresh = sum(len(rows) for rows in found.values())
-            logger.info(
-                "Refreshed insider transactions: %d new across %d instrument(s), "
-                "%d held", fresh, len(found), total,
-            )
-    except Exception as error:  # noqa: BLE001
-        logger.warning("Could not refresh insider transactions: %s", error)
-
 
 def load_summary(path: str | Path) -> dict[str, Any]:
     """Read a persisted run summary back from disk."""
