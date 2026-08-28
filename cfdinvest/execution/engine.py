@@ -308,12 +308,30 @@ def run_execution(signal_frame, analysis_frame, config):
         )
         stops_active = False
 
-    spread = fills_module.resolve_spreads(
+    spread_constant = fills_module.resolve_spreads(
         columns,
         asset_classes=config.asset_classes,
         per_asset_bps=config.spread_bps,
         default_bps=config.default_spread_bps,
     ).to_numpy()
+    # One value per asset becomes one per bar per asset. Where a measured
+    # spread exists it is used; elsewhere the constant stands, and the split
+    # is counted so a run can say how much of its largest cost was read off
+    # a quote rather than assumed.
+    spread_matrix, spread_measured, spread_cells = fills_module.resolve_spread_matrix(
+        index, columns, spread_constant, config.spread_panel
+    )
+
+    # Bars the operator may act on. Absent means every bar, which is what
+    # every run before this assumed and must keep producing.
+    dealing_mask = None
+    if getattr(config, "dealing_mask", None) is not None:
+        dealing_mask = (
+            pd.Series(config.dealing_mask)
+            .reindex(index)
+            .fillna(False)
+            .to_numpy(dtype=bool)
+        )
     long_rates, short_rates = financing_module.resolve_rates(
         columns,
         benchmark=config.benchmark_rate,
@@ -503,11 +521,22 @@ def run_execution(signal_frame, analysis_frame, config):
             new_held = np.where(flatten, 0, new_held).astype(np.int8)
             effective_fill = np.where(stopped, breach["fill_price"], reference)
 
+        if dealing_mask is not None and not dealing_mask[bar]:
+            # Nobody is dealing on this bar. Hold everything exactly as it
+            # is -- including through a stop level, because the stops here
+            # are the app's own and it is not running to act on them. The
+            # position is still marked to market below; it is only acting
+            # that is blocked.
+            target_units = units.copy()
+            new_held = held.copy()
+            effective_fill = reference
+
         traded = target_units - units
 
         # 4. Costs and realised P&L on the closed portion, struck at the price
         #    each asset actually traded at: the stop fill where a level was
         #    reached, the bar reference everywhere else.
+        spread = spread_matrix[bar]
         spread_cost, slippage_cost = fills_module.transaction_costs(
             traded, effective_fill, spread, config.slippage_fraction
         )
@@ -691,6 +720,7 @@ def run_execution(signal_frame, analysis_frame, config):
         stop_events, stop_level, target_level, entry_price,
         fx_open_series, fx_close_series, fx_rates[-1] if bars else None,
         financing_by_asset=financing_by_asset,
+        spread_coverage=(spread_measured, spread_cells),
     )
 
 
@@ -921,7 +951,7 @@ def _assemble(
     equity, exposure, trades, config,
     stop_events=None, stop_level=None, target_level=None, entry_price=None,
     fx_open=None, fx_close=None, fx_rate_used=None,
-    financing_by_asset=None,
+    financing_by_asset=None, spread_coverage=None,
 ):
     """Package the loop's arrays into frames."""
     position_frame = pd.DataFrame(positions, index=index, columns=columns)
@@ -990,6 +1020,26 @@ def _assemble(
             np.ones(len(columns)) if fx_rate_used is None else fx_rate_used,
             index=columns, name="fx_rate_used",
         ),
+        # How much of the largest modelled cost was read off a quote rather
+        # than assumed. Reported rather than logged: a run that charged a
+        # constant and one that charged measured spreads produce the same
+        # shaped result, and only this distinguishes them.
+        "spread_coverage": _spread_coverage(spread_coverage),
+    }
+
+
+def _spread_coverage(counts) -> dict:
+    """The measured/estimated split, or an explicit "not measured".
+
+    ``None`` means nothing was supplied, which is reported as a zero
+    measured fraction rather than omitted -- absent and zero are the same
+    claim here, and both are honest, but silence would not be.
+    """
+    measured, total = (counts or (0, 0))
+    return {
+        "measured_cells": int(measured),
+        "total_cells": int(total),
+        "measured_fraction": (float(measured) / total) if total else 0.0,
     }
 
 
@@ -1014,4 +1064,5 @@ def _empty_result():
         "fx_open_cost": pd.Series(dtype="float64", name="fx_open_cost"),
         "fx_close_cost": pd.Series(dtype="float64", name="fx_close_cost"),
         "fx_rate_used": pd.Series(dtype="float64", name="fx_rate_used"),
+        "spread_coverage": _spread_coverage(None),
     }

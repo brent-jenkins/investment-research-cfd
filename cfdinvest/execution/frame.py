@@ -55,6 +55,46 @@ class ExecutionConfig:
     #: Per-asset half-spread overrides, in basis points of price.
     spread_bps: dict[str, float] | None = None
     asset_classes: dict[str, str] | None = None
+    #: Measured spread per bar per asset, in **basis points of price**, as a
+    #: time x ticker frame. Where a value is present it replaces the constant
+    #: for that bar; where it is missing the constant applies and the bar is
+    #: counted as estimated rather than measured.
+    #:
+    #: This exists because the constant is the largest single item in the
+    #: modelled cost and is uniform across instruments that differ by eight
+    #: times. Broker bars carry a bid and an ask, so the figure can be read
+    #: rather than assumed -- but only for the instruments and hours actually
+    #: quoted, which is why the fallback is counted and reported rather than
+    #: blended in silently.
+    #:
+    #: A per-instrument median is not a substitute. Spread distributions are
+    #: heavily right-skewed, so a median charges the quiet moments and misses
+    #: every wide one; measured on the eight-name book the median understated
+    #: the cost by a few points where the per-bar panel understated it by
+    #: nothing. At roughly 1,200 round trips a year that difference is the
+    #: headline figure.
+    spread_panel: pd.DataFrame | None = None
+    #: Bars on which the operator may change a position, as a boolean Series
+    #: over the analysis index. ``None`` means every bar, which is what every
+    #: recorded run assumed.
+    #:
+    #: This is not a market-hours flag -- it is an *operator* flag. The
+    #: daemon deals during market hours and is not running otherwise, so on
+    #: any other bar it cannot open, close or resize whatever the signal
+    #: says. Marking to market still happens on every bar, because the
+    #: position is genuinely exposed overnight; only *acting* is blocked.
+    #:
+    #: Without it, a share-of-equity target silently drifts as prices move
+    #: overnight and trips the rebalance threshold, producing resizes at
+    #: 3am that no operator placed. Measured on Capital's extended-hours
+    #: bars: 45.7% of all trades executed outside dealing hours, at 12.7bp
+    #: against 6.1bp inside.
+    #:
+    #: Preferred over simply discarding extended-hours bars, which is the
+    #: cruder fix: dropping them removes the overnight exposure from the
+    #: measurement as well as the trading, and the position is genuinely
+    #: held through the night.
+    dealing_mask: pd.Series | None = None
     #: Trades smaller than this in units are ignored as noise.
     minimum_trade_units: float = 1e-9
 
@@ -449,6 +489,11 @@ def run_backtest(
         "fx_spread_bps": settings.fx.fx_spread_bps,
         "fx_slippage_bps": settings.fx.fx_slippage_bps,
         "fx_rate_source": settings.fx.fx_rate_source,
+        # How much of the spread was read off a quote rather than assumed.
+        # Carried out of the engine because a run charging measured spreads
+        # and one charging a constant are otherwise identical objects, and
+        # the difference is the largest single item in the cost model.
+        "spread_coverage": result.get("spread_coverage", {}),
         "fx_rounding_mode": settings.fx.fx_rounding_mode,
         "fx_fee_basis": settings.fx.fx_fee_basis,
         "stop_events": len(result["stop_events"]),

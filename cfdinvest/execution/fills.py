@@ -43,6 +43,7 @@ __all__ = [
     "convert_prices",
     "fx_open_costs",
     "resolve_spreads",
+    "resolve_spread_matrix",
     "transaction_costs",
     "effective_fill_price",
 ]
@@ -229,6 +230,45 @@ def resolve_spreads(
         values.append(float(bps) / 10_000.0)
 
     return pd.Series(values, index=columns, name="spread_fraction")
+
+
+def resolve_spread_matrix(
+    index: pd.Index,
+    columns: pd.Index,
+    constant: np.ndarray,
+    panel: pd.DataFrame | None = None,
+) -> tuple[np.ndarray, int, int]:
+    """Broadcast the per-asset spread over bars, overlaying measured values.
+
+    ``constant`` is the fractional spread per asset from
+    :func:`resolve_spreads`. ``panel`` is measured spread in **basis points**
+    per bar per asset; it is aligned to ``index`` and ``columns``, so a panel
+    covering only some instruments or some hours is fine — the rest keep the
+    constant.
+
+    A negative or zero measured spread is not a cheaper quote, it is a bad
+    row, and it falls back rather than being charged. A spread of zero would
+    make trading free at exactly the bars where the data is worst.
+
+    Returns
+    -------
+    tuple
+        ``(matrix, measured_cells, total_cells)``. The counts are returned
+        rather than logged because "measured" and "estimated" are different
+        claims about a cost, and a caller that blends them without saying so
+        turns an assumption into an apparent measurement.
+    """
+    bars = len(index)
+    matrix = np.tile(np.asarray(constant, dtype=float), (bars, 1))
+    total = int(matrix.size)
+    if panel is None or getattr(panel, "empty", True):
+        return matrix, 0, total
+
+    aligned = panel.reindex(index=index, columns=columns)
+    values = aligned.to_numpy(dtype=float) / 10_000.0
+    usable = np.isfinite(values) & (values > 0.0)
+    matrix = np.where(usable, values, matrix)
+    return matrix, int(usable.sum()), total
 
 
 def effective_fill_price(
