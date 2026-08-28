@@ -599,7 +599,34 @@ def _refresh(repository: DataRepository, tickers, backtest_config) -> None:
     else:
         logger.info("No FRED API key configured; skipping the macro refresh")
 
-    _refresh_events(config, tickers)
+    # The screen's candidates too, not only what is traded. EDGAR covered
+    # nineteen names of a forty-nine name pool, which is the same blind spot
+    # the spread readings had: a selection rule cannot weigh a filing rate
+    # for an instrument whose filings were never fetched.
+    #
+    # One fetch of the union rather than two of the halves, because
+    # `store_filings` and `store_earnings_dates` *rewrite* -- two writers
+    # would take turns deleting each other's half. Forty-nine requests at
+    # the module's own 0.15s pause is about seven seconds against SEC's ten
+    # a second.
+    _refresh_events(config, _with_candidates(tickers, config))
+
+
+def _with_candidates(tickers, config) -> list[str]:
+    """The traded list plus every instrument the screen may rank.
+
+    Order preserved and duplicates dropped, so the traded names keep their
+    place at the front and a candidate that is also traded is fetched once.
+    """
+    names = [str(t) for t in (tickers or ()) if str(t)]
+    seen = set(names)
+    universe = getattr(getattr(config, "universe", None), "candidates", ()) or ()
+    for candidate in universe:
+        name = str(candidate)
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
 
 
 def _refresh_events(config, tickers) -> None:
