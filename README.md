@@ -124,7 +124,7 @@ beside every headline. A shuffle control that fails says so.
 
 | | |
 | --- | --- |
-| Universe | 20 US shares, one trading session (14:30–21:00 UTC) |
+| Universe | 19 US shares, one trading session (14:30–21:00 UTC) |
 | Bars | Hourly |
 | Entry / exit confidence | 0.35 / 0.20 |
 | Time stop | 0.29 days — one session |

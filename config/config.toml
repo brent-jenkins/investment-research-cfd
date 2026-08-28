@@ -79,8 +79,27 @@ tickers = [
     # Large-cap technology
     "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
     "AVGO", "NFLX", "ADBE", "ORCL",
-    # Other sectors: financials, energy, healthcare, semis, consumer
-    "JPM", "XOM", "JNJ", "INTC", "NKE", "LULU", "COST",
+    # Other sectors: financials, energy, healthcare, consumer
+    "JPM", "XOM", "JNJ", "NKE", "LULU", "COST",
+    # INTC removed 2026-08-28. Its core-session spread is 28.73bp against a
+    # universe median of 7.14bp -- four times the cost of everything else,
+    # and a property of the instrument rather than of a bad year. Measured
+    # over 2024-25 on Capital's own bars, dropping it left the return
+    # unchanged (160.8% -> 161.1%) while cutting the drawdown from -27.0%
+    # to -21.1% and saving GBP 34,777 of spread. Consistent in both years
+    # separately, which is why this is a cut and not a hunch.
+    #
+    # Deliberately NOT replaced. Four candidates were measured and none
+    # improved on nineteen names: the two cheapest to trade (UNH at 8.05bp,
+    # GS at 8.49bp) made it substantially worse, so low cost does not create
+    # edge. PLTR scored best despite the widest spread of all, and was
+    # rejected because it rose roughly tenfold across the test window and
+    # sits in the candidate pool only because that pool was assembled in
+    # 2026 knowing it had -- which is the survivorship this project keeps
+    # finding in its own measurements.
+    #
+    # The screen already excluded INTC, ranking it 7th in 2024 and 11th in
+    # 2025 and capping it out of a full technology sector both times.
     # Industrials. Added 2026-08-27 as the twentieth, chosen against the
     # screen rather than by it: the screen's top pick was MU, whose $42bn
     # turnover is largely an +855% two-year run showing up in price x
