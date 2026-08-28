@@ -296,19 +296,60 @@ def _with_held(tickers, config, account=None) -> list[str] | None:
         return None
     names = [str(t) for t in tickers if str(t)]
     seen = set(names)
-    try:
-        from cfdinvest.livequotes.poller import held_instruments
 
-        held = held_instruments(config, account)
-    except Exception as error:  # noqa: BLE001 - never block a run on this
-        logger.warning("Could not read held instruments: %s", error)
-        return names
-    for ticker in held or ():
-        name = str(ticker)
-        if name and name not in seen:
-            seen.add(name)
-            names.append(name)
+    # Both books, because they hold different things and either can carry a
+    # position in a departed instrument.
+    #
+    # The confirm layer alone is not enough and shipping it that way made
+    # this inert: it records what has been confirmed by hand, and in this
+    # deployment nothing ever has -- it reads zero rows while the paper book
+    # holds fourteen positions. A departing instrument would have gone
+    # unsignalled, read as flat, and been closed by the 0.29-day time stop
+    # inside a session, which is the exact liquidation this exists to stop.
+    for source in (_confirmed_instruments, _book_instruments):
+        try:
+            found = source(config, account)
+        except Exception as error:  # noqa: BLE001 - never block a run on this
+            logger.warning("Could not read held instruments (%s): %s",
+                           source.__name__, error)
+            continue
+        for ticker in found or ():
+            name = str(ticker)
+            if name and name not in seen:
+                seen.add(name)
+                names.append(name)
     return names
+
+
+def _confirmed_instruments(config, account=None) -> list[str]:
+    """Anything with a confirmed position on the real account."""
+    from cfdinvest.livequotes.poller import held_instruments
+
+    return list(held_instruments(config, account) or ())
+
+
+def _book_instruments(config, account=None) -> list[str]:
+    """Anything open in the simulated book, across every arm.
+
+    Every cohort, not just the one that mirrors the account: each arm is an
+    independent experiment and a position open in any of them still needs a
+    signal to exit on. Scoping this to one cohort would strand the others.
+    """
+    from cfdinvest.advisor import papertrade
+    from cfdinvest.advisor.papertrade_run import cohorts_for
+
+    book = papertrade.load_book(config, account)
+    if not book:
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+    for name, _bar in cohorts_for(getattr(config, "strategy", None)):
+        rows = [r for r in book if str(r.get("cohort") or "") == name]
+        for ticker in papertrade.open_positions(rows, name):
+            if ticker not in seen:
+                seen.add(ticker)
+                found.append(str(ticker))
+    return found
 
 
 def _app_config(args):

@@ -59,6 +59,72 @@ def test_a_held_name_outside_the_universe_still_gets_signals(monkeypatch):
     assert set(names) == {"AMD", "TSLA", "AAPL", "NKE"}
 
 
+def test_a_position_open_only_in_the_paper_book_is_still_signalled(monkeypatch):
+    """M398: the source that is empty in production.
+
+    This shipped reading the confirm layer alone, which records what has
+    been confirmed by hand. Nothing ever has in this deployment: it returns
+    zero rows while the book holds fourteen positions, so the fix was inert
+    and every departing instrument would have been liquidated inside a
+    session. The first version of this test mocked `held_instruments` --
+    the very thing that was empty -- and passed against a broken system.
+    """
+    monkeypatch.setattr(
+        "cfdinvest.livequotes.poller.held_instruments",
+        lambda config, account=None: [],          # as in production
+    )
+    monkeypatch.setattr(
+        "cfdinvest.advisor.papertrade.load_book",
+        lambda config, account=None: [
+            {"cohort": "c35", "event": "open", "ticker": "COST",
+             "direction": "long", "quantity": 1.0},
+        ],
+    )
+    monkeypatch.setattr(
+        "cfdinvest.advisor.papertrade_run.cohorts_for",
+        lambda strategy=None: (("c35", 0.35),),
+    )
+    names = _with_held(["AMD", "TSLA"], Config(["AMD", "TSLA"]))
+    assert "COST" in names, (
+        "a position held only in the paper book gets no signal, so the time "
+        "stop closes it within a session"
+    )
+
+
+def test_every_arm_is_covered_not_only_the_mirrored_one():
+    """Each cohort is an independent experiment; stranding one strands a test."""
+    import inspect
+
+    from cfdinvest.schedule import app
+
+    source = inspect.getsource(app._book_instruments)
+    assert "cohorts_for(" in source, (
+        "only one cohort is read, so positions in the other arms are stranded"
+    )
+
+
+def test_the_real_deployment_would_cover_its_own_open_positions():
+    """The property against the shipped configuration rather than a fixture.
+
+    Whatever the book currently holds must appear in the signal universe.
+    A mocked source cannot catch the failure this is guarding.
+    """
+    from cfdinvest.advisor import papertrade
+    from cfdinvest.config import load_config
+    from cfdinvest.schedule.app import _book_instruments
+
+    settings = load_config()
+    book = papertrade.load_book(settings, None)
+    if not book:
+        pytest.skip("no paper book in this checkout")
+
+    universe = set(_with_held(list(settings.market.tickers), settings) or ())
+    for ticker in _book_instruments(settings, None):
+        assert ticker in universe, (
+            f"{ticker} is open in the book and would receive no signal"
+        )
+
+
 def test_the_traded_names_keep_their_place(monkeypatch):
     """M396: order lost, so a truncated universe drops the traded names.
 
