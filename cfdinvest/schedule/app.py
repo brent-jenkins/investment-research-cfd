@@ -848,9 +848,21 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         session_open = {
             str(i): bool(v) for i, v in calendar["is_open"].items()
         }
+        # Whether each market was *also* open this many minutes ago. If it
+        # was not, we are inside the opening window and no new position is
+        # taken. Asked of the calendar rather than computed from a session
+        # start, so daylight saving, holidays and per-instrument sessions
+        # are handled by the thing that already knows about them.
+        delay = int(getattr(app_config.strategy, "open_delay_minutes", 0) or 0)
+        settled = describe(tickers, now - pd.Timedelta(minutes=delay)) if delay else None
+        open_allowed = {
+            ticker: (settled is None or bool(settled["is_open"].get(ticker, False)))
+            for ticker in session_open
+        }
     except Exception as error:  # noqa: BLE001 - an unknown calendar is closed
         logger.warning("Capital: no session calendar (%s); trading nothing", error)
         session_open = {}
+        open_allowed = {}
 
     # What the account should hold comes from the shadow book, not from a
     # second reading of the signals. The book has already applied the entry
@@ -900,6 +912,8 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         fx_rate=fx,
         recheck=True,
         rechecked=rechecked,
+        open_allowed=open_allowed,
+        max_opens_per_pass=app_config.strategy.max_opens_per_pass,
         entry_confidence=app_config.strategy.entry_confidence,
     )
 

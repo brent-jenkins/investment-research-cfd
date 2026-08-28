@@ -142,6 +142,8 @@ def plan_orders(
     recheck: bool = True,
     rechecked: Mapping[str, Mapping[str, Any]] | None = None,
     entry_confidence: float = 0.35,
+    open_allowed: Mapping[str, bool] | None = None,
+    max_opens_per_pass: int | None = None,
 ) -> BridgeReport:
     """Decide what to place. Pure: it reads and returns, and places nothing.
 
@@ -199,6 +201,17 @@ def plan_orders(
         if market is None or price is None or price <= 0:
             intents.append(refuse("no price"))
             continue
+        # Inside the opening window a *new* position is refused; anything
+        # already held may still be closed or resized. The bell is the
+        # dearest moment of the day to enter and the cheapest thing to skip.
+        if (
+            open_allowed is not None
+            and held_units == 0.0
+            and not open_allowed.get(ticker, False)
+        ):
+            intents.append(refuse("within the opening window"))
+            continue
+
         if not open_now.get(ticker, False):
             # Closing is refused too. A close outside the session pays the
             # same widened spread as an open, and the engine's own exit will
@@ -323,6 +336,37 @@ def plan_orders(
             price=price, notional=abs(target) * price * float(fx_rate or 1.0),
             deal_id=str(position.get("deal_id") or ""),
         ))
+
+    # Only so many new positions per pass, highest conviction first.
+    #
+    # Applied before the gross cap so the survivors are sized against the
+    # room the refusals freed, rather than every position being shrunk to
+    # fit a book that is then cut anyway. Opens only: a close is never
+    # deferred, and a resize is an adjustment to something already held.
+    if max_opens_per_pass is not None:
+        opening = [i for i in intents if i.action == "open"]
+        if len(opening) > int(max_opens_per_pass):
+            def conviction(intent):
+                row = (rechecked or {}).get(intent.ticker) or {}
+                return float(row.get("confidence") or 0.0)
+
+            keep = {
+                id(i) for i in
+                sorted(opening, key=conviction, reverse=True)[:int(max_opens_per_pass)]
+            }
+            deferred = len(opening) - len(keep)
+            intents = [
+                i if (i.action != "open" or id(i) in keep) else Intent(
+                    ticker=i.ticker, epic=i.epic, direction=i.direction,
+                    held_units=i.held_units, target_units=i.held_units,
+                    action="refused", price=i.price,
+                    reason=(
+                        f"deferred: {max_opens_per_pass} opens already this "
+                        f"pass, {deferred} waiting"
+                    ),
+                )
+                for i in intents
+            ]
 
     # The book-wide cap, applied last, exactly as the engine applies it after
     # the keep rather than before -- a position opened when the balance was

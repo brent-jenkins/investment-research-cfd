@@ -283,6 +283,25 @@ class StrategyConfig:
     #: is the point of it living here: it was a default argument in two
     #: places, and two copies of a limit drift.
     max_instrument_concentration: float = 0.40
+    #: Minutes after the exchange opens before a *new* position may be
+    #: taken. Closes and resizes are never delayed -- being unable to leave
+    #: is a worse failure than entering badly.
+    #:
+    #: The opening hour's median spread is 9.26bp against 7.14bp in the core
+    #: session (1.22x), and 28.89bp on INTC. Against an edge that breaks
+    #: even near 6bp of friction, the auction is the most expensive moment
+    #: of the day to enter.
+    open_delay_minutes: int = 30
+    #: The most positions that may be *opened* in a single pass. ``None``
+    #: places no limit.
+    #:
+    #: A book starting from flat otherwise opens everything at once: on
+    #: 2026-08-28 a cold start would have taken thirteen positions in one
+    #: pass, at the widest spreads of the day, on a seventeen-hour-old
+    #: signal. Spreading them over successive passes costs nothing when the
+    #: book is already warm, because a warm book rarely opens more than one
+    #: or two at a time.
+    max_opens_per_pass: int | None = 3
     #: Notional per unit of signal size, as a multiple of equity.
     exposure_per_unit_size: float = 1.0
     #: Days either side of a reporting date to hold no position. ``0`` off.

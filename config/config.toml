@@ -387,7 +387,37 @@ max_leverage = 3.5
 # qualify. Read by the engine and by `RiskLimits.for_balance`, from here
 # and nowhere else -- it was a default argument in two places, which is how
 # two copies of a limit begin to drift.
-max_instrument_concentration = 0.20            # 50% of the balance as margin, not 100%
+max_instrument_concentration = 0.20
+
+# Minutes after the bell before a *new* position may be taken. Closes and
+# resizes are never delayed -- being unable to leave is a worse failure than
+# entering badly.
+#
+# Measured on Capital's own bars: the opening hour's median spread is 9.26bp
+# against 7.14bp in the core session, 1.22x, and 28.89bp on INTC. Against an
+# edge that breaks even near 6bp of friction, the auction gives away a fifth
+# of the budget before the position has done anything.
+#
+# Asked of the market calendar -- "was this market also open thirty minutes
+# ago" -- rather than computed from a session start, so daylight saving,
+# holidays and per-instrument sessions are handled by the thing that already
+# knows about them. The calendar covers the regular session only: it reports
+# nothing open at 13:29 UTC and everything open at 13:31, so pre-market
+# cannot answer the question early.
+open_delay_minutes = 30
+
+# The most positions that may be opened in a single pass.
+#
+# A book starting from flat otherwise opens everything at once. On
+# 2026-08-28 a cold start would have taken thirteen positions in one pass,
+# at the widest spreads of the day, on a seventeen-hour-old signal. It costs
+# nothing when the book is warm, because a warm book rarely opens more than
+# one or two at a time; it only binds on a restart.
+#
+# Highest conviction first, from the last look's re-evaluation rather than
+# the stale signal -- if only three go through they should be the three the
+# strategy believes in now.
+max_opens_per_pass = 3            # 50% of the balance as margin, not 100%
 
 # Notional per unit of signal size, as a multiple of equity. Raising this is
 # gearing rather than edge -- efficiency peaks around 4 and degrades after.
