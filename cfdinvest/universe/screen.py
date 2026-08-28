@@ -34,6 +34,7 @@ had been measured and found wanting.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
@@ -124,6 +125,39 @@ class ScreenConfig:
     weight_volatility: float = 0.70
     weight_continuity: float = 0.10
 
+    #: Refuse an instrument whose spread exceeds this multiple of the
+    #: universe's own median on the day. ``None`` disables the rule.
+    #:
+    #: A gate rather than a weight, and that was measured rather than
+    #: assumed. Tapering size by cost -- full weight up to the median, 0.7,
+    #: then 0.4 -- did nothing beyond what the exclusion did, and tightening
+    #: the threshold below 2.5x bought return with drawdown in a way that
+    #: did not survive extension. What holds is that some exclusion beats
+    #: none: past 2.5x, no position is small enough to make the instrument
+    #: worth trading, so it is refused rather than shrunk. Excluding at 2.5x
+    #: measured +11 points of return for 1.5 of drawdown and held under a
+    #: within-sector control, which is what says it is a cost effect and not
+    #: a bet against whichever sector happens to be dear.
+    #:
+    #: It became load-bearing when the screen was re-weighted towards
+    #: volatility on 2026-08-28. Ranking harder on movement pulls in
+    #: volatile names and volatile names are dear -- the new ranking's top
+    #: eight included SMCI at 4.20x the median -- so the term that refuses
+    #: them is no longer optional.
+    max_spread_multiple: float | None = 2.5
+
+    #: Calendar days of spread history the median is taken over. Trailing,
+    #: never whole-history: INTC ran 0.85x the median in 2023, 3.63x in
+    #: 2024, 5.02x in 2025 and 1.45x in 2026, so a static figure describes a
+    #: period rather than an instrument and bans a name for a year it has
+    #: already left behind.
+    spread_lookback_days: int = 90
+
+    #: Readings required before a spread median is acted on. Below it the
+    #: figure is reported and the exclusion withheld -- the arithmetic is
+    #: available, the claim is not.
+    min_spread_readings: int = 25
+
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
@@ -136,6 +170,12 @@ class Candidate:
     score: float | None = None
     sector: str = ""
     bars: int = 0
+    #: Trailing median core-session spread, in basis points, and the same
+    #: figure as a multiple of the universe's own median on the day.
+    #: ``None`` means it could not be measured, which is reported as
+    #: unverified rather than treated as cheap.
+    spread_bp: float | None = None
+    spread_multiple: float | None = None
     #: Why it is not ranked, empty when it is.
     unranked: str = ""
 
@@ -153,6 +193,8 @@ class ScreenResult:
     selected: tuple[str, ...] = ()
     candidates: tuple[Candidate, ...] = ()
     sector_capped: tuple[str, ...] = ()
+    #: Refused for cost, with the multiple that refused them.
+    spread_excluded: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
 
     @property
@@ -229,11 +271,117 @@ def _z(values: Sequence[float]) -> list[float]:
     return list((ranks - 0.5) * 2.0)
 
 
+def _apply_spread_gate(measured, spreads, cutoff, settings):
+    """Refuse what costs too much, and name what could not be checked.
+
+    Returns the candidates with ``spread_bp`` and ``spread_multiple``
+    filled in, the tickers refused, and notes describing what happened --
+    including how many could not be measured, because "no reading" and
+    "read and fine" are different statements and only one is reassuring.
+
+    The reference is the universe's own median on the day rather than a
+    fixed number of basis points. Spreads move together: the universe
+    median ran 13.94bp in 2023 and 9.63bp in 2026, so a fixed threshold
+    would tighten and loosen with the market instead of with the
+    instrument.
+    """
+    import numpy as np
+    import pandas as pd
+
+    if not spreads:
+        return measured, (), ()
+
+    readings: dict[str, tuple[float, int]] = {}
+    horizon = (
+        cutoff - pd.Timedelta(days=settings.spread_lookback_days)
+        if cutoff is not None else None
+    )
+    for ticker, series in spreads.items():
+        if series is None or getattr(series, "empty", True):
+            continue
+        index = pd.DatetimeIndex(series.index)
+        if index.tz is None:
+            index = index.tz_localize("UTC")
+        window = pd.Series(np.asarray(series), index=index).dropna()
+        if cutoff is not None:
+            # Nothing after the decision date, and nothing older than the
+            # lookback: a spread from two years ago is not evidence about
+            # what this instrument costs now.
+            window = window[(window.index <= cutoff) & (window.index > horizon)]
+        if window.empty:
+            continue
+        readings[str(ticker)] = (float(window.median()), int(len(window)))
+
+    if not readings:
+        return measured, (), ("no spread readings available, so cost was not checked",)
+
+    universe_median = float(np.median([value for value, _ in readings.values()]))
+    if not np.isfinite(universe_median) or universe_median <= 0:
+        return measured, (), ("universe spread median unusable, cost not checked",)
+
+    ceiling = settings.max_spread_multiple
+    refused: list[str] = []
+    unverified: list[str] = []
+    thin: list[str] = []
+    updated: list[Candidate] = []
+
+    for candidate in measured:
+        reading = readings.get(candidate.ticker)
+        if reading is None:
+            if candidate.unranked == "":
+                unverified.append(candidate.ticker)
+            updated.append(candidate)
+            continue
+
+        value, count = reading
+        multiple = value / universe_median
+        enough = count >= settings.min_spread_readings
+        if not enough and candidate.unranked == "":
+            thin.append(candidate.ticker)
+
+        refuse = (
+            ceiling is not None
+            and enough
+            and multiple > ceiling
+            and candidate.unranked == ""
+        )
+        updated.append(dataclasses.replace(
+            candidate,
+            spread_bp=round(value, 2),
+            spread_multiple=round(multiple, 2),
+            unranked=(
+                f"spread {multiple:.2f}x the universe median"
+                if refuse else candidate.unranked
+            ),
+        ))
+        if refuse:
+            refused.append(candidate.ticker)
+
+    notes: list[str] = [
+        f"universe median spread {universe_median:.2f}bp over {len(readings)} instruments"
+    ]
+    if refused:
+        notes.append(
+            f"refused for cost above {ceiling}x: {', '.join(sorted(refused))}"
+        )
+    if unverified:
+        notes.append(
+            f"spread unverified for {len(unverified)}: {', '.join(sorted(unverified))}"
+        )
+    if thin:
+        notes.append(
+            f"spread read but below {settings.min_spread_readings} readings, "
+            f"exclusion withheld: {', '.join(sorted(thin))}"
+        )
+    return updated, tuple(refused), tuple(notes)
+
+
 def rank_candidates(
     prices: Mapping[str, Any],
     as_of=None,
     config: ScreenConfig | None = None,
     sectors: Mapping[str, str] | None = None,
+    spreads: Mapping[str, Any] | None = None,
 ) -> ScreenResult:
     """Score every candidate. Pure, and never looks past ``as_of``.
 
@@ -284,6 +432,17 @@ def rank_candidates(
             continuity=continuity, sector=sector, bars=bars,
         ))
 
+    # ---- cost, before the ranking rather than after
+    #
+    # An instrument refused for cost must not influence the standard scores
+    # of the ones that survive: the z-scores are rank-based, so leaving a
+    # name in the pool that cannot be traded would shift everything else's
+    # position for no reason. Refusing first is also the honest order --
+    # affordability is a precondition, not a tie-breaker.
+    measured, spread_excluded, spread_notes = _apply_spread_gate(
+        measured, spreads, cutoff, settings
+    )
+
     rankable = [c for c in measured if c.unranked == ""]
     if rankable:
         zl = _z([c.liquidity for c in rankable])
@@ -296,11 +455,12 @@ def rank_candidates(
                 + settings.weight_volatility * b
                 + settings.weight_continuity * c_
             )
-            scored.append(Candidate(
-                candidate.ticker, candidate.liquidity, candidate.volatility,
-                candidate.continuity, float(score), candidate.sector,
-                candidate.bars, "",
-            ))
+            # `replace` rather than a positional rebuild. The positional
+            # form silently mis-assigned the moment a field was added
+            # before `unranked`: the trailing "" landed in `spread_bp` and
+            # the measured spread was dropped, with no error until
+            # something tried to format the result as a number.
+            scored.append(dataclasses.replace(candidate, score=float(score)))
         by_ticker = {c.ticker: c for c in scored}
         measured = [by_ticker.get(c.ticker, c) for c in measured]
 
@@ -340,7 +500,8 @@ def rank_candidates(
     return ScreenResult(
         as_of=str(cutoff or ""), selected=tuple(selected),
         candidates=tuple(measured), sector_capped=tuple(capped),
-        notes=tuple(notes),
+        spread_excluded=spread_excluded,
+        notes=tuple([*spread_notes, *notes]),
     )
 
 
@@ -378,7 +539,70 @@ def select_universe(
     for ticker in candidates:
         frames.setdefault(str(ticker), None)
 
-    return rank_candidates(frames, as_of=as_of, config=config, sectors=sectors)
+    return rank_candidates(
+        frames, as_of=as_of, config=config, sectors=sectors,
+        spreads=_spread_series(repository, candidates),
+    )
+
+
+#: Bars carrying a measured spread. Capital's, because they are the only
+#: ones that record bid and offer -- the vendor's daily bars carry a close
+#: and nothing about what it would have cost to transact at it.
+SPREAD_INTERVAL = "capital_1h"
+
+#: Hours, in New York time, whose spreads describe the session the strategy
+#: deals in. The opening hour is excluded deliberately: its median runs
+#: 1.22x the core session's, so including it would rank instruments on an
+#: auction most of their trading does not happen in.
+SPREAD_HOURS = (10, 15)
+
+
+def _spread_series(repository, candidates) -> dict[str, Any]:
+    """Core-session spread per instrument per day, or ``{}``.
+
+    Never raises and never partially fails the screen: an unreadable spread
+    store means cost is reported unverified, which the ranking handles, and
+    is a great deal better than a screen that stops running.
+    """
+    import pandas as pd
+
+    try:
+        bars = repository.load_market(
+            tickers=list(candidates), interval=SPREAD_INTERVAL
+        )
+    except Exception as error:  # noqa: BLE001
+        logger.warning("No spread bars for screening: %s", error)
+        return {}
+    if bars is None or getattr(bars, "empty", True):
+        logger.warning("Spread bars empty; cost will be reported unverified")
+        return {}
+
+    working = bars.reset_index()
+    if "spread_bp" not in working.columns:
+        logger.warning("Spread bars carry no spread_bp column")
+        return {}
+    ticker_column = "ticker" if "ticker" in working.columns else working.columns[1]
+    stamp_column = "timestamp" if "timestamp" in working.columns else working.columns[0]
+
+    out: dict[str, Any] = {}
+    for ticker, group in working.groupby(ticker_column):
+        frame = group.set_index(stamp_column).sort_index()
+        index = pd.DatetimeIndex(frame.index)
+        if index.tz is None:
+            index = index.tz_localize("UTC")
+        local = index.tz_convert("America/New_York")
+        low, high = SPREAD_HOURS
+        core = frame[(local.hour >= low) & (local.hour <= high)]
+        if core.empty:
+            continue
+        # One reading a day, so a name quoted more often does not simply
+        # outvote a name quoted less.
+        daily = core["spread_bp"].groupby(
+            pd.DatetimeIndex(core.index).tz_localize(None).normalize()
+        ).median().dropna()
+        if not daily.empty:
+            out[str(ticker)] = daily
+    return out
 
 
 #: Where selection snapshots live, under the account root.
