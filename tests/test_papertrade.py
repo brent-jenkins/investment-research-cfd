@@ -648,50 +648,74 @@ def test_a_part_finished_session_is_not_read_as_a_quiet_market(monkeypatch):
     assert state["AAA"]["atr_pct"] == pytest.approx(2.0)
 
 
-def test_the_book_can_only_open_and_close_never_resize():
-    """M134: a resize event, which Trading 212 cannot perform.
+def test_the_book_resizes_because_the_account_it_mirrors_can():
+    """M134 retired, and replaced by its opposite. 2026-08-28.
 
-    The venue offers no way to change the size of an open CFD position --
-    it can only be closed. A book that trimmed a winner would be recording
-    a trade the account could not have made, and every cost and outcome
-    after that point would belong to a position that never existed.
+    M134 asserted the book could *not* resize, because Trading 212 offers no
+    way to change the size of an open CFD position -- it can only be closed.
+    That was a true constraint of that venue and a wrong one to build a
+    strategy around, and it stopped being true of this book when it moved on
+    to Capital's terms, which do allow it. The execution engine always
+    resized; the bridge does. A book that could not would hold different
+    positions from the account it exists to be compared against, and the
+    difference between them would stop meaning "how wrong is the
+    simulation".
 
-    Asserted against the module rather than a run, because the failure
-    would arrive as a new code path and not as a bad number.
+    What replaces it is the vocabulary check, which is the part that was
+    doing the work: the book writes exactly three kinds of event and a
+    fourth arriving unannounced is still a bug.
     """
     import inspect
 
-    from cfdinvest.advisor import papertrade, papertrade_run
-
-    import ast
-
-    def code_only(module) -> str:
-        """The module with its prose stripped.
-
-        The docstrings explain why there is no resize, so a plain text
-        search matches its own explanation.
-        """
-        tree = ast.parse(inspect.getsource(module))
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef)):
-                if (node.body and isinstance(node.body[0], ast.Expr)
-                        and isinstance(node.body[0].value, ast.Constant)
-                        and isinstance(node.body[0].value.value, str)):
-                    node.body.pop(0)
-        return ast.unparse(tree)
-
-    for module in (papertrade, papertrade_run):
-        source = code_only(module)
-        assert "resize" not in source, f"{module.__name__} gained a resize path"
-        # And no rebalance threshold, which is what would drive one.
-        assert "rebalance" not in source
+    from cfdinvest.advisor import papertrade
 
     events = {
         line.split('event="')[1].split('"')[0]
         for line in inspect.getsource(papertrade).splitlines()
         if 'event="' in line
     }
-    assert events == {"open", "close"}
+    assert events == {"open", "resize", "close"}, (
+        f"the book writes {sorted(events)}; a new event kind needs a "
+        "replay rule and a place in the summary before it is written"
+    )
+
+
+def test_a_resize_holds_the_target_and_is_replayed_as_the_position():
+    """The point of resizing: the book tracks its target as price moves.
+
+    A fixed £1,000 of exposure means the unit count falls as the price
+    rises. The account's target is a share of its balance and moves for the
+    same reason, which is what makes the two reconcilable.
+    """
+    from cfdinvest.advisor import papertrade
+
+    opened = papertrade.PaperTrade(
+        event="open", at="2026-08-28T14:00:00+00:00", ticker="AAPL",
+        direction="long", quantity=12.6582, price=100.0, notional_gbp=1000.0,
+        cohort="c35", fx_rate=0.79, leverage=5.0, financing_rate=0.0786,
+        venue="capital",
+    ).as_row()
+
+    # Price up 20%: holding £1,000 of exposure needs fewer units.
+    resized = papertrade.resize_trade(opened, 120.0, "2026-08-28T18:00:00+00:00")
+    assert resized is not None
+    row = resized.as_row()
+
+    assert row["event"] == "resize"
+    assert row["quantity"] == pytest.approx(
+        papertrade.target_quantity(120.0, 0.79), rel=1e-9
+    )
+    assert row["quantity"] < opened["quantity"], "the position did not shrink"
+    assert row["traded_quantity"] == pytest.approx(
+        row["quantity"] - opened["quantity"], rel=1e-9
+    )
+    assert row["traded_quantity"] < 0, "a reduction was not recorded as negative"
+
+    # The replay must treat it as the live position, not as a second one.
+    live = papertrade.open_positions([opened, row])
+    assert set(live) == {"AAPL"}
+    assert live["AAPL"]["quantity"] == pytest.approx(row["quantity"])
+    assert live["AAPL"]["event"] == "resize"
 
 
 def test_the_entry_evidence_is_not_overwritten_by_the_exit_reason():

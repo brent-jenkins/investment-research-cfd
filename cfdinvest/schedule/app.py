@@ -1106,6 +1106,23 @@ def _capital_marks(tickers) -> dict:
         return {}
 
 
+def _capital_environment() -> str:
+    """Which Capital account the book is being priced against.
+
+    Returned as the broker reports it rather than assumed. Demo and live are
+    different evidence and the venue stamp carries the difference, so this
+    must never guess: an unreadable configuration produces an empty string,
+    which `venue_name` turns into an explicit unknown.
+    """
+    try:
+        from cfdinvest.broker.capital import client as capital
+
+        return str(capital.CapitalConfig.from_env().environment or "")
+    except Exception as error:  # noqa: BLE001
+        logger.debug("Could not read the Capital environment: %s", error)
+        return ""
+
+
 def _live_armed() -> bool | None:
     """Whether the live order path was armed when this pass was decided.
 
@@ -1179,39 +1196,41 @@ def _command_paper_book(args, app_config, smtp=None, transport=None) -> int:
         if value is not None
     }
 
-    # Price the book on Capital's own quotes where they can be had.
+    # Price the book on Capital's quotes, or open nothing.
     #
     # The book and the demo account are meant to hold the same intended
     # positions, so the gap between them measures how wrong the simulation
-    # is. While the book charged Trading 212 and the account paid Capital,
-    # that gap measured two things at once and neither could be read off it.
+    # is. That only works if they are charged the same, which means one
+    # venue and no substitutes: a pass that quietly priced on another
+    # broker's table would put a row in the record that the account could
+    # never have produced.
     #
-    # Falls back to the Trading 212 table, loudly, rather than skipping a
-    # pass: a book that stops recording when a broker is unreachable has a
-    # hole exactly where the interesting days are. The venue is stamped on
-    # every row either way, so a mixed run stays readable afterwards.
-    venue, rules = "t212", None
-    capital_marks = _capital_marks(sorted(set(t for t in wanted if "=X" not in t)))
-    if capital_marks:
-        try:
-            from cfdinvest.advisor.capital_venue import VENUE, rules_from_quotes
+    # When Capital cannot be reached the table comes back empty, every entry
+    # absent, and `open_trade` declines. Positions already open are still
+    # marked and closed -- their terms were written on the row when they
+    # were struck and do not need fetching again. So an outage costs new
+    # entries, never the management of what is already held.
+    from cfdinvest.advisor.capital_venue import UNKNOWN_VENUE, rules_from_quotes, venue_name
 
-            rules = rules_from_quotes(capital_marks)
-            venue = VENUE
-            prices.update({
-                ticker: quote["mid"] for ticker, quote in capital_marks.items()
-                if quote.get("mid")
-            })
-        except Exception as error:  # noqa: BLE001 - a pass is worth more than a venue
-            logger.warning(
-                "Capital terms unavailable (%s); the book falls back to the "
-                "Trading 212 table for this pass", error,
-            )
-            venue, rules = "t212", None
-    else:
+    venue = UNKNOWN_VENUE
+    capital_marks = _capital_marks(sorted({t for t in wanted if "=X" not in t}))
+    try:
+        rules = rules_from_quotes(capital_marks)
+        venue = venue_name(_capital_environment())
+        prices.update({
+            ticker: quote["mid"] for ticker, quote in capital_marks.items()
+            if quote.get("mid")
+        })
+    except Exception as error:  # noqa: BLE001 - a pass is worth more than a table
         logger.warning(
-            "No Capital quotes this pass; the book falls back to the "
-            "Trading 212 table and says so in every row it writes."
+            "Capital terms unavailable (%s); the book will mark and close "
+            "what it holds and open nothing this pass", error,
+        )
+        rules = rules_from_quotes({}, terms={})
+    if not capital_marks:
+        logger.warning(
+            "No Capital quotes this pass; opening nothing. Open positions "
+            "are still marked on the terms recorded when they were struck."
         )
 
     live_armed = _live_armed()
@@ -1220,6 +1239,7 @@ def _command_paper_book(args, app_config, smtp=None, transport=None) -> int:
     summaries = run_all_cohorts(
         latest, prices, config=app_config, account=account,
         rules=rules, venue=venue, live_armed=live_armed,
+        rebalance_threshold=strategy.rebalance_threshold,
     )
 
     # The events this pass appended, read back from the book rather than

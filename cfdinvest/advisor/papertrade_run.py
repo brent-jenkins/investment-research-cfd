@@ -266,6 +266,7 @@ def run_paper_pass(
     rules=None,
     venue: str = "",
     live_armed: bool | None = None,
+    rebalance_threshold: float | None = None,
 ) -> dict[str, Any]:
     """Close what is due and open what qualifies. Never raises.
 
@@ -273,9 +274,11 @@ def run_paper_pass(
     to use. Returns a summary for the log -- nothing is emailed, and the
     caller is a scheduled job with nobody watching.
     """
+    import numpy as np
     import pandas as pd
 
     from cfdinvest.advisor import livecheck, papertrade
+    from cfdinvest.execution.state import needs_resize
     from cfdinvest.ingestion.earnings import load_earnings_dates
     from cfdinvest.livehelper.t212_rules import load_rules
 
@@ -287,6 +290,11 @@ def run_paper_pass(
     # which is what every pass before 2026-08-28 used and what the tests
     # still exercise -- the switch is made by the caller, not assumed here.
     rules = load_rules() if rules is None else rules
+    if rebalance_threshold is None:
+        rebalance_threshold = float(
+            getattr(getattr(config, "strategy", None), "rebalance_threshold", 0.25)
+        )
+    resized = 0
     try:
         earnings = load_earnings_dates(config, account)
     except Exception:  # noqa: BLE001
@@ -326,8 +334,13 @@ def run_paper_pass(
         if price is None or not _market_open(ticker, now):
             continue
 
+        # From the open, not from the last adjustment. A resize row's `at`
+        # is when it was adjusted, and taking that would restart the time
+        # stop every time a position was trimmed -- so a position that kept
+        # drifting would never age out.
+        opened_at = position.get("opened_at") or position.get("at")
         held = max(
-            (now - pd.Timestamp(position.get("at"))).total_seconds() / 86_400.0, 0.0
+            (now - pd.Timestamp(opened_at)).total_seconds() / 86_400.0, 0.0
         )
         row = signals.get(ticker) or {}
         direction = str(row.get("direction") or "flat").lower()
@@ -352,6 +365,41 @@ def run_paper_pass(
                     live_armed=live_armed)
             )
             live.pop(ticker, None)
+
+    # ---- then adjust what is still held back towards its target
+    #
+    # The book holds a fixed £1,000 of exposure, so its target unit count
+    # moves as the price does. The account's target is a share of its
+    # balance and moves for the same reason. Same trigger, different scale,
+    # which is what lets the two be reconciled trade for trade -- and the
+    # book could not do it at all while it was priced on a venue that
+    # cannot resize an open position.
+    #
+    # The threshold is the strategy's own, read from one place. A second
+    # copy here would drift from the engine's, and the day it drifted the
+    # book and the account would adjust on different days for no reason
+    # anybody could see.
+    for ticker, position in list(live.items()):
+        price = prices.get(ticker)
+        if price is None or not _market_open(ticker, now):
+            continue
+        target = papertrade.target_quantity(price, position.get("fx_rate"))
+        current = position.get("quantity")
+        if target is None or not current:
+            continue
+        if not bool(needs_resize(
+            np.asarray([float(current)]), np.asarray([float(target)]),
+            threshold=rebalance_threshold,
+        )[0]):
+            continue
+        adjusted = papertrade.resize_trade(
+            position, price, now.isoformat(), rules=rules, live_armed=live_armed,
+        )
+        if adjusted is None:
+            continue
+        events.append(adjusted)
+        live[ticker] = adjusted.as_row()
+        resized += 1
 
     closed_at = {
         str(row.get("ticker")): row.get("at")
@@ -459,6 +507,7 @@ def run_paper_pass(
     summary = {
         "at": now.isoformat(),
         "cohort": cohort,
+        "resized": resized,
         "opened": opened,
         "closed": sum(1 for e in events if e.event == "close"),
         "still_open": len(live) + opened,

@@ -60,6 +60,8 @@ __all__ = [
     "STAKE_GBP",
     "PaperTrade",
     "open_trade",
+    "resize_trade",
+    "target_quantity",
     "value_trade",
     "record",
     "load_book",
@@ -139,7 +141,15 @@ class PaperTrade:
     #: the question that makes a later mismatch interpretable.
     live_armed: bool | None = None
 
-    #: Only on a close.
+    #: Units bought or sold by *this* event, signed against the position:
+    #: positive adds, negative reduces. On an open it is the whole position
+    #: and on a close the whole of what is left, so every row states what
+    #: was traded rather than leaving it to be inferred from the difference
+    #: between two rows -- which is what reconciling against the broker's
+    #: order record needs.
+    traded_quantity: float | None = None
+
+    #: Only on a close or a reducing resize.
     opened_at: str = ""
     days_held: float | None = None
     gross_pnl_gbp: float | None = None
@@ -422,7 +432,11 @@ def value_trade(
 
     from cfdinvest.livehelper.ticket import TradeTicket, close_out
 
-    opened = trade.get("at") or trade.get("opened_at") or ""
+    # `opened_at` first. A resize row's `at` is the moment it was resized,
+    # and financing accrues from when the position was opened -- taking the
+    # resize date would quietly stop charging carry on every position that
+    # was ever adjusted.
+    opened = trade.get("opened_at") or trade.get("at") or ""
     if days_held is None:
         try:
             days_held = max(
@@ -510,6 +524,195 @@ def value_trade(
     )
 
 
+def target_quantity(price: float, fx_rate: float | None, stake: float = STAKE_GBP):
+    """Units that hold ``stake`` of exposure at ``price``.
+
+    The same expression :func:`open_trade` sizes with, so a position opened
+    and a position resized are measured against one definition of the
+    target rather than two that can drift apart.
+    """
+    try:
+        unit_price = float(price)
+    except (TypeError, ValueError):
+        return None
+    if not unit_price > 0:
+        return None
+    rate = 1.0 if fx_rate is None else float(fx_rate)
+    if not rate > 0:
+        rate = 1.0
+    return float(stake) / (unit_price * rate)
+
+
+def resize_trade(
+    trade: Mapping[str, Any],
+    price: float,
+    at: str,
+    *,
+    rules=None,
+    stake: float = STAKE_GBP,
+    live_armed: bool | None = None,
+) -> PaperTrade | None:
+    """Adjust an open position back to ``stake`` of exposure.
+
+    ``None`` when there is nothing to do or the terms are unknown.
+
+    Why the book resizes at all
+    ---------------------------
+    It did not, because Trading 212 cannot: a CFD there can only be closed.
+    Capital can, the execution engine always could, and the bridge does --
+    so a book that could not resize would hold different positions from the
+    account it is supposed to mirror, and the difference between them would
+    stop meaning "how wrong is the simulation".
+
+    The target is a fixed £1,000 of exposure, so it moves as the price does.
+    The account's target is a share of its balance and moves for the same
+    reason. Different scale, same trigger, which is what makes the two
+    reconcilable trade for trade.
+
+    A reduction realises
+    --------------------
+    Only the part that went away, valued through the same ``close_out`` the
+    full close uses -- there is one accounting owner and this is not a
+    second. An increase realises nothing and re-strikes the entry price as a
+    weighted average, so the retained units keep the price they were bought
+    at.
+
+    The exchange rate is the one the position was opened at, not today's.
+    The book fixes a rate per position and values the close through it, and
+    a resize that mixed two rates would leave the position with no single
+    rate to close at. It is an approximation, and a second-order one against
+    the price move that triggered the resize.
+    """
+    from cfdinvest.livehelper.ticket import TradeTicket, close_out
+
+    side = str(trade.get("direction") or "long").lower()
+    held = _number(trade.get("quantity"))
+    entry_price = _number(trade.get("price"))
+    rate = _number(trade.get("fx_rate"))
+    if held is None or entry_price is None or not held > 0:
+        return None
+    try:
+        mark = float(price)
+    except (TypeError, ValueError):
+        return None
+    if not mark > 0:
+        return None
+
+    target = target_quantity(mark, rate, stake)
+    if target is None or not target > 0:
+        return None
+    delta = target - held
+    if abs(delta) <= 1e-12:
+        return None
+
+    ticker = str(trade.get("ticker") or "")
+    entry = _rules_for(ticker, rules) if rules is not None else None
+    applied_rate = 1.0 if rate is None else float(rate)
+
+    # Spread on what was traded, not on the position. Holding is free and
+    # only the change pays, the same rule the execution engine follows.
+    spread_cost, spread_source = (None, "")
+    if entry is not None:
+        spread_cost, spread_source = _spread_cost(
+            ticker, entry, abs(delta), mark, applied_rate
+        )
+    if not spread_source:
+        spread_source = str(trade.get("spread_source") or "")
+
+    opened = str(trade.get("opened_at") or trade.get("at") or "")
+    realised = None
+    days_held = None
+    if delta < 0:
+        import pandas as pd
+
+        try:
+            days_held = max(
+                (pd.Timestamp(at) - pd.Timestamp(opened)).total_seconds() / 86_400.0,
+                0.0,
+            )
+        except (TypeError, ValueError):
+            days_held = 0.0
+        gone = abs(delta)
+        share = gone / held
+        realised = close_out(
+            TradeTicket(
+                ticker=ticker,
+                direction=side,
+                quantity=gone,
+                price=entry_price,
+                currency="GBP" if rate in (None, 1.0) else "USD",
+                fx_rate=None if rate is None else float(rate),
+                leverage=_number(trade.get("leverage")),
+                financing_rate=_number(trade.get("financing_rate")),
+                fx_fee_applies=trade.get("fx_fee_applies"),
+                notional=abs(gone * entry_price),
+                notional_gbp=(_number(trade.get("notional_gbp")) or 0.0) * share,
+                margin_gbp=(
+                    None if _number(trade.get("margin_gbp")) is None
+                    else float(trade["margin_gbp"]) * share
+                ),
+                financing_per_day_gbp=(
+                    None if _number(trade.get("financing_rate")) is None
+                    else (_number(trade.get("notional_gbp")) or 0.0) * share
+                    * float(trade["financing_rate"]) / 365.0
+                ),
+            ),
+            mark,
+            days_held=days_held,
+        )
+
+    # An increase re-strikes the entry as a weighted average; a reduction
+    # leaves the retained units at the price they were bought at.
+    if delta > 0:
+        new_entry = ((held * entry_price) + (delta * mark)) / target
+    else:
+        new_entry = entry_price
+
+    notional_gbp = target * new_entry * applied_rate
+    leverage = _number(trade.get("leverage"))
+    margin = None if leverage in (None, 0) else notional_gbp / float(leverage)
+
+    return PaperTrade(
+        event="resize",
+        at=str(at),
+        ticker=ticker,
+        cohort=str(trade.get("cohort") or ""),
+        direction=side,
+        quantity=float(target),
+        traded_quantity=float(delta),
+        price=float(new_entry),
+        notional_gbp=float(notional_gbp),
+        leverage=leverage,
+        financing_rate=_number(trade.get("financing_rate")),
+        fx_rate=None if rate is None else float(rate),
+        fx_fee_applies=trade.get("fx_fee_applies"),
+        spread_cost_gbp=spread_cost,
+        spread_source=spread_source,
+        venue=str(trade.get("venue") or ""),
+        live_armed=live_armed,
+        margin_gbp=margin,
+        # Carried so the eventual close still charges carry from the open.
+        opened_at=opened,
+        days_held=days_held,
+        gross_pnl_gbp=None if realised is None else realised.gross_pnl_gbp,
+        financing_gbp=None if realised is None else realised.financing_gbp,
+        fx_fee_gbp=None if realised is None else realised.fx_fee_gbp,
+        net_pnl_gbp=None if realised is None else realised.net_pnl_gbp,
+        net_pct=(
+            None if realised is None or realised.net_pnl_gbp is None
+            or not (_number(trade.get("notional_gbp")) or 0.0)
+            else realised.net_pnl_gbp
+            / ((_number(trade.get("notional_gbp")) or 0.0) * (abs(delta) / held))
+            * 100.0
+        ),
+        reason="resize",
+        missing=() if realised is None else tuple(realised.missing),
+        confidence=_number(trade.get("confidence")),
+        regime=str(trade.get("regime") or ""),
+        signal_reason=str(trade.get("signal_reason") or ""),
+    )
+
+
 def record(events: Iterable[PaperTrade], config=None, account: str | None = None) -> int:
     """Append to the book. Never raises; returns how many were written."""
     rows = list(events or ())
@@ -567,7 +770,11 @@ def open_positions(
             continue
         if cohort is not None and str(row.get("cohort") or "") != cohort:
             continue
-        if row.get("event") == "open":
+        if row.get("event") in ("open", "resize"):
+            # A resize row carries the whole position state, so replacing is
+            # the same operation as an open. Treating it as a new open would
+            # be wrong only in that it must not reset `opened_at`, which the
+            # row already carries forward.
             live[ticker] = dict(row)
         elif row.get("event") == "close":
             live.pop(ticker, None)
@@ -616,13 +823,32 @@ def summarise(
     priced = [row for row in closed if _number(row.get("net_pnl_gbp")) is not None]
     unpriced = len(closed) - len(priced)
 
+    # A reducing resize realises money on the part that went away. Counting
+    # only closes would drop it from every total while the identity below
+    # still balanced, because the identity was only ever asserted over
+    # closes -- a hole that widens with every resize.
+    #
+    # It is *not* counted as a completed trade: win rate, hold time and the
+    # sample floor are all statements about round trips, and a position
+    # trimmed by a third has not finished. So the money is pooled and the
+    # trade statistics are not.
+    realising = [
+        row for row in rows
+        if row.get("event") == "resize"
+        and _number(row.get("net_pnl_gbp")) is not None
+    ]
+    # Spread is paid on every resize, realising or not -- an increase pays to
+    # cross too, and charging only the reductions would understate cost
+    # exactly where the book trades most.
+    resized = [row for row in rows if row.get("event") == "resize"]
+
     nets = [float(row["net_pnl_gbp"]) for row in priced]
     wins = sum(1 for value in nets if value > 0)
     losses = sum(1 for value in nets if value < 0)
 
-    def total(name: str) -> float:
+    def total(name: str, over=None) -> float:
         return sum(
-            float(row[name]) for row in priced
+            float(row[name]) for row in (priced if over is None else over)
             if _number(row.get(name)) is not None
         )
 
@@ -646,11 +872,36 @@ def summarise(
         # The arithmetic, always available and never presented as settled.
         "rate_so_far": wins / len(priced) * 100.0 if priced else None,
         "needed": max(MIN_CLOSED_FOR_RATE - len(priced), 0),
-        "net_gbp": sum(nets) if nets else None,
-        "gross_gbp": total("gross_pnl_gbp") if priced else None,
-        "financing_gbp": total("financing_gbp") if priced else None,
-        "spread_gbp": total("spread_cost_gbp") if priced else None,
-        "fx_fee_gbp": total("fx_fee_gbp") if priced else None,
+        # Every figure below pools closes with the realising part of any
+        # resize, so the money adds up. `closed` above counts round trips
+        # only, so the trade statistics still mean what they say.
+        "net_gbp": (
+            sum(nets) + total("net_pnl_gbp", realising)
+            if nets or realising else None
+        ),
+        "gross_gbp": (
+            total("gross_pnl_gbp") + total("gross_pnl_gbp", realising)
+            if priced or realising else None
+        ),
+        "financing_gbp": (
+            total("financing_gbp") + total("financing_gbp", realising)
+            if priced or realising else None
+        ),
+        "spread_gbp": (
+            total("spread_cost_gbp") + total("spread_cost_gbp", resized)
+            if priced or resized else None
+        ),
+        "fx_fee_gbp": (
+            total("fx_fee_gbp") + total("fx_fee_gbp", realising)
+            if priced or realising else None
+        ),
+        #: Named separately so a reader can tell a book that resizes from one
+        #: that does not, and see how much of the result came from trimming
+        #: rather than from completed trades.
+        "resizes": len(resized),
+        "realised_on_resize_gbp": (
+            total("net_pnl_gbp", realising) if realising else None
+        ),
         "best_gbp": max(nets) if nets else None,
         "worst_gbp": min(nets) if nets else None,
         "avg_days_held": sum(held) / len(held) if held else None,

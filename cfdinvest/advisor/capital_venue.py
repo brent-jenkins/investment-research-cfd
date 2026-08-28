@@ -45,18 +45,46 @@ from typing import Any, Mapping
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "VENUE",
+    "BROKER",
+    "UNKNOWN_VENUE",
+    "venue_name",
     "CapitalInstrumentRules",
     "CapitalRuleTable",
     "load_capital_terms",
     "rules_from_quotes",
 ]
 
-#: Written into every book row struck on these terms. The book has run on
-#: Trading 212's costs since 2026-08-26, and rows from before and after the
-#: switch are not comparable. Stamping the venue is what lets a reader
-#: separate them later; without it the record silently mixes two cost bases.
-VENUE = "capital"
+#: The broker, without the account. Never written to a row on its own --
+#: see :func:`venue_name`.
+BROKER = "capital"
+
+#: What goes on a row when the account cannot be identified. Deliberately
+#: ugly and greppable: it should never appear, and if it does, somebody
+#: should notice rather than read it as a default.
+UNKNOWN_VENUE = "capital-unknown"
+
+
+def venue_name(environment: str | None) -> str:
+    """The venue stamp for one account: ``capital-demo`` or ``capital-live``.
+
+    The environment is part of the venue, not a field beside it, so that no
+    grouping can accidentally pool the two. A demo fill and a live fill are
+    not the same evidence -- the demo book is a simulation the broker happens
+    to run, and its fills cost nothing to be wrong about. When this account
+    is switched to live, rows either side of the switch must not average
+    together, and a reader who groups by venue gets that for free.
+
+    Anything that is not exactly ``live`` is **not** assumed to be demo. An
+    unrecognised environment is recorded as unknown, because "we could not
+    tell which account this was" and "this was the demo account" are
+    different statements and only one of them is reassuring.
+    """
+    name = str(environment or "").strip().lower()
+    if name == "live":
+        return f"{BROKER}-live"
+    if name == "demo":
+        return f"{BROKER}-demo"
+    return UNKNOWN_VENUE
 
 
 @dataclass(frozen=True, slots=True)

@@ -21,6 +21,8 @@ import pytest
 
 from cfdinvest.advisor import capital_venue, papertrade
 
+DEMO = capital_venue.venue_name("demo")
+
 QUOTE = {"AAPL": {"bid": 100.0, "offer": 100.2, "currency": "USD"}}
 
 TERMS = {
@@ -40,7 +42,7 @@ def struck(direction="long", rules=None, ticker="AAPL", price=100.1, **kwargs):
     return papertrade.open_trade(
         ticker, direction, price, "2026-08-28T15:00:00+00:00",
         rules=rules if rules is not None else table(),
-        fx_rate=0.79, cohort="c35", venue=capital_venue.VENUE, **kwargs,
+        fx_rate=0.79, cohort="c35", venue=DEMO, **kwargs,
     )
 
 
@@ -53,7 +55,7 @@ def test_every_row_says_whose_terms_it_was_struck_on():
     """
     row = struck().as_row()
 
-    assert row["venue"] == "capital"
+    assert row["venue"] == "capital-demo"
     assert row["schema_version"] == papertrade.SCHEMA_VERSION
     assert papertrade.SCHEMA_VERSION >= 2, (
         "the venue switch must bump the schema; version 1 rows carry no "
@@ -187,12 +189,12 @@ def test_the_venue_is_carried_from_the_open_not_re_derived_on_close():
         opened, 101.0, "2026-08-29T15:00:00+00:00", live_armed=True
     ).as_row()
 
-    assert closed["venue"] == "capital"
+    assert closed["venue"] == "capital-demo"
 
     legacy = dict(opened, venue="t212")
     assert papertrade.value_trade(
         legacy, 101.0, "2026-08-29T15:00:00+00:00"
-    ).as_row()["venue"] == "t212", "a Trading 212 position was closed as Capital"
+    ).as_row()["venue"] == "t212", "a position was closed on the wrong venue"
 
 
 def test_missing_terms_refuse_rather_than_invent_a_rate(tmp_path):
@@ -218,6 +220,61 @@ def test_an_unknown_instrument_says_not_known_not_unconstrained():
     assert entry.ticker == "NOPE"
     assert entry.leverage is None and entry.financing_rate is None
     assert entry.annual_financing("long") is None
+
+
+def test_the_venue_stamp_separates_the_demo_account_from_a_live_one():
+    """M348: demo and live rows pooling into one average.
+
+    The demo account is a simulation the broker happens to run, and its
+    fills cost nothing to be wrong about. When this switches to live, rows
+    either side must not average together -- so the account is part of the
+    venue string rather than a field beside it, and a reader who groups by
+    venue gets the separation without having to know to ask for it.
+    """
+    assert capital_venue.venue_name("demo") == "capital-demo"
+    assert capital_venue.venue_name("live") == "capital-live"
+    assert capital_venue.venue_name("demo") != capital_venue.venue_name("live")
+
+    # Anything unrecognised is unknown, never assumed to be the safe one.
+    for unclear in ("", None, "production", "sandbox", "DEMO-2"):
+        if str(unclear or "").strip().lower() in ("demo", "live"):
+            continue
+        assert capital_venue.venue_name(unclear) == capital_venue.UNKNOWN_VENUE, (
+            f"{unclear!r} was resolved to a named account rather than unknown"
+        )
+
+    # And it reaches the row.
+    row = papertrade.open_trade(
+        "AAPL", "long", 100.1, "2026-08-28T15:00:00+00:00", rules=table(),
+        fx_rate=0.79, venue=capital_venue.venue_name("live"),
+    ).as_row()
+    assert row["venue"] == "capital-live"
+
+
+def test_the_shadow_pass_prices_on_capital_or_opens_nothing():
+    """One venue and no substitutes.
+
+    A pass that quietly priced on another broker's table would put a row in
+    the record that the account could never have produced, and the gap
+    between book and account would stop measuring simulation error.
+    """
+    empty = capital_venue.rules_from_quotes({}, terms={})
+    assert len(empty) == 0
+    assert papertrade.open_trade(
+        "AAPL", "long", 100.1, "2026-08-28T15:00:00+00:00",
+        rules=empty, fx_rate=0.79, venue=DEMO,
+    ).as_row()["spread_source"] == "", (
+        "an empty Capital table still produced a priced spread"
+    )
+
+    import inspect
+
+    from cfdinvest.schedule import app
+
+    source = inspect.getsource(app._command_paper_book)
+    assert "t212" not in source.lower(), (
+        "the shadow pass still names another broker as a fallback"
+    )
 
 
 def test_the_venue_module_names_no_broker_and_imports_none():
