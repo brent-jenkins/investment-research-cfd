@@ -341,3 +341,87 @@ uses the shared root, exactly as before it existed. See
 
 The root `README.md` is out of date — it describes the project as
 "ingestion layer complete".
+
+### What changed on 2026-08-28
+
+A long day of measurement. Most of it produced negative results, and those
+are the more useful half — several are things that looked good enough to
+ship and did not survive being pushed.
+
+**The universe is eight names, and sector no longer constrains anything.**
+`max_per_sector` is off: it was measured to buy nothing it was credited
+with. Capping a sector at N names also drops the worst-ranked names in a
+crowded sector, and a rank-matched control ignoring sector entirely beat
+it, 0.75 against 0.65. Capping sector *weight* — which has no rank effect
+to borrow — did nothing at any level. Sweeping the name count directly
+gives a monotone curve peaking around eight.
+
+**The screen ranks on volatility, and refuses what it cannot afford.**
+Weights moved to 0.20 liquidity / 0.70 volatility / 0.10 continuity:
+volatility is the only one of the three that predicts next-month movement,
+and the rank correlation is monotone in how much weight it carries (0.084
+at none, 0.235 at the old 0.35, 0.336 at all of it). A cost gate
+(`max_spread_multiple = 2.5`) then refuses instruments above 2.5x the
+universe's own median spread, trailing 90 days and never whole-history —
+INTC ran 0.85x, 3.63x, 5.02x and 1.45x across four years, so a static
+figure bans a name for a period it has already left. The gate became
+load-bearing when the ranking moved: ranking harder on movement pulls in
+volatile names and volatile names are dear.
+
+**Departing positions run out; they are not liquidated.** A name dropped
+from the traded list keeps its signals (`app._with_held`) so it exits on
+its own reversal or time stop, while `papertrade_run._open_universe` stops
+it being re-entered. Shipped once reading only the confirm layer, which is
+empty in this deployment — inert, and the test mocked the very source that
+was empty. It reads the paper book across every cohort as well now.
+
+**One owner for the thresholds, and the earnings blackout runs at last.**
+`run_paper_pass` carried its own literals — a 1-day time stop, a 14-day
+cooldown, a 2-day blackout — and was never passed the configured values, so
+the shadow book ran a materially different strategy from the backtest that
+justifies it. Worse, the engine's blackout had never once bitten:
+`_execution_config` read earnings dates from the OS application-data
+directory rather than the lake, found none, and treated that as nothing to
+black out. Both fixed; the blackout is 1 day, chosen on risk grounds and
+explicitly not on return, which reverses between halves of the span.
+
+**Costs are charged as quoted.** `spread_panel` and `dealing_mask` are back
+from `capital-prices-archive`. Per-bar measured spreads cost about nine
+points of CAGR against the flat 5bp — not the forty-four the archived note
+records, because that was measured on a universe containing INTC at 28.73bp
+and SMCI at 41.61bp, both of which the cost gate now refuses.
+
+**`max_open_positions` exists in the engine and nothing configures it.**
+Capacity was previously a side effect of the universe size. Separating them
+measured better — all 49 eligible with 8 slots returned 13.6% against 7.5%
+for a monthly list of eight, ahead in both halves — but the daemon still
+keys off `market.tickers`, so pointing it at all 49 is the unfinished half.
+
+**The honest baseline is 76.3%/yr at −25.8%**, on Capital session bars over
+3.65 years with per-bar measured spreads, positive in both halves. Read
+`memory` notes before quoting anything else: the 139.8% headline came from
+yfinance's 730-day window, and Capital's bars are mid-quotes with tick-count
+volume, so no volume or order-flow analysis on them means what it appears to.
+
+**What was measured and rejected.** Recorded because each cost hours and
+would otherwise be tried again: spread-timed entry (saves £2-4k of £142k —
+the 30-minute open delay already banks it); longer holds and multi-week
+holds (monotonically worse, and it is edge decay rather than carry); stops
+of every asymmetry (worse than none, monotonically tighter-is-worse);
+hysteresis and swap caps on universe turnover (the list already changes only
+8.6 times a year); Form 4 insider transactions (real — purchases predict
++1.04% next session at p=0.0009 — but 12.7 events a year on this book, a
+frequency mismatch no amount of collection fixes).
+
+**Direction appears genuinely unpredictable here, and that is a finding.**
+News, earnings, attention, order-flow proxies and absorption all predict
+*how far* an instrument will move and none predicts *which way*. The
+magnitude forecast is good — predicted-loud names move 2.18x as far as
+predicted-quiet, and 44.6% of nominated top-quintile movers land there
+against a 19.6% base rate. Momentum does pay conditionally, 5x better in
+predicted-high-volatility names than in general and negative in the quietest
+quintile — but it agrees with the engine's own direction 93.3% of the time,
+so it describes the existing design rather than extending it. Nothing at
+entry separates winners from losers; the edge is structural, winners running
+7 bars against losers' 4 at 2.4x the size. Anything that truncates that —
+stops, tighter time stops — costs more than it saves.
