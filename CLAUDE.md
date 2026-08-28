@@ -94,15 +94,32 @@ an order, because that broker returns bid and offer where IG would not.
 
 **Two figures previously stated here were wrong**, and the measurement is
 what exposed them. The estimated spread was described as a per-class
-constant of 4bp round trip. It is 10bp: `spread_bps` is unset and no
-asset-class map is supplied, so the lookup falls through to
-`default_spread_bps = 5.0` — a *half* spread — and the `equity: 2.0` entry
-in `DEFAULT_SPREAD_BPS` never applies to anything. And it is 46.6% of
-modelled cost, not 79%: measured over the whole backtest, spread 46.6%,
-slippage 37.3%, financing 12.2%, FX 3.8%.
+constant of 4bp round trip. `spread_bps` is unset and no asset-class map is
+supplied, so the lookup falls through to `default_spread_bps = 5.0` and the
+`equity: 2.0` entry in `DEFAULT_SPREAD_BPS` never applies to anything. And
+it is 46.6% of modelled cost, not 79%: measured over the whole backtest,
+spread 46.6%, slippage 37.3%, financing 12.2%, FX 3.8%.
 
-Measured, the median is 5.3bp round trip against the 10bp charged, ranging
-from 2.8bp (META, COST) to 28.6bp (NKE). So the model has been overstating
+**A third figure was wrong, and it was the correction above.** This section
+said the fall-through charges 10bp round trip, reasoning that 5.0 is a
+*half* spread. It charges **5.0bp round trip** — 2.5bp crossed per
+transaction. `resolve_spreads` and `DEFAULT_SPREAD_BPS` both document their
+values as half-spreads, and `effective_fill_price` then halves them again;
+the naming and the arithmetic disagree and the arithmetic is what runs.
+Verified two ways on 2026-08-28, through the fill price and through the cost
+accounting. Anything comparing a quoted spread against "what the model
+charges" must use 5.0bp.
+
+That inverts the conclusion below. Measured against Capital's own quotes on
+253,283 hourly bars, the model **undercharges** spread on nineteen of twenty
+instruments at the opening hour — the hour the strategy actually deals —
+1.85x at the median and 5.8x for INTC. The core-session median is 7.14bp
+against 5.0bp charged, ranging from 3.49bp (MSFT) to 28.73bp (INTC).
+
+The older reading, kept because it was measured and is still true of what it
+measured: on a single day's live snapshot the median was 5.3bp round trip,
+ranging from 2.8bp (META, COST) to 28.6bp (NKE). Compared against the 10bp
+that was believed to be charged, the model looked to be overstating
 the largest line rather than understating it. Every price checked against
 the vendor to within 0.04%, which is what says the instruments resolved
 correctly rather than to lookalike listings.
