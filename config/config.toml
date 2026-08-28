@@ -99,8 +99,22 @@ data_root = "data"
 tickers = [
     "AMD", "TSLA", "NVDA", "ORCL", "MSFT", "AVGO", "META", "AMZN",
     # These are the screen's top eight *after* three names are held out by
-    # hand. Ranked without the overrides it reads MU, AMD, INTC, TSLA, PLTR,
-    # NVDA, ORCL, MSFT, and the overrides are why it does not.
+    # hand, under the weighting in force when they were chosen. Ranked
+    # without the overrides it read MU, AMD, INTC, TSLA, PLTR, NVDA, ORCL,
+    # MSFT, and the overrides are why it did not.
+    #
+    # The screen was re-weighted towards volatility later the same day and
+    # this list deliberately does NOT follow it yet. Under 0.20/0.70/0.10
+    # the top eight would swap in COIN, MRNA, QCOM and SMCI, and SMCI trades
+    # at 41.61bp -- 4.20x the universe median. That is not a coincidence to
+    # be worked around: ranking harder on volatility pulls in volatile
+    # names, volatile names are dear, and the cost exclusion that would
+    # answer it does not exist in production yet.
+    #
+    # It cannot be built usefully today either. Candidate spread readings
+    # began on 2026-08-28 and the usability floor is 25 of them, so the rule
+    # has roughly a month before it has anything to stand on. Until then the
+    # ranking is better than the list it would produce, and the list waits.
     #
     # MU and PLTR are held out for survivorship. MU's $42bn turnover is
     # largely an +855% two-year run showing up in price x volume; PLTR rose

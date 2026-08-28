@@ -90,13 +90,39 @@ class ScreenConfig:
     #: is 90% technology is worth having. It just no longer forbids.
     max_per_sector: int | None = None
 
-    #: Weights. Liquidity first: an instrument you cannot get out of at a
-    #: sane price is not tradable whatever else is true of it. Volatility
-    #: second, because a trend system needs something that moves. Continuity
-    #: last and small -- it is a disqualifier more than a preference.
-    weight_liquidity: float = 0.5
-    weight_volatility: float = 0.35
-    weight_continuity: float = 0.15
+    #: Weights. Volatility first since 2026-08-28, because the job is
+    #: finding instruments about to move and volatility is the only one of
+    #: the three that predicts it.
+    #:
+    #: Ranked against the size of the move over the following month, across
+    #: 97 month-starts, the mean rank correlation is monotone in how much
+    #: weight volatility carries: 0.084 at none, 0.235 at the old 0.35,
+    #: 0.295 at 0.50, 0.327 at 0.70, 0.336 at all of it. Liquidity alone
+    #: manages 0.084 and is right in 73% of months, which is barely a
+    #: ranking at all. Paired month by month against the old weighting, this
+    #: one is better in 83% of months at t=9.0.
+    #:
+    #: Backtested at eight names it is the drawdown that moves rather than
+    #: the return: 7.2% CAGR against 7.4%, but -14.3% peak drawdown against
+    #: -25.1%, and less spread paid. Monotone across all four weightings
+    #: tried, which is why the direction is believed; the exact split is
+    #: not, and 0.20/0.70/0.10 is chosen as the interior point rather than
+    #: the measured optimum.
+    #:
+    #: Liquidity keeps a fifth rather than being dropped, though ranking on
+    #: volatility alone measured marginally better. It is not there to
+    #: forecast movement -- it is there because an instrument you cannot get
+    #: out of at a sane price is not tradable whatever else is true of it,
+    #: and the movement test is structurally blind to that: it measures how
+    #: far a price went, not what it cost to follow. Removing the only term
+    #: that represents cost, on the evidence of a test that cannot see cost,
+    #: would be reading more from the number than it says.
+    #:
+    #: Continuity last and small -- it is a disqualifier more than a
+    #: preference.
+    weight_liquidity: float = 0.20
+    weight_volatility: float = 0.70
+    weight_continuity: float = 0.10
 
 
 @dataclass(frozen=True, slots=True)
