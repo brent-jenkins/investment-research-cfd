@@ -838,9 +838,12 @@ def test_the_alert_carries_a_plain_text_body_as_well_as_html():
 def test_the_alert_says_it_is_simulated_in_both_parts():
     """It describes trades nobody placed, on an account that is not real.
 
-    This system has never placed an order and has no broker connection. An
-    email that reads like a broker confirmation is the one way that could
-    stop being obvious.
+    This matters more since 2026-08-27, not less. There are now two trade
+    emails: this one, from the shadow book, and one from the account
+    reporting what the broker actually did. They describe the same intended
+    positions and only one of them cost money, so an email that reads like a
+    broker confirmation and is not one is worse than it was when nothing
+    traded at all.
     """
     from cfdinvest.schedule.notify import SmtpConfig
     from cfdinvest.schedule.paper_alert import build_paper_alert

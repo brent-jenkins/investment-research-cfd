@@ -1097,13 +1097,29 @@ def test_the_readme_never_quotes_a_return_without_its_benchmark():
     assert "## Known limits" in readme
 
 
-def test_the_readme_states_that_nothing_has_ever_been_traded():
-    """The most important sentence in the document.
+def test_the_readme_states_exactly_where_it_may_trade():
+    """The most important sentence in the document, and it changed.
 
-    Someone reading this for the first time must not be able to mistake a
-    backtesting engine with a gated demo-only broker client for something
-    that trades.
+    It used to assert the README said the system had never placed a trade.
+    That stopped being true on 2026-08-27, when the daemon was permitted to
+    deal on a demo account, and a test pinning a false sentence is worse
+    than no test -- it makes the falsehood load-bearing.
+
+    What must hold now is narrower and harder: a first-time reader must be
+    able to tell exactly where it can trade and what stops it trading
+    anywhere else.
     """
     readme = Path("README.md").read_text(encoding="utf-8")
-    assert "never placed a trade" in readme.lower()
-    assert "read-only" in readme.lower()
+    lower = readme.lower()
+
+    assert "never placed a trade" not in lower, (
+        "the README claims the system has never traded; it deals on the "
+        "demo account and must say so"
+    )
+    assert "demo" in lower, "the README does not say which account it deals on"
+    assert "read-only" in lower, "the read-only construction is not stated"
+    # The second switch is the thing between a configuration mistake and a
+    # funded account, so the document has to name it.
+    assert "cfd_capital_allow_live" in lower, (
+        "the README does not name the switch a live account needs"
+    )

@@ -1,12 +1,14 @@
 # cfdinvest
 
-A multi-asset CFD backtesting engine and **manual-trading assistant**. It
-models strategies, measures risk, and helps you place trades on Trading 212
-yourself.
+A multi-asset CFD backtesting engine, a forward-testing shadow book, and a
+manual-trading assistant. It models strategies, measures risk, deals on a
+demo account, and tells you what it did.
 
-**It has never placed a trade.** There is a broker client, it is read-only
-by construction, and the one module that can deal is off unless switched on
-twice. See [Execution](#execution-what-can-and-cannot-happen).
+**It deals, on one demo account, and nowhere else.** From 2026-08-27 the
+daemon may open and close positions on a Capital.com *demo* account. A live
+account needs a second environment variable, in different words, so the
+mistake has to be made twice. Everything else is read-only by construction.
+See [Execution](#execution-what-can-and-cannot-happen).
 
 ---
 
@@ -155,24 +157,33 @@ their own and their removal took the return from 81% a year to 127%.
 ## Execution: what can and cannot happen
 
 Trading 212 has no CFD API, so it is never automated — driving its web UI
-would breach their terms. That constraint was contingent, not absolute, and
-it lapsed when an IG demo account was opened.
+would breach their terms. That records a limitation of one venue and was
+never a rule about this project; see `CLAUDE.md`, which is explicit about
+having listed it as one by mistake.
 
-- `broker/ig/client.py` is **read-only by construction**. No function places,
-  amends or cancels; tests assert IG's dealing endpoints appear nowhere and
-  that the only POST is the session.
-- `broker/ig/dealing.py` **can** deal, and says so in its name. Two gates:
-  `CFD_IG_DEALING_ENABLED` must be explicitly truthy, and a live account
-  needs `CFD_IG_ALLOW_LIVE` as well. Anything that is not the exact string
-  `live` resolves to demo.
-- The **paper book imports neither**, and a test enforces it. Its worth is
-  being a record nobody could edit once the outcome was known.
+The venue is **Capital.com**, on a demo account.
 
-**IG was measured and rejected.** CFD commission is a $15 minimum per side —
-222bp round trip on £1,000, against a ~6bp budget. Spread betting has no
-commission but a 12.2bp spread and a £7,490 minimum position. Trading 212
-wins because it charges no commission at all, which at 22-hour holds is
-worth far more than its expensive financing costs.
+- `broker/capital/client.py` and `prices.py` are **read-only by
+  construction**. No function places, amends or cancels; tests assert the
+  dealing endpoints appear nowhere and that the only POST is the session.
+- `broker/capital/dealing.py` **can** deal, and says so in its name. Two
+  gates, checked inside every order rather than once at start-up:
+  `CFD_CAPITAL_DEALING_ENABLED` must be explicitly truthy, and a live
+  account needs `CFD_CAPITAL_ALLOW_LIVE` as well. Anything that is not the
+  exact string `live` resolves to demo.
+- `broker/capital/bridge.py` decides and places nothing. It mirrors the
+  shadow book rather than reading the signals itself, so there is one
+  decision and not two that can disagree.
+- The **shadow book imports none of them**, and a test enforces it. Its
+  worth is being a record nobody could edit once the outcome was known.
+
+**IG was measured, rejected, and removed on 2026-08-28.** CFD commission was
+a $15 minimum per side — 222bp round trip on £1,000, against a ~6bp budget.
+Spread betting had no commission but a 12.2bp spread and a £7,490 minimum
+position, against an intended account of £2,000. The API was fine; the venue
+did not fit the size of account this project trades. Capital.com charges no
+commission, quotes a bid and an ask without dealing, and finances at 7.86%/yr
+long against Trading 212's 25.33%.
 
 ---
 
@@ -213,7 +224,7 @@ prevents.
 | `risk/` `monitoring/` | Book-level limits; operational health |
 | `livehelper/` | The T212 safety core: intent, safety, sizing, broker rules |
 | `advisor/` | Suggestions, sentiment, the forward record, the paper book |
-| `broker/ig/` | Read-only market data; gated dealing |
+| `broker/capital/` | Read-only market data and prices; gated dealing; the bridge |
 | `confirm/` `journal/` `insights/` `bias/` | What you did, and what it says |
 | `simulate/` `metastrategy/` | Rehearsal; risk posture |
 | `accounts/` | Registry and router |

@@ -1,8 +1,11 @@
 # cfdinvest
 
-A multi-asset CFD backtesting engine and **manual-trading assistant**. It
-models strategies, measures risk, and helps you place trades on Trading 212
-yourself. It has never placed one.
+A multi-asset CFD backtesting engine, a **forward-testing shadow book**, and
+a manual-trading assistant. It models strategies, measures risk, deals on a
+Capital.com **demo** account, and tells you what it did.
+
+It placed its first order on 2026-08-27. Everything below about gates,
+naming and demo-before-live stopped being ceremony on that date.
 
 ---
 
