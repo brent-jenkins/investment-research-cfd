@@ -68,7 +68,27 @@ class ScreenConfig:
     #: Most instruments from any one sector. ``None`` disables the cap, and
     #: it is disabled when no sector map is supplied rather than silently
     #: doing nothing -- the result says which happened.
-    max_per_sector: int | None = 5
+    #:
+    #: Off by default since 2026-08-28, because it was measured to buy
+    #: nothing it was credited with. Under a gate the cap looked worth a
+    #: great deal -- 0.45 return-per-drawdown against 0.35 without it. But
+    #: capping a sector at N names also drops the *worst-ranked* names in a
+    #: crowded sector, and a rank-matched control that holds the same number
+    #: of names while ignoring sector entirely scored 0.75 against the cap's
+    #: 0.65. The cap was buying concentration in better-ranked names, and
+    #: the sector part was incidental. Capping sector *weight* instead --
+    #: which has no rank effect to borrow -- did nothing at any level from
+    #: 50% down to equal-weight.
+    #:
+    #: The horizon is the reason. This book holds a name for a median of
+    #: three days on a trend signal. Diversification pays over horizons
+    #: where sectors mean-revert against each other; over three days a
+    #: sector is merely where the movement is, and declining to go there is
+    #: declining the trade.
+    #:
+    #: The sector map is still read and still reported -- knowing the book
+    #: is 90% technology is worth having. It just no longer forbids.
+    max_per_sector: int | None = None
 
     #: Weights. Liquidity first: an instrument you cannot get out of at a
     #: sane price is not tradable whatever else is true of it. Volatility
