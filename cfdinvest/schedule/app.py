@@ -411,6 +411,7 @@ def _execution_config(tickers, strategy=None):
         )
         return ExecutionConfig(
             max_leverage=strategy.max_leverage,
+            concentration=strategy.max_instrument_concentration,
             slippage_fraction=strategy.slippage_bps / 10_000.0,
         )
 
@@ -437,6 +438,7 @@ def _execution_config(tickers, strategy=None):
     return ExecutionConfig(
         financing_rates=rates or None,
         max_leverage=strategy.max_leverage,
+        concentration=strategy.max_instrument_concentration,
         slippage_fraction=strategy.slippage_bps / 10_000.0,
         rebalance_threshold=strategy.rebalance_threshold,
         exposure_per_unit_size=strategy.exposure_per_unit_size,
@@ -885,7 +887,11 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     report = bridge.plan_orders(
         latest, markets, positions,
         balance=account.balance,
-        limits=RiskLimits.for_balance(account.balance),
+        limits=RiskLimits.for_balance(
+            account.balance,
+            max_leverage=app_config.strategy.max_leverage,
+            concentration=app_config.strategy.max_instrument_concentration,
+        ),
         exposure_per_unit_size=app_config.strategy.exposure_per_unit_size,
         rebalance_threshold=_execution_config(tickers, app_config.strategy)
         .rebalance_threshold,

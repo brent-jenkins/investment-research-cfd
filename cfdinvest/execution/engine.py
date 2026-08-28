@@ -469,6 +469,13 @@ def run_execution(signal_frame, analysis_frame, config):
         # Cap AFTER the keep, not before. Applying it earlier let a position
         # opened when equity was higher survive untouched, quietly breaching
         # the limit the cap exists to enforce.
+        # Per instrument first, then the book. Trimming one name frees
+        # room under the gross ceiling for the others; the other order would
+        # shrink the whole book to make space for a position about to be cut
+        # anyway.
+        target_units = _apply_concentration_cap(
+            target_units, reference, equity, config
+        )
         target_units = _apply_leverage_cap(target_units, reference, equity, config)
 
         stop_out = False
@@ -736,6 +743,36 @@ def _target_units(held, size_row, reference, equity, config, tradable):
     with np.errstate(invalid="ignore", divide="ignore"):
         units = notional / safe_price
     return np.nan_to_num(units)
+
+
+def _apply_concentration_cap(units, reference, equity, config):
+    """Trim any single instrument back to its share of the gross ceiling.
+
+    Measured against the *ceiling* rather than against gross actually held,
+    so the limit does not tighten as the book empties: the single position
+    in a one-name book is allowed its full share, not the whole account.
+
+    Per instrument, and deliberately not proportional. The gross cap that
+    follows scales the whole book at once, which cannot stop one name
+    dominating -- that is this function's job and the reason it exists
+    separately.
+    """
+    share = getattr(config, "concentration", None)
+    if share is None:
+        return units
+    share = float(share)
+    if not 0 < share < 1:
+        return units
+
+    price = np.abs(np.nan_to_num(reference))
+    ceiling = float(config.max_leverage) * max(float(equity), 0.0) * share
+    if ceiling <= 0:
+        return np.zeros_like(units)
+
+    notional = np.abs(units) * price
+    with np.errstate(divide="ignore", invalid="ignore"):
+        scale = np.where(notional > ceiling, ceiling / notional, 1.0)
+    return units * np.nan_to_num(scale, nan=1.0, posinf=1.0)
 
 
 def _apply_leverage_cap(units, reference, equity, config):

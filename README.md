@@ -129,7 +129,8 @@ beside every headline. A shuffle control that fails says so.
 | Entry / exit confidence | 0.35 / 0.20 |
 | Time stop | 0.29 days — one session |
 | Re-entry cooldown | 2 hours |
-| Max gross exposure | 2.5× equity (≈50% of the balance as margin) |
+| Max gross exposure | 3.5× equity (≈70% of the balance as margin) |
+| Max in one instrument | 20% of the gross ceiling |
 | Slippage assumed | 2 bp |
 | Stake, paper book | £1,000 of exposure per trade, notional not margin |
 

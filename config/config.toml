@@ -339,7 +339,55 @@ slippage_bps = 2.0
 # the broker closes it, and because the return that comes with it is gearing
 # rather than edge -- the strategy beats buy-and-hold of the same universe
 # (22.4% a year, -23.9% drawdown) at every setting on this table.
-max_leverage = 2.5            # 50% of the balance as margin, not 100%
+max_leverage = 3.5
+#
+# Raised from 2.5 on 2026-08-28. The table above was measured on the two-year
+# yfinance window, the one that excludes 2023 -- the same artefact as the
+# 139.8% headline -- so it was not evidence for anything. Re-measured on
+# Capital's 3.65 years with drift rebalancing on and the concentration cap
+# applied:
+#
+#   max_leverage   margin   CAGR    max drawdown   CAGR/DD
+#          2.5       50%    49.1%        -32.6%      1.51
+#          3.0       60%    56.8%        -38.8%      1.46
+#          3.5       70%    69.6%        -34.6%      2.01
+#          4.0       80%    64.7%        -45.2%      1.43
+#          5.0      100%    66.6%        -53.4%      1.25
+#
+# 3.5 is the peak on both return and risk-adjusted return. Above it the
+# return flattens while the drawdown deteriorates sharply, which is gearing
+# rather than edge.
+#
+# Capital's margin factor is fixed at 20%, so this commits 70% of the account
+# and a call arrives once equity has fallen 30%. That is only survivable
+# because of the cap below: at 3.5x with no concentration limit, one name
+# gapping 8.6% is a margin call.
+
+# The largest share of the gross ceiling any one instrument may take.
+#
+# The bridge has enforced this since it was written; the engine never did,
+# so every backtest figure before 2026-08-28 was measured on a book that
+# could put everything into one name. It matters because the book is thin
+# far more often than it looks: over 3.65 years it holds a single name on
+# 17.3% of bars and two or fewer on 30.3%.
+#
+# Capping it improves the return as well as the drawdown, which is not what
+# a diversification constraint usually does -- this strategy's concentrated
+# positions are its worse bets:
+#
+#   concentration   CAGR    max drawdown   CAGR/DD   calls on a gap of
+#          none     63.5%       -37.9%       1.68           8.6%
+#          0.40     62.6%       -41.0%       1.52          21.4%
+#          0.25     66.6%       -38.5%       1.73          34.3%
+#          0.20     69.6%       -34.6%       2.01          42.9%
+#          0.15     67.6%       -35.9%       1.88          57.1%
+#
+# 0.20 rather than 0.15 because the improvement has flattened by then and
+# the tighter cap starts leaving the account under-invested when few names
+# qualify. Read by the engine and by `RiskLimits.for_balance`, from here
+# and nowhere else -- it was a default argument in two places, which is how
+# two copies of a limit begin to drift.
+max_instrument_concentration = 0.20            # 50% of the balance as margin, not 100%
 
 # Notional per unit of signal size, as a multiple of equity. Raising this is
 # gearing rather than edge -- efficiency peaks around 4 and degrades after.

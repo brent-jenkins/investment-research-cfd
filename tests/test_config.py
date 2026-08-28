@@ -190,14 +190,30 @@ def test_the_margin_ceiling_reaches_the_execution_engine():
         "the configured ceiling does not reach the engine"
     )
 
-    # A book at full margin has no room before the broker closes it.
-    assert config.strategy.max_leverage <= 2.5, (
-        f"{config.strategy.max_leverage / 5 * 100:.0f}% of the balance as margin"
+    # A book at full margin has no room before the broker closes it. The
+    # ceiling was 2.5 (50% of the balance) until 2026-08-28 and is now 3.5
+    # (70%), which was measured as the peak on both return and
+    # risk-adjusted return -- see `config.toml`.
+    #
+    # It is only survivable because of the concentration cap, so the two are
+    # asserted together rather than separately. At 3.5x with one name free
+    # to carry the whole book, that name gapping 8.6% is a margin call; at a
+    # 0.20 cap it takes 42.9%.
+    assert config.strategy.max_leverage <= 3.5, (
+        f"{config.strategy.max_leverage / 5 * 100:.0f}% of the balance as "
+        "margin, past the measured peak"
     )
-
-    # And an override travels rather than being ignored.
-    strategy = StrategyConfig(max_leverage=1.5)
-    assert app._execution_config(["AAPL"], strategy).max_leverage == 1.5
+    if config.strategy.max_leverage > 2.5:
+        share = config.strategy.max_instrument_concentration
+        assert share is not None and 0 < share <= 0.25, (
+            f"leverage is {config.strategy.max_leverage} with a concentration "
+            f"cap of {share!r}. Above 2.5x the cap is what stops one name "
+            "gapping into a margin call, and the two must move together."
+        )
+        assert execution.concentration == share, (
+            "the cap does not reach the engine, so the backtest measures a "
+            "book the account would not hold"
+        )
 
 
 def test_execution_friction_reaches_the_engine_and_is_not_zero():

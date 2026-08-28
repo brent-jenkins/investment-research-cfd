@@ -277,6 +277,12 @@ class StrategyConfig:
     #: default of 5.0 applied, so the book ran at full margin utilisation
     #: by omission rather than by choice, and no configuration file said so.
     max_leverage: float = 2.5
+    #: The largest share of the gross ceiling one instrument may take.
+    #:
+    #: Read by both the execution engine and `RiskLimits.for_balance`, which
+    #: is the point of it living here: it was a default argument in two
+    #: places, and two copies of a limit drift.
+    max_instrument_concentration: float = 0.40
     #: Notional per unit of signal size, as a multiple of equity.
     exposure_per_unit_size: float = 1.0
     #: Days either side of a reporting date to hold no position. ``0`` off.

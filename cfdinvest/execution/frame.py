@@ -138,6 +138,20 @@ class ExecutionConfig:
     # -- risk ------------------------------------------------------------- #
     #: Cap on gross notional divided by equity.
     max_leverage: float = 5.0
+    #: The largest share of the *gross ceiling* any one instrument may take.
+    #: ``None`` places no limit, which is what every recorded run assumed --
+    #: and means a single name could carry the entire book.
+    #:
+    #: The live bridge has always applied a cap and the engine never has, so
+    #: the backtest was measuring a book the account would not hold. It
+    #: binds hardest exactly where the book is thinnest: measured over 3.65
+    #: years the book holds one name on 17.3% of bars and two or fewer on
+    #: 30.3%, and at 3.5x gross a single name gapping 8.6% is a margin call.
+    #:
+    #: Measured, capping it improves the return as well as the drawdown --
+    #: this strategy's concentrated positions are its worse bets. See
+    #: `config.toml`.
+    concentration: float | None = None
     #: Flatten everything when equity falls to this fraction of its peak.
     #: ``None`` disables the stop-out.
     stop_out_level: float | None = None
