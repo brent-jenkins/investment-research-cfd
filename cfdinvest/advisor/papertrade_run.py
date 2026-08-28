@@ -79,6 +79,27 @@ COHORTS: tuple[tuple[str, float], ...] = cohorts_for()
 EXCLUDED = frozenset({"^VIX"})
 
 
+def _open_universe(config) -> frozenset[str] | None:
+    """Instruments a *new* position may be taken in.
+
+    Narrower than the signal universe on purpose. A name dropped from the
+    traded list keeps its signals so an open position can run to its own
+    exit rather than being liquidated by the config change -- see
+    ``schedule.app._with_held`` -- but it must not be re-entered on the way
+    out, or the universe would only ever change on paper.
+
+    ``None`` when nothing is configured, which leaves the pass exactly as
+    permissive as it was before this existed. An empty list is *not*
+    silently treated as "everything": that is the one reading which would
+    turn a broken config into an unrestricted book.
+    """
+    market = getattr(config, "market", None)
+    names = getattr(market, "tickers", None)
+    if names is None:
+        return None
+    return frozenset(str(t) for t in names if str(t))
+
+
 def _fx_rate_for(ticker: str, rules, quotes: dict[str, float]) -> float:
     """Account currency per unit of the instrument's currency.
 
@@ -464,10 +485,12 @@ def run_paper_pass(
     # once per instrument -- it reads the lake and rebuilds the panels, and
     # doing that twenty times a tick would cost more than the check is
     # worth. On most passes the list is empty and it does not run at all.
+    may_open = _open_universe(config)
     candidates = [
         ticker
         for ticker, row in signals.items()
         if ticker not in EXCLUDED
+        and (may_open is None or ticker in may_open)
         and ticker not in live
         and str(row.get("direction") or "flat").lower() in ("long", "short")
         and _confidence_of(row) >= threshold

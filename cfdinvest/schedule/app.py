@@ -272,6 +272,45 @@ def _universe(args) -> list[str] | None:
     return [part.strip() for part in args.tickers.split(",") if part.strip()]
 
 
+def _with_held(tickers, config, account=None) -> list[str] | None:
+    """The traded list plus anything still open that has left it.
+
+    A name dropped from the universe is not a name whose position should be
+    abandoned. Without this it gets no signal row, the paper pass reads its
+    direction as ``flat``, and ``time_stop_days`` is 0.29 -- one US session
+    -- so ``signal gone`` closes it on the next open. Every position in a
+    departing instrument would be liquidated within a session of the change
+    for no reason the strategy ever gave.
+
+    Keeping it in the signal universe lets it exit on its own terms: a
+    reversal, or its own time stop, the same way it would have if the
+    universe had never changed. It does not let it be re-entered -- see
+    ``papertrade_run._open_universe``, which restricts *opening* to the
+    configured list. Running a position out and taking a new one are
+    different acts and only the first is wanted here.
+
+    Order preserved and duplicates dropped, so the traded names keep their
+    place at the front. ``None`` in, ``None`` out.
+    """
+    if tickers is None:
+        return None
+    names = [str(t) for t in tickers if str(t)]
+    seen = set(names)
+    try:
+        from cfdinvest.livequotes.poller import held_instruments
+
+        held = held_instruments(config, account)
+    except Exception as error:  # noqa: BLE001 - never block a run on this
+        logger.warning("Could not read held instruments: %s", error)
+        return names
+    for ticker in held or ():
+        name = str(ticker)
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
 def _app_config(args):
     """Resolve the AppConfig, applying CLI overrides."""
     overrides: dict[str, dict[str, object]] = {}
@@ -478,7 +517,11 @@ def _backtest_config(args, app_config) -> BacktestConfig:
     They are attached to the price panel afterwards instead, on the traded
     grid -- see ``backtest.runner.attach_reference_prices``.
     """
-    universe = _universe(args) or list(app_config.market.tickers) or None
+    universe = _with_held(
+        _universe(args) or list(app_config.market.tickers) or None,
+        app_config,
+        getattr(args, "account", None),
+    )
     return BacktestConfig(
         tickers=universe,
         series_ids=list(app_config.macro.series_ids) or None,

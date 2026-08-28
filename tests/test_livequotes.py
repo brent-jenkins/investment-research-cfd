@@ -434,11 +434,20 @@ def test_every_configured_instrument_is_classified():
 
     A floor still applies, because a universe that quietly shrank to three
     names would pass every other test here.
+
+    The floor was ten until 2026-08-28, when the traded list was cut to
+    eight deliberately -- sweeping the name count with sector ignored gives
+    a monotone curve peaking around eight, and the tripwire fired on the
+    intended change. Lowered to five rather than to eight: the point is to
+    catch a list that collapsed by accident, and pinning it to whatever the
+    current size happens to be turns a tripwire into a restatement of the
+    config, which the house rule against testing the constant exists to
+    prevent. Five still catches a collapse and leaves room to test six.
     """
     from cfdinvest.config import load_config
 
     universe = list(load_config().market.tickers)
-    assert len(universe) >= 10, "the universe has collapsed"
+    assert len(universe) >= 5, "the universe has collapsed"
 
     classes = {t212_instruments.asset_class(t) for t in universe}
     assert classes == {"share"}, (

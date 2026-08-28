@@ -75,38 +75,61 @@ data_root = "data"
 # a target -- a tight universe is what makes it possible to hold detailed
 # data on each name, watch its filings and read its news, and a wider one
 # would be monitored more thinly rather than more thoroughly.
+#
+# Eight names since 2026-08-28, down from nineteen. Sweeping the count with
+# sector ignored gives a monotone curve on daily bars over the 49-name pool:
+# 46.7% CAGR at six names, 40.3 at eight, 28.5 at ten, 25.1 at twelve, 21.2
+# at sixteen, then flat near 10 from twenty out to thirty. Risk-adjusted it
+# peaks at eight, 1.46 return-per-drawdown against 0.51 at thirty. Monotone
+# is why this is believed: the same sweep pushed past its range is what
+# exposed the sector cap and the 25% weight cap as wiggles.
+#
+# The gain is selection and not the pool. Against the same engine run over
+# every eligible name with no screen at all -- both arms carrying the
+# identical forty-nine names, so identical hindsight -- eight names is worth
+# +1.06 return-per-drawdown. An excess measured against a yardstick that
+# inherits the same bias cannot be that bias.
+#
+# The cost is concentration: drawdown deepens from -20.3% at thirty names to
+# -27.7% at eight, and the engine's only backstop is the 20% per-instrument
+# cap. Accepted deliberately rather than overlooked.
+#
+# Measured on daily bars, which is the related strategy and not the hourly
+# one that deals. This is a forward test on a demo account, not a proof.
 tickers = [
-    # Large-cap technology
-    "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
-    "AVGO", "NFLX", "ADBE", "ORCL",
-    # Other sectors: financials, energy, healthcare, consumer
-    "JPM", "XOM", "JNJ", "NKE", "LULU", "COST",
-    # INTC removed 2026-08-28. Its core-session spread is 28.73bp against a
-    # universe median of 7.14bp -- four times the cost of everything else,
-    # and a property of the instrument rather than of a bad year. Measured
-    # over 2024-25 on Capital's own bars, dropping it left the return
-    # unchanged (160.8% -> 161.1%) while cutting the drawdown from -27.0%
-    # to -21.1% and saving GBP 34,777 of spread. Consistent in both years
-    # separately, which is why this is a cut and not a hunch.
+    "AMD", "TSLA", "NVDA", "ORCL", "MSFT", "AVGO", "META", "AMZN",
+    # These are the screen's top eight *after* three names are held out by
+    # hand. Ranked without the overrides it reads MU, AMD, INTC, TSLA, PLTR,
+    # NVDA, ORCL, MSFT, and the overrides are why it does not.
     #
-    # Deliberately NOT replaced. Four candidates were measured and none
-    # improved on nineteen names: the two cheapest to trade (UNH at 8.05bp,
-    # GS at 8.49bp) made it substantially worse, so low cost does not create
-    # edge. PLTR scored best despite the widest spread of all, and was
-    # rejected because it rose roughly tenfold across the test window and
-    # sits in the candidate pool only because that pool was assembled in
-    # 2026 knowing it had -- which is the survivorship this project keeps
-    # finding in its own measurements.
+    # MU and PLTR are held out for survivorship. MU's $42bn turnover is
+    # largely an +855% two-year run showing up in price x volume; PLTR rose
+    # roughly tenfold across the test window and is in the candidate pool
+    # only because that pool was assembled in 2026 knowing it had. The
+    # screen ranks on liquidity, liquidity is price x volume, and price x
+    # volume rewards whatever went up most -- so concentrating into the top
+    # of this ranking concentrates into the pool's hindsight. That is the
+    # cost of a pool chosen after the fact, and it bites hardest exactly
+    # when the book is tightened. It wants a wider, mechanically-defined
+    # universe, which is ingestion work rather than analysis.
     #
-    # The screen already excluded INTC, ranking it 7th in 2024 and 11th in
-    # 2025 and capping it out of a full technology sector both times.
-    # Industrials. Added 2026-08-27 as the twentieth, chosen against the
-    # screen rather than by it: the screen's top pick was MU, whose $42bn
-    # turnover is largely an +855% two-year run showing up in price x
-    # volume. CAT ranks mid-pack on the same rule and is the only non-tech
-    # name in the top group, which matters when twelve of nineteen were
-    # already technology.
-    "CAT",
+    # INTC is held out by the owner's decision of 2026-08-28, and the
+    # reasoning behind that decision has since been shown to be
+    # time-dependent. Its core-session spread by year: 11.88bp in 2023
+    # (0.85x the universe median), 35.94bp in 2024 (3.63x), 47.38bp in 2025
+    # (5.02x), 14.00bp in 2026 (1.45x). The 28.73bp on file is a
+    # whole-history median dominated by 2024-25. INTC was genuinely dear
+    # then and is close to ordinary now, so a trailing cost rule would
+    # readmit it today at 1.18x on ninety days. A static ban is itself a
+    # hindsight artefact; this one stays only until the trailing rule
+    # exists to replace it.
+    #
+    # Also dropped here, purely for ranking below eighth: AAPL, ADBE, CAT,
+    # COST, GOOGL, JNJ, JPM, LULU, NFLX, NKE, XOM. CAT was added on
+    # 2026-08-27 as a deliberate non-technology pick when twelve of nineteen
+    # were technology; the sector cap that motivated it was removed the
+    # following day, having been measured to buy nothing, so the reason for
+    # holding CAT against its rank went with it.
 ]
 # Hourly, not daily.
 #
