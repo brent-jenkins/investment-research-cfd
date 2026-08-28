@@ -465,10 +465,40 @@ max_opens_per_pass = 3            # 50% of the balance as margin, not 100%
 # gearing rather than edge -- efficiency peaks around 4 and degrades after.
 exposure_per_unit_size = 4.0  # was 1.0; efficiency peaks here and degrades after
 
-# Days either side of a reporting date to hold no position. Correct but rarely
-# binding: only 0.5% of share position-days fall inside a window, because the
-# mean hold is 2.5 days against a quarterly event.
-earnings_blackout_days = 0
+# Days either side of a reporting date to hold no position.
+#
+# One on risk grounds, not on measured return, and the distinction is the
+# whole of the reasoning.
+#
+# The return evidence does not decide it. Swept on hourly bars over the eight
+# traded names, a one-day window returned 102.4% against 98.4% with the rule
+# off, on a shallower drawdown -- but the effect reverses between halves of
+# the span. The first half prefers a blackout (156.7% against 130.7%), the
+# second prefers none (59.8% against 70.8%), and by calendar year it helps
+# in 2024 and hurts monotonically in 2025 and 2026. A value that wins overall
+# by winning in one half is a bet on that half, so no figure here is a reason
+# to switch it on.
+#
+# The risk evidence does decide it, and it is not a return measurement.
+# Across 450 announcements the five sessions after a report carry 2.43x the
+# instrument's usual movement (t=14.1, p=7e-38) with no directional edge
+# whatever (p=0.42) -- and the reaction lands overnight, so it is a gap
+# rather than something a stop can sit inside. On a book of eight names at
+# 3.5x with a 20% concentration ceiling, one position can reach 0.7x equity,
+# where a 15% adverse gap is a tenth of the account. That is undirected
+# variance a trend system has no way to hold deliberately.
+#
+# One rather than two or three because it corresponds to a reason -- block
+# the announcement itself -- rather than to an optimum. Two and three were
+# both worse on every cut. It suppresses 3.2% of position-bars.
+#
+# The previous value of 0 was never a decision. The engine's blackout could
+# not run at all: `_execution_config` read the earnings dates from the OS
+# application-data directory instead of the lake, found none, and treated
+# that as "nothing to black out". Whatever this said, the rule had never
+# once bitten. The 0.5%-of-position-days figure the old comment reasoned
+# from also predates a time stop of 0.29 days and a universe of eight.
+earnings_blackout_days = 1
 
 # Shrink a position when the instrument traded unusually heavily. Volume
 # against the next day's range measured r=+0.177 at t=+39.03 on shares and

@@ -401,7 +401,7 @@ def _with_screen_pool(tickers, app_config) -> list[str]:
     return wanted
 
 
-def _execution_config(tickers, strategy=None):
+def _execution_config(tickers, strategy=None, config=None, account=None):
     """The cost model, built from what the venue being traded charges.
 
     The engine has always been able to take per-asset financing rates and a
@@ -468,11 +468,36 @@ def _execution_config(tickers, strategy=None):
         sum(fee_flags.values()), len(fee_flags),
     )
 
+    # Passed the config deliberately. Without it `_path` resolves to the OS
+    # application-data directory rather than the configured lake, so the
+    # loader looked in a place nothing writes, found nothing, and returned
+    # an empty mapping -- which the engine reads as "no instrument is
+    # blacked out". The blackout was inert from the day it was written,
+    # whatever `earnings_blackout_days` said, and it failed open in silence
+    # because the absence is logged at debug.
+    #
+    # This is the failure the house rule about naming absence exists for: a
+    # rule that cannot run should say so, not report the same thing as a
+    # rule that ran and found nothing to do.
     try:
-        earnings = load_earnings_dates()
+        earnings = load_earnings_dates(config, account)
     except Exception as error:  # noqa: BLE001 - no dates is not an outage
         logger.warning("Could not read earnings dates: %s", error)
         earnings = {}
+    if strategy is not None and getattr(strategy, "earnings_blackout_days", 0):
+        if not earnings:
+            logger.warning(
+                "Earnings blackout is configured at %s days but no reporting "
+                "dates could be read: the rule will not bite.",
+                strategy.earnings_blackout_days,
+            )
+        else:
+            missing = [t for t in (tickers or ()) if str(t) not in earnings]
+            if missing:
+                logger.warning(
+                    "Earnings blackout has no dates for %d of %d instruments: %s",
+                    len(missing), len(tickers or ()), ", ".join(sorted(missing)),
+                )
 
     return ExecutionConfig(
         financing_rates=rates or None,
@@ -528,7 +553,10 @@ def _backtest_config(args, app_config) -> BacktestConfig:
         interval=args.interval,
         start=args.start,
         end=args.end,
-        execution=_execution_config(universe, app_config.strategy),
+        execution=_execution_config(
+            universe, app_config.strategy, app_config,
+            getattr(args, "account", None),
+        ),
         signal=dataclasses.replace(
             SignalConfig(),
             regime_mode=app_config.strategy.regime_mode,

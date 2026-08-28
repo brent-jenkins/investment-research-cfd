@@ -311,9 +311,9 @@ def run_paper_pass(
     config=None,
     account: str | None = None,
     threshold: float = 0.60,
-    time_stop_days: int = 1,
-    cooldown_days: int = 14,
-    blackout_days: int = 2,
+    time_stop_days: float | None = None,
+    cooldown_days: float | None = None,
+    blackout_days: float | None = None,
     cohort: str = "",
     recheck: bool = True,
     rules=None,
@@ -359,6 +359,23 @@ def run_paper_pass(
         rebalance_threshold = float(
             getattr(getattr(config, "strategy", None), "rebalance_threshold", 0.25)
         )
+    # These three used to be literal defaults here -- 1 day, 14 days, 2 days
+    # -- and nothing ever passed the configured values, so the book ran a
+    # different strategy from the engine that justifies it: a 1-day time
+    # stop against 0.29, a 14-day re-entry cooldown against two hours, and a
+    # 2-day earnings blackout against none. The book is the forward test and
+    # the account mirrors it, so the thing being measured was not the thing
+    # being modelled.
+    #
+    # One owner: `StrategyConfig`. The fallbacks below are the engine's own
+    # dataclass defaults, not the old literals, so an absent config cannot
+    # resurrect the divergence in a quieter form.
+    if time_stop_days is None:
+        time_stop_days = float(getattr(strategy, "time_stop_days", 0.29) or 0.0)
+    if cooldown_days is None:
+        cooldown_days = float(getattr(strategy, "reentry_cooldown_days", 0.0) or 0.0)
+    if blackout_days is None:
+        blackout_days = float(getattr(strategy, "earnings_blackout_days", 0) or 0)
     resized = 0
     try:
         earnings = load_earnings_dates(config, account)

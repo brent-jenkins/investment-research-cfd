@@ -201,7 +201,10 @@ def evaluate(
     config = app_config or load_config()
     tickers = list(config.market.tickers)
     strategy = config.strategy
-    execution = schedule_app._execution_config(tickers, strategy)
+    # Config passed so the earnings blackout reads the configured lake
+    # rather than the OS application-data directory. No account: the
+    # evaluation runs against the shipped configuration's shared root.
+    execution = schedule_app._execution_config(tickers, strategy, config)
     repo = repository or DataRepository(config)
 
     settings = BacktestConfig(
