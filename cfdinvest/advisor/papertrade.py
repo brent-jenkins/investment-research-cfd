@@ -141,6 +141,17 @@ class PaperTrade:
     #: the question that makes a later mismatch interpretable.
     live_armed: bool | None = None
 
+    #: The engine's own position size for this instrument at the moment the
+    #: book opened it -- a share of equity, before any stake is applied.
+    #:
+    #: The book does not size on it: every position takes the same £1,000,
+    #: which is the point of a fixed stake. It is recorded so the account
+    #: mirroring this book can size on the engine's terms while holding the
+    #: same set of positions. Without it the account would have to re-derive
+    #: membership from the signals, which is a second decision path and the
+    #: thing this arrangement exists to remove.
+    signal_size: float | None = None
+
     #: Units bought or sold by *this* event, signed against the position:
     #: positive adds, negative reduces. On an open it is the whole position
     #: and on a close the whole of what is left, so every row states what
@@ -308,6 +319,7 @@ def open_trade(
         margin_gbp=ticket.margin_gbp,
         missing=ticket.missing,
         confidence=_number((state or {}).get("confidence")),
+        signal_size=_number((state or {}).get("size")),
         sentiment=_number((state or {}).get("sentiment")),
         sentiment_n=_count((state or {}).get("sentiment_n")),
         volume_ratio=_number((state or {}).get("volume_ratio")),
@@ -708,6 +720,7 @@ def resize_trade(
         reason="resize",
         missing=() if realised is None else tuple(realised.missing),
         confidence=_number(trade.get("confidence")),
+        signal_size=_number(trade.get("signal_size")),
         regime=str(trade.get("regime") or ""),
         signal_reason=str(trade.get("signal_reason") or ""),
     )

@@ -724,6 +724,56 @@ def _advisor_inputs(app_config, account):
     return book, prices, latest, as_of
 
 
+def _mirror_rows(app_config, account=None, cohort: str = "") -> list[dict]:
+    """What the shadow book holds, in the shape the bridge decides from.
+
+    The account mirrors the book rather than deriving its own view of the
+    signals. Both used to read the same signal frame and each work out what
+    to hold, which is two decision paths that can disagree -- and the whole
+    value of running them side by side is that a difference between them
+    means the *simulation* was wrong, not that they decided differently.
+
+    Membership and direction come from the book. Size does not: the book
+    gives every position the same £1,000 because a fixed stake is the point
+    of it, while the account sizes on the engine's own expression against a
+    real balance. So the two hold the same instruments, deliberately at
+    different weights, and the row carries the engine's size for the bridge
+    to scale.
+
+    One arm only. Four confidence thresholds run side by side and an account
+    can only hold one of them.
+
+    Never raises: an unreadable book means the account opens nothing this
+    pass, which is the safe direction.
+    """
+    from cfdinvest.advisor import papertrade
+
+    try:
+        book = papertrade.load_book(app_config, account)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Shadow book unreadable (%s); mirroring nothing", error)
+        return []
+
+    rows = []
+    for ticker, position in papertrade.open_positions(book, cohort or None).items():
+        size = position.get("signal_size")
+        if size is None:
+            # A position opened before the book recorded the engine's size.
+            # Refusing to mirror it would leave the account holding
+            # something the book no longer backs; sizing it at zero would
+            # close it. Neither is a decision this function should take, so
+            # it is passed through with the size absent and the bridge
+            # refuses it by name.
+            logger.debug("%s has no recorded signal size to mirror", ticker)
+        rows.append({
+            "ticker": ticker,
+            "direction": position.get("direction"),
+            "size": size,
+            "confidence": position.get("confidence"),
+        })
+    return rows
+
+
 def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     """One pass of the demo account: decide, then place what survives.
 
@@ -800,18 +850,18 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         logger.warning("Capital: no session calendar (%s); trading nothing", error)
         session_open = {}
 
-    run_id = readers.load_latest_run(app_config, account=account_name)
-    frame = (
-        None if run_id is None
-        else readers.load_frame("signals", run_id, app_config, account_name)
-    )
-    latest: list[dict] = []
-    if frame is not None and not getattr(frame, "empty", True):
-        working = frame.reset_index() if hasattr(frame, "reset_index") else frame
-        if "timestamp" in working.columns:
-            stamps = pd.to_datetime(working["timestamp"], utc=True, errors="coerce")
-            working = working[stamps == stamps.max()]
-        latest = working.to_dict("records")
+    # What the account should hold comes from the shadow book, not from a
+    # second reading of the signals. The book has already applied the entry
+    # bar, the cooldown, the earnings blackout, the time stop and the last
+    # look; re-deriving any of that here would be a second decision path to
+    # keep in step, and a divergence between the two would stop meaning
+    # "the simulation's fills were wrong".
+    from cfdinvest.advisor.papertrade_run import cohorts_for
+
+    arm = cohorts_for(app_config.strategy)[0][0]
+    latest = _mirror_rows(app_config, account_name, arm)
+    if not latest:
+        logger.info("Capital: the shadow book holds nothing in %s; nothing to mirror", arm)
 
     # The last look, over the instruments that might open. Priced from the
     # broker's own mid, which is the price an order would actually meet.

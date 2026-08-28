@@ -171,6 +171,12 @@ def test_the_trading_job_runs_after_the_signals_and_only_in_session():
     assert due.index("record-spreads") < due.index("trade-capital"), (
         "the cost of a trade is read after the orders that pay it"
     )
+    # The book decides and the account mirrors it, so the book must have
+    # run. Reversed, the account would mirror the previous pass and act one
+    # cycle late on every entry and exit.
+    assert due.index("paper-book") < due.index("trade-capital"), (
+        "the account would mirror a stale book"
+    )
 
     shut = daemon.jobs_due(
         pd.Timestamp("2026-08-28T22:00:00Z"), history, market_open=False

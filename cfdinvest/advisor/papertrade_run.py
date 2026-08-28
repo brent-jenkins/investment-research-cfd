@@ -489,6 +489,7 @@ def run_paper_pass(
             cohort=cohort, venue=venue, live_armed=live_armed,
             state={
                 "confidence": confidence,
+                "size": row.get("size"),
                 "regime": str(row.get("reason") or "").rsplit("@", 1)[-1].strip(),
                 "reason": row.get("reason"),
                 "filings_90d": filings_rate.get(ticker),

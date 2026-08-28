@@ -207,6 +207,15 @@ def plan_orders(
             continue
 
         # The engine's own sizing, in the engine's own terms.
+        #
+        # A row with no size at all is not a zero. It means the book holds
+        # this instrument but never recorded what the engine wanted, which
+        # is a gap in the record rather than an instruction to hold nothing
+        # -- so it is refused by name instead of being sized to zero and
+        # read later as the strategy declining.
+        if row.get("size") is None and direction in ("long", "short"):
+            intents.append(refuse("no recorded size to mirror"))
+            continue
         share = 0.0
         try:
             share = float(row.get("size") or 0.0)
