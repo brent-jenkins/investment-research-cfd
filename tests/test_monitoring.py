@@ -1034,3 +1034,82 @@ def test_the_new_issue_type_is_registered_everywhere():
     assert set(TYPES) <= set(TYPE_LABELS), (
         f"types with no label: {sorted(set(TYPES) - set(TYPE_LABELS))}"
     )
+
+
+def _curve(values, start="2026-01-01"):
+    import numpy as np
+    index = pd.date_range(start, periods=len(values), freq="D", tz="UTC")
+    return pd.Series(np.asarray(values, dtype=float), index=index)
+
+
+def test_a_book_that_halves_is_noticed_at_all():
+    """M-live: monitoring watched staleness and wipeouts and nothing between.
+
+    The only drawdown check fired at 99%, which is a broken run rather than
+    a bad market, so a book could halve while every check reported green.
+    The owner's policy is to run for growth and review when things turn bad;
+    that policy needs something to tell them they have.
+    """
+    import numpy as np
+
+    from cfdinvest.monitoring.core import review_triggers
+
+    growing = _curve(np.linspace(5_000, 9_000, 200))
+    assert review_triggers(growing) == [], "a healthy book raised a review"
+
+    halved = _curve(np.concatenate([
+        np.linspace(5_000, 9_000, 100), np.linspace(9_000, 4_200, 100)]))
+    issues = review_triggers(halved)
+    assert issues, "a book that more than halved from its peak said nothing"
+    assert all(i.severity == "warning" for i in issues), (
+        "a review trigger reported as critical -- it is a question for a "
+        "person, not an outage"
+    )
+    assert any("below its peak" in i.message for i in issues)
+
+
+def test_going_sideways_is_caught_when_no_drawdown_threshold_would():
+    """The known failure mode for a trend follower does not announce itself
+    as a crash. It announces itself as a flat line."""
+    import numpy as np
+
+    from cfdinvest.monitoring.core import review_triggers
+
+    flat = _curve(np.concatenate([
+        np.linspace(5_000, 9_000, 100), np.linspace(9_000, 8_500, 100)]))
+    issues = review_triggers(flat)
+
+    assert any("returned" in i.message for i in issues), (
+        "months of going nowhere raised nothing, which is the gap this "
+        "exists for -- the drawdown here is far too shallow to trip"
+    )
+    drawdown = float((flat / flat.cummax() - 1).min())
+    assert abs(drawdown) < 0.10, "the fixture drew down enough to trip the other rule"
+
+
+def test_a_review_trigger_never_reports_as_an_outage():
+    """It must not be wired to execution, and must not read as something
+    that stops trading. Four automatic pauses were tested causally on this
+    strategy and every one lost money."""
+    import inspect
+    import numpy as np
+
+    from cfdinvest.monitoring import core
+
+    source = inspect.getsource(core.review_triggers)
+    for forbidden in ("halt", "stop_trading", "pause", "disable", "flatten"):
+        assert f"{forbidden}(" not in source and f"return {forbidden}" not in source, (
+            f"{forbidden!r} appears in a review trigger -- it notifies and "
+            "acts on nothing"
+        )
+    issues = core.review_triggers(_curve(np.linspace(9_000, 3_000, 120)))
+    assert issues and all(i.severity != "critical" for i in issues)
+
+
+def test_absent_equity_is_unchecked_rather_than_silent():
+    from cfdinvest.monitoring.core import review_triggers
+
+    for empty in (None, _curve([])):
+        issues = review_triggers(empty)
+        assert issues, "an unreadable book reported as fine"
+        assert "could not be checked" in issues[0].message

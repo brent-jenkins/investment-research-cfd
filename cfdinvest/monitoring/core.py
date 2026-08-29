@@ -55,6 +55,7 @@ __all__ = [
     "check_run_failures",
     "check_missing_frames",
     "check_confirmation_mismatches",
+    "review_triggers",
     "check_email_delivery",
     "check_pipeline_anomalies",
     "check_system_resources",
@@ -66,6 +67,11 @@ TYPES: tuple[str, ...] = (
     "livequotes",
     "lake", "scheduler", "disk", "run", "confirm", "email", "pipeline", "system",
     "credentials",
+    # Not an operational fault. Every other type here says something is
+    # broken; this one says the book is worth a human look while everything
+    # is working exactly as built. Kept separate so it can never be read as
+    # an outage, and so nothing wires it to execution.
+    "review",
 )
 
 #: Ordered worst-first, which is also the display order.
@@ -125,6 +131,25 @@ class MonitoringThresholds:
     memory_percent: float = 90.0
     max_confirmation_drift: float = 0.10
     stale_confirmation_days: float = 30.0
+
+    #: Peak-to-trough fall in the book that is worth a look. **A review
+    #: trigger, never a circuit breaker**, and the distinction is load
+    #: bearing rather than pedantic: four automatic pauses were tested
+    #: causally on this strategy and every one lost money, because it earns
+    #: most in exactly the conditions a fear-based rule would sit out. So
+    #: this raises a warning for a person and stops nothing.
+    #:
+    #: Set above the -39.5% the eight-to-twelve-name book has already drawn
+    #: down in backtest, so an ordinary bad patch does not cry wolf. What it
+    #: is for is the drawdown that is worse than anything modelled -- which
+    #: is a signal about the model rather than about the market.
+    review_drawdown_fraction: float = 0.45
+
+    #: Months of trailing return that may be negative before it is worth
+    #: asking whether the strategy still fits the market. A trend follower
+    #: in a sideways market is the known failure mode and it does not show
+    #: up as a drawdown spike; it shows up as months of going nowhere.
+    review_flat_months: float = 3.0
 
 
 DEFAULTS = MonitoringThresholds()
@@ -1094,6 +1119,96 @@ def check_system_resources(
                         "Not a fault on its own — a box at 95% memory is doing "
                         "its job right up until it is not. Worth watching if "
                         "it persists across runs."
+                    ),
+                )
+            )
+    return issues
+
+
+def review_triggers(
+    equity_curve=None,
+    thresholds: MonitoringThresholds | None = None,
+    *,
+    now: pd.Timestamp | None = None,
+) -> list[MonitoringIssue]:
+    """Say when the book is worth a human look. Never act on it.
+
+    The owner's policy is to run for maximum growth and review the strategy
+    when things turn bad. That only works if something says they have, and
+    nothing did: monitoring watched staleness and wipeouts, so a book could
+    halve while every check reported green.
+
+    **This stops nothing.** It cannot be wired to execution and should not
+    be: four automatic pauses were tested causally here and all four lost
+    money, because the strategy earns most in the volatility a fear-based
+    rule would sit out. What it produces is a warning addressed to a person.
+
+    Two triggers, deliberately different in kind:
+
+    * A drawdown deeper than anything modelled. Not "a drawdown" -- the
+      book has already drawn down 39.5% in backtest and that is the price
+      of the growth rate. Deeper than the model's own worst case is a
+      statement about the model.
+    * Months of going nowhere. A trend follower in a sideways market is the
+      known failure mode, and it does not announce itself as a crash. It
+      announces itself as a flat line, which no drawdown threshold catches.
+
+    Absent or unreadable equity returns ``unchecked`` rather than silence,
+    because "not measured" and "measured and fine" are different statements.
+    """
+    moment = _now(now)
+    if equity_curve is None or len(equity_curve) < 2:
+        return [_unreadable("review", "Review triggers", "no equity curve")]
+
+    settings = thresholds or DEFAULTS
+    issues: list[MonitoringIssue] = []
+    curve = equity_curve.dropna()
+    if curve.empty:
+        return [_unreadable("review", "Review triggers", "equity curve is empty")]
+
+    drawdown = float((curve / curve.cummax() - 1.0).min())
+    limit = float(settings.review_drawdown_fraction)
+    if abs(drawdown) >= limit:
+        issues.append(
+            MonitoringIssue(
+                type="review",
+                severity="warning",
+                message=(
+                    f"The book is {abs(drawdown):.1%} below its peak, past "
+                    f"the {limit:.0%} that backtesting ever produced."
+                ),
+                timestamp=moment,
+                details={"drawdown_fraction": drawdown, "limit": limit},
+                remedy=(
+                    "Worth reviewing the strategy rather than the plumbing: "
+                    "a drawdown deeper than anything modelled says the model "
+                    "is missing something. Do not pause automatically -- "
+                    "every automatic pause tested here lost money."
+                ),
+            )
+        )
+
+    months = float(settings.review_flat_months)
+    window = curve.index.max() - pd.Timedelta(days=months * 30.44)
+    trailing = curve.loc[curve.index >= window]
+    if len(trailing) > 1 and float(trailing.index.min().value) > float(curve.index.min().value):
+        change = float(trailing.iloc[-1] / trailing.iloc[0] - 1.0)
+        if change < 0:
+            issues.append(
+                MonitoringIssue(
+                    type="review",
+                    severity="warning",
+                    message=(
+                        f"The book has returned {change:.1%} over the last "
+                        f"{months:.0f} months."
+                    ),
+                    timestamp=moment,
+                    details={"trailing_return": change, "months": months},
+                    remedy=(
+                        "Going sideways is the known failure mode for a trend "
+                        "follower and does not show up as a drawdown spike. "
+                        "Worth asking whether the market still suits the "
+                        "strategy -- a question for a person, not a trigger."
                     ),
                 )
             )

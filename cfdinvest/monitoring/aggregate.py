@@ -43,6 +43,10 @@ TYPE_LABELS: dict[str, str] = {
     "pipeline": "Pipeline output",
     "system": "The machine",
     "credentials": "Broker credentials",
+    # The only entry here that is not a fault. It says the book is worth
+    # looking at while everything is working exactly as built, so it reads
+    # as a question rather than an alarm.
+    "review": "Strategy review",
 }
 
 
