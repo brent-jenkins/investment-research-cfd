@@ -172,3 +172,79 @@ def _percentile(values: Sequence[float], pct: float) -> float:
     if low == high:
         return float(values[int(position)])
     return float(values[low] + (values[high] - values[low]) * (position - low))
+
+
+#: How much better one size must measure than another before the difference
+#: is treated as real. **Measured, not chosen.** Shifting only the day of
+#: the month the screen runs on -- changing nothing else about the strategy
+#: -- moved CAGR from 62.7% to 77.3% across eight offsets. Anything smaller
+#: than that on this book is a sampling artefact wearing a decimal point.
+NOISE_FLOOR_PP = 14.6
+
+
+def operating_size(
+    curve: Mapping[int, float],
+    *,
+    ceiling: int | None = None,
+    prefer: str = "smallest",
+    noise_floor_pp: float = NOISE_FLOOR_PP,
+) -> Capacity:
+    """Pick how many positions to run, from a measured return curve.
+
+    ``curve`` maps a universe size to its measured CAGR. The best size is
+    rarely the right answer on its own: several sizes usually measure within
+    noise of each other, and picking the maximum makes the choice a
+    coin-toss dressed as an optimisation -- one that would change every time
+    the curve is re-measured.
+
+    So the candidates are every size within ``noise_floor_pp`` of the best,
+    and ``prefer`` decides between them:
+
+    * ``smallest`` -- the least risk for the same measured return. Extra
+      positions that do not measurably pay still cost drawdown, spread on
+      names further down the ranking, and capital that cannot be
+      concentrated. This is the default because cutting is cheaper than
+      raising.
+    * ``largest`` -- the most return the evidence permits, for an owner who
+      has said returns drive the decision. Still bounded by the noise floor,
+      so it cannot chase a peak that is not there.
+
+    ``ceiling`` caps the answer at what the balance can actually size, from
+    :func:`position_capacity`. A size the account cannot fund is not an
+    option however well it measured.
+
+    Returns ``slots=None`` when the curve is empty or nothing survives the
+    ceiling, rather than falling back to a number.
+    """
+    usable = {
+        int(size): float(cagr)
+        for size, cagr in (curve or {}).items()
+        if size and cagr is not None and int(size) > 0
+    }
+    if ceiling:
+        usable = {s: c for s, c in usable.items() if s <= int(ceiling)}
+    if not usable:
+        return Capacity(
+            None, "unmeasured",
+            note="no measured sizes survive the balance's ceiling"
+            if ceiling else "no return curve to read",
+        )
+
+    best = max(usable.values())
+    within = sorted(s for s, c in usable.items() if best - c <= noise_floor_pp)
+    chosen = within[0] if prefer == "smallest" else within[-1]
+
+    peak = max(usable, key=lambda s: usable[s])
+    binding = "return curve"
+    if ceiling and chosen == int(ceiling):
+        binding = "balance"
+    elif chosen != peak:
+        binding = f"noise floor ({prefer} within {noise_floor_pp:g}pp of the peak)"
+    return Capacity(
+        slots=chosen, binding=binding,
+        note=(
+            f"peak {peak} at {usable[peak]:.1f}%; "
+            f"{len(within)} size(s) within {noise_floor_pp:g}pp: "
+            f"{', '.join(str(s) for s in within)}"
+        ),
+    )

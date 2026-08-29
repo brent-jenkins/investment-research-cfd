@@ -123,3 +123,60 @@ def test_the_latest_reading_wins():
         {"ticker": "AAA", "min_deal_size": 0.1, "offer": 300.0},
     ]
     assert minimum_tickets(rows)["AAA"] == pytest.approx(30.0)
+
+
+CURVE = {4: 52.5, 6: 61.7, 8: 74.4, 10: 86.4, 12: 83.7, 16: 62.5, 20: 40.5, 24: 26.0}
+
+
+def test_the_peak_is_not_taken_on_its_own():
+    """8, 10 and 12 all measure within the noise floor of each other. Taking
+    the maximum makes the choice a coin-toss dressed as an optimisation."""
+    from cfdinvest.risk.capacity import operating_size
+
+    result = operating_size(CURVE)
+    assert result.slots == 8, "the raw peak was taken without regard to noise"
+    assert "10" in result.note and "86.4" in result.note, (
+        "the peak it declined to take is not reported, so the choice cannot "
+        "be argued with"
+    )
+
+
+def test_returns_first_takes_the_largest_the_evidence_permits():
+    """The owner's stated preference, still bounded: it may not chase a
+    peak that is not distinguishable from its neighbours."""
+    from cfdinvest.risk.capacity import operating_size
+
+    result = operating_size(CURVE, prefer="largest")
+    assert result.slots == 12
+    assert result.slots != 24, "returns-first ran past the evidence"
+
+
+def test_sizes_the_account_cannot_fund_are_not_options():
+    from cfdinvest.risk.capacity import operating_size
+
+    result = operating_size(CURVE, ceiling=6, prefer="largest")
+    assert result.slots == 6
+    assert result.binding == "balance"
+
+
+def test_a_curve_that_is_flat_within_noise_picks_by_preference_not_by_luck():
+    """The failure mode this exists for: re-measuring a flat curve would
+    otherwise move the book every time, paying turnover for sampling error."""
+    from cfdinvest.risk.capacity import operating_size
+
+    flat = {4: 70.0, 8: 72.0, 12: 71.0, 16: 69.5}
+    assert operating_size(flat).slots == 4
+    assert operating_size(flat, prefer="largest").slots == 16
+    # And a small re-measurement must not move the answer.
+    jittered = {4: 72.0, 8: 70.0, 12: 71.5, 16: 70.5}
+    assert operating_size(jittered).slots == 4
+    assert operating_size(jittered, prefer="largest").slots == 16
+
+
+def test_an_empty_or_unfundable_curve_is_not_computed():
+    from cfdinvest.risk.capacity import operating_size
+
+    assert operating_size({}).slots is None
+    assert operating_size(CURVE, ceiling=2).slots is None, (
+        "a size below every measured option was rounded into one"
+    )
