@@ -124,7 +124,9 @@ def test_a_stale_selection_is_used_and_named(monkeypatch):
 
 
 def test_an_unparseable_date_is_not_called_fresh(monkeypatch):
-    _record(monkeypatch, [{"as_of": "not a date", "selected": ["X"]}])
+    # Two names, matching the configured list, so the provenance guard
+    # passes and the date logic is what is actually under test.
+    _record(monkeypatch, [{"as_of": "not a date", "selected": ["X", "Y"]}])
     assert traded_universe(Config(follow=True)).stale is True
 
 
@@ -204,3 +206,50 @@ def test_unconfigured_is_not_the_same_as_configured_empty(monkeypatch):
         "following the screen with nothing configured and nothing recorded "
         "became a block on all new positions"
     )
+
+
+def test_a_selection_made_for_a_different_universe_size_is_refused(monkeypatch):
+    """M-live: stale by provenance rather than by age.
+
+    The screen's target derives from ``len(market.tickers)`` when it runs.
+    Narrowing the traded list from twenty names to eight left a two-day-old
+    record holding twenty, ten of them instruments the current strategy has
+    never been measured on. Every age-based check called it fresh, and
+    following it would have tripled the book.
+    """
+    _record(monkeypatch, [{
+        "as_of": str(pd.Timestamp.now(tz="UTC")),
+        "selected": [f"N{i}" for i in range(20)],
+    }])
+
+    result = traded_universe(Config(tickers=("MU", "AMD"), follow=True))
+
+    assert result.names == ("MU", "AMD"), (
+        "a selection made for a twenty-name book was followed by an "
+        "eight-name one"
+    )
+    assert "20 instruments" in result.source
+
+
+def test_a_matching_selection_is_still_followed(monkeypatch):
+    """The guard must not refuse the normal case -- the screen asks for as
+    many as are traded, so sizes match on every ordinary run."""
+    _record(monkeypatch, [{
+        "as_of": str(pd.Timestamp.now(tz="UTC")),
+        "selected": ["NEW1", "NEW2"],
+    }])
+    result = traded_universe(Config(tickers=("MU", "AMD"), follow=True))
+    assert result.names == ("NEW1", "NEW2")
+    assert result.source == "screen"
+
+
+def test_the_selection_is_refused_whole_not_truncated(monkeypatch):
+    """Taking the first N of a longer ranking is a different selection from
+    the one the screen would make asking for N: the sector cap and the
+    profile demotion both bind differently at different sizes."""
+    _record(monkeypatch, [{
+        "as_of": str(pd.Timestamp.now(tz="UTC")),
+        "selected": ["A", "B", "C", "D"],
+    }])
+    result = traded_universe(Config(tickers=("MU", "AMD"), follow=True))
+    assert result.names != ("A", "B"), "the selection was truncated to fit"

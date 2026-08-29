@@ -99,6 +99,33 @@ def traded_universe(app_config, account: str | None = None) -> TradedUniverse:
         return TradedUniverse(names=configured, source="config (no selection recorded)")
 
     names, as_of = chosen
+
+    # A selection is also stale when it was made under a different
+    # configuration, and that kind of staleness has nothing to do with age.
+    #
+    # The screen's target derives from ``len(market.tickers)`` at the moment
+    # it runs. Narrowing the traded list from twenty names to eight left a
+    # two-day-old record holding twenty -- ten of them instruments the
+    # current strategy has never been measured on. Following it would have
+    # tripled the book on an account of a few thousand pounds, and every
+    # age-based check would have called it fresh.
+    #
+    # Refused rather than truncated. Taking the first eight of a twenty-name
+    # ranking is a different selection from the one the screen would make
+    # asking for eight, because the sector cap and the profile demotion both
+    # bind differently at different sizes.
+    if configured and len(names) != len(configured):
+        logger.warning(
+            "The recorded selection holds %d instruments and %d are "
+            "configured, so it was made under a different configuration; "
+            "trading the configured list until the next screen",
+            len(names), len(configured),
+        )
+        return TradedUniverse(
+            names=configured,
+            source=f"config (selection is for {len(names)} instruments)",
+        )
+
     stale = _is_stale(as_of)
     if stale:
         logger.warning(
