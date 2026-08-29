@@ -97,7 +97,12 @@ data_root = "data"
 # Measured on daily bars, which is the related strategy and not the hourly
 # one that deals. This is a forward test on a demo account, not a proof.
 tickers = [
-    "MU", "INTC", "AMD", "LRCX", "AMAT", "PLTR", "NOW", "KLAC",
+    "MU", "INTC", "AMD", "LRCX", "AMAT", "TSLA", "CAT", "BKNG",
+    # Five technology at the sector cap, plus TSLA and BKNG (consumer) and
+    # CAT (industrial). Uncapped the screen returned eight technology names
+    # out of eight -- six of them semiconductors, three the same semicap
+    # equipment trade -- from a pool where only a third are technology.
+    # PLTR, NOW and KLAC are what the cap displaced.
     # The screen's top eight from the hundred-name pool, with no hand
     # exceptions. MU, INTC and PLTR were held out until 2026-08-29 and the
     # reasons no longer hold.
@@ -645,6 +650,77 @@ candidates = [
 # Sector map for the concentration cap. Without it the cap cannot bind, and
 # the screen reports that it was not applied rather than silently skipping.
 [universe.sectors]
+# Standard GICS-style sectors. Used for reporting and for the (currently
+# disabled) sector cap; never for costs or leverage, so an imprecise label
+# misleads a chart rather than a trade.
+#
+# These fifty-eight were added on 2026-08-29 when the pool widened, and
+# their provenance is general knowledge rather than a data feed -- unlike
+# the broker rules table, which requires a named source per entry because a
+# wrong number there is money. Two labels worth knowing about: "technology"
+# lumps semiconductors, semicap equipment and software together, so a
+# technology cap is a blunt proxy for the concentration that actually
+# matters -- LRCX, AMAT and KLAC are one trade three times and a sector
+# label cannot see that.
+LLY = "health"
+AMAT = "technology"
+LRCX = "technology"
+NOW = "technology"
+CSCO = "technology"
+KLAC = "technology"
+IBM = "technology"
+PANW = "technology"
+PG = "consumer"
+INTU = "technology"
+BKNG = "consumer"
+ABBV = "health"
+WFC = "financials"
+MRK = "health"
+ANET = "technology"
+PEP = "consumer"
+TMO = "health"
+TMUS = "telecom"
+ISRG = "health"
+AXP = "financials"
+ABT = "health"
+RTX = "industrial"
+HON = "industrial"
+SNPS = "technology"
+AMGN = "health"
+SCHW = "financials"
+GILD = "health"
+SPGI = "financials"
+NEE = "utilities"
+CMCSA = "telecom"
+DHR = "health"
+TJX = "consumer"
+UNP = "industrial"
+COP = "energy"
+SBUX = "consumer"
+BLK = "financials"
+MDT = "health"
+SLB = "energy"
+CDNS = "technology"
+LOW = "consumer"
+BMY = "health"
+PGR = "financials"
+TGT = "consumer"
+CVS = "health"
+ADP = "technology"
+VRTX = "health"
+REGN = "health"
+UPS = "industrial"
+AMT = "realestate"
+CB = "financials"
+MMM = "industrial"
+SO = "utilities"
+MPC = "energy"
+USB = "financials"
+NOC = "industrial"
+EOG = "energy"
+PLD = "realestate"
+DUK = "utilities"
+
 NVDA = "technology"
 AAPL = "technology"
 MSFT = "technology"

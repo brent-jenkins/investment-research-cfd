@@ -70,26 +70,44 @@ class ScreenConfig:
     #: it is disabled when no sector map is supplied rather than silently
     #: doing nothing -- the result says which happened.
     #:
-    #: Off by default since 2026-08-28, because it was measured to buy
-    #: nothing it was credited with. Under a gate the cap looked worth a
-    #: great deal -- 0.45 return-per-drawdown against 0.35 without it. But
-    #: capping a sector at N names also drops the *worst-ranked* names in a
-    #: crowded sector, and a rank-matched control that holds the same number
-    #: of names while ignoring sector entirely scored 0.75 against the cap's
-    #: 0.65. The cap was buying concentration in better-ranked names, and
-    #: the sector part was incidental. Capping sector *weight* instead --
-    #: which has no rank effect to borrow -- did nothing at any level from
-    #: 50% down to equal-weight.
+    #: **Five since 2026-08-29**, and it has been off and on twice, which is
+    #: worth explaining because both measurements were right.
     #:
-    #: The horizon is the reason. This book holds a name for a median of
-    #: three days on a trend signal. Diversification pays over horizons
-    #: where sectors mean-revert against each other; over three days a
-    #: sector is merely where the movement is, and declining to go there is
-    #: declining the trade.
+    #: Removed on 2026-08-28 after measuring as worthless on the
+    #: forty-nine-name pool: a rank-matched control ignoring sector entirely
+    #: beat it 0.75 to 0.65, because capping a sector at N names also drops
+    #: the worst-ranked names in a crowded one and that was the whole of the
+    #: effect. True of that pool -- 22 of its 49 were technology, so there
+    #: was nowhere to diversify to and the cap could only ever be a
+    #: name-count rule wearing a sector rule's clothes.
     #:
-    #: The sector map is still read and still reported -- knowing the book
-    #: is 90% technology is worth having. It just no longer forbids.
-    max_per_sector: int | None = None
+    #: Restored when the pool widened to a hundred across nine sectors,
+    #: where it has somewhere to go. Measured over 3.65 years on hourly bars
+    #: with per-bar spreads, eight names, monthly reselection:
+    #:
+    #:     cap    CAGR   max drawdown   return/drawdown   top sector
+    #:     none   71.9%       -34.3%          2.10           88%
+    #:     5      72.6%       -21.9%          3.32           62%
+    #:     4      68.0%       -21.4%          3.18           50%
+    #:     3      52.1%       -20.7%          2.51           38%
+    #:     2      30.0%       -30.9%          0.97           25%
+    #:
+    #: Five keeps the return and takes a third off the drawdown. Tighter
+    #: caps buy a little more drawdown for a lot of return, and three is
+    #: already unbalanced across halves (67.7 then 38.1).
+    #:
+    #: The lesson is not that the earlier measurement was wrong but that a
+    #: cap's value depends on what it caps. Uncapped, the screen picked
+    #: eight technology names out of eight -- six of them semiconductors,
+    #: three of those the same semicap equipment trade -- from a pool where
+    #: only a third are technology.
+    #:
+    #: It remains a blunt instrument: "technology" lumps semiconductors,
+    #: semicap and software together, so it cannot see that LRCX, AMAT and
+    #: KLAC are one position. The per-instrument concentration cap cannot
+    #: see it either. Correlation-aware sizing is the real answer and does
+    #: not exist yet.
+    max_per_sector: int | None = 5
 
     #: Weights. Volatility first since 2026-08-28, because the job is
     #: finding instruments about to move and volatility is the only one of
