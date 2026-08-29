@@ -21,7 +21,7 @@ Every fifteen minutes while a US market is open, a resident daemon:
 3. **classifies the regime** — volatility, trend, correlation, macro
 4. **produces signals** — direction, size and a confidence per instrument
 5. **simulates fills** with real spread, financing, FX and slippage
-6. **updates the paper book** — four arms at different confidence bars
+6. **updates the paper book** — eight arms: four confidence bars and four setting variants
 7. **emails you** anything it opened or closed
 
 Once a day, at 03:00 and 03:05 UTC, it refreshes the full daily history
@@ -190,11 +190,27 @@ long against Trading 212's 25.33%.
 
 ## The paper book
 
-Four arms run side by side on the same signals and prices, each taking
+Eight arms run side by side on the same signals and prices, each taking
 £1,000 of exposure:
 
-- **c35** — the bar the engine actually enters on
-- **c50, c60, c70** — does raising it help?
+- **c35** — the bar the engine actually enters on, and the only arm the
+  Capital bridge mirrors. It must stay first in the list.
+- **c50, c60, c70** — does raising the confidence bar help?
+- **ts14, ts60** — half and double the 0.29-day time stop. The joint sweep
+  found this the dominant parameter by a distance (59.3% mean CAGR at 0.29
+  against 12.2% at one day), and 0.29 was chosen on a backtest of one
+  window. Only forward evidence can say whether that peak is real.
+- **cool0** — no re-entry cooldown, against the configured two hours.
+- **blk0** — no earnings blackout, against the configured one day. The
+  blackout had never once run before 2026-08-28, so its value has no
+  forward record at all.
+
+Arms are nearly free: a pass is arithmetic over signals and prices that
+were computed anyway, and the book stakes a fixed £1,000 rather than a
+share of any balance. So the count is bounded by what can be interpreted,
+not by capital — which is the whole point of separating the simulation
+from the account. **Only the first arm reaches a real account**; the other
+seven touch nothing.
 
 The baseline arm is derived from `strategy.entry_confidence`, not hardcoded.
 It used to be, and the arms sat at 0.50/0.60/0.70 while the engine entered
@@ -242,7 +258,7 @@ labels in `risk.compute_regime_risk`, scheduler status in
 Five pages, deliberately. It carried twenty-three and almost none were
 read.
 
-- **Dashboard** — what the paper book has done: the four arms as one
+- **Dashboard** — what the paper book has done: the arms as one
   comparison, open positions marked against the latest quote with its age
   stated, and where the money went.
 - **System status** — whether the machine is doing its job. Every daemon job,

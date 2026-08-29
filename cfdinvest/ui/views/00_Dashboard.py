@@ -122,7 +122,7 @@ components.render_note(
 # with its bare cohort name and no bar at all. The arm being acted on was
 # the one the page could not label.
 BARS = {
-    name: f"≥ {bar:.2f}" for name, bar in cohorts_for(load_config().strategy)
+    arm.name: f"≥ {arm.threshold:.2f}" for arm in cohorts_for(load_config().strategy)
 }
 
 if not cohorts:

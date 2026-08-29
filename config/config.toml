@@ -595,16 +595,53 @@ hold_across_session_open = false
 # reproducible; the pool itself is not a measurement.
 
 [universe]
+# Ninety-nine names, from 2026-08-29. Chosen by a rule rather than by
+# hand: every US large cap Capital will deal, ranked by median daily
+# turnover over the trailing year, top hundred, minus LIN which Capital
+# quotes too thinly to measure (2,637 bars against a median of 9,052).
+#
+# The previous forty-nine were picked in 2026 knowing which had prospered,
+# and that showed up everywhere -- concentrating into them amplified the
+# hindsight rather than diluting it, and monthly reselection amplified it
+# further, producing a backtest whose worst rolling year was +51%.
+# Turnover is computable from data available at the time and knows nothing
+# about outcomes.
+#
+# Two effects beyond honesty, both measured. The pool spans seven sectors
+# where the old one was 22 of 49 technology, and the screen's own picks
+# were entirely technology -- which matters because technology measured
+# *worst* on direction predictability (0.496 against 0.528 for consumer).
+# And it gives the short side something to work with: on the wider pool
+# 41.8% of exposure is short against 16.4% on the eight-name book, because
+# the old universe contained almost nothing that fell. Shorts earned
+# 39,284 against longs' 49,213 over 3.65 years.
+#
+# It does not remove survivorship entirely -- these are large caps *today*,
+# so companies that shrank out of the set are absent. That residue needs
+# historical index membership, which is a paid data problem. It takes the
+# bias from "we chose 49 knowing which won" to "we used a turnover rule",
+# which is a different order of magnitude.
+#
+# Fixed size deliberately. Re-running the same turnover rule refreshes it;
+# it does not grow.
 candidates = [
-    "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META",
-    "TSLA", "AMD", "AVGO", "NFLX", "ADBE", "ORCL",
-    "JPM", "XOM", "JNJ", "INTC", "NKE", "LULU",
-    "COST", "CAT", "PLTR", "COIN", "MU", "CRM",
-    "QCOM", "UBER", "SMCI", "TXN", "GM", "WMT",
-    "PFE", "BAC", "GS", "CVX", "KO", "ABNB",
-    "SHOP", "MRNA", "BA", "DIS", "PYPL", "MCD",
-    "HD", "UNH", "DE", "LMT", "GE", "T",
-    "VZ",
+    "NVDA", "TSLA", "MU", "AAPL", "MSFT", "AMD",
+    "AMZN", "GOOGL", "META", "AVGO", "PLTR", "INTC",
+    "ORCL", "NFLX", "LLY", "JPM", "UNH", "AMAT",
+    "LRCX", "WMT", "CRM", "XOM", "COIN", "COST",
+    "NOW", "CAT", "GS", "BAC", "JNJ", "CSCO",
+    "CVX", "KLAC", "QCOM", "TXN", "HD", "UBER",
+    "IBM", "PANW", "ADBE", "PG", "INTU", "BKNG",
+    "ABBV", "WFC", "MRK", "ANET", "VZ", "PEP",
+    "PFE", "SHOP", "TMO", "MCD", "TMUS", "DIS",
+    "ISRG", "AXP", "NKE", "ABT", "RTX", "HON",
+    "SNPS", "AMGN", "SCHW", "GILD", "SPGI", "NEE",
+    "CMCSA", "DHR", "TJX", "UNP", "COP", "SBUX",
+    "BLK", "DE", "MDT", "LMT", "SLB", "CDNS",
+    "LOW", "BMY", "PGR", "TGT", "CVS", "ADP",
+    "VRTX", "REGN", "GM", "UPS", "ABNB", "AMT",
+    "CB", "MMM", "SO", "LULU", "MPC", "USB",
+    "NOC", "EOG", "PLD",
 ]
 
 # How many the screen selects. Unset means "as many as are traded", so the

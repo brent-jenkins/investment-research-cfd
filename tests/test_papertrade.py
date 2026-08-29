@@ -449,12 +449,18 @@ def test_the_three_arms_do_not_block_each_other(tmp_path, monkeypatch):
     # derived so that changing it cannot leave the forward record testing a
     # strategy nobody trades.
     opened = {r["cohort"]: r["opened"] for r in results}
-    assert opened == {"c35": 1, "c50": 1, "c60": 1, "c70": 0}
+    # Asserted per arm rather than as an exact set. Arms are added to
+    # collect forward evidence on other settings, and pinning the whole
+    # list here would make every such addition look like a regression --
+    # the property is that each arm answers to its own bar, not that there
+    # happen to be four of them.
+    assert opened["c35"] == 1 and opened["c50"] == 1 and opened["c60"] == 1
+    assert opened["c70"] == 0, "an arm above the signal's confidence opened"
 
     book = papertrade.load_book()
-    assert {r["cohort"] for r in book if r["event"] == "open"} == {
-        "c35", "c50", "c60"
-    }
+    took = {r["cohort"] for r in book if r["event"] == "open"}
+    assert {"c35", "c50", "c60"} <= took
+    assert "c70" not in took
     # And each arm sees only its own position.
     assert list(papertrade.open_positions(book, "c50")) == ["AAA"]
     assert list(papertrade.open_positions(book, "c70")) == []

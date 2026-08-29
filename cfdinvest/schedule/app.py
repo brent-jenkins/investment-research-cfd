@@ -343,7 +343,8 @@ def _book_instruments(config, account=None) -> list[str]:
         return []
     found: list[str] = []
     seen: set[str] = set()
-    for name, _bar in cohorts_for(getattr(config, "strategy", None)):
+    for arm in cohorts_for(getattr(config, "strategy", None)):
+        name = arm.name
         rows = [r for r in book if str(r.get("cohort") or "") == name]
         for ticker in papertrade.open_positions(rows, name):
             if ticker not in seen:

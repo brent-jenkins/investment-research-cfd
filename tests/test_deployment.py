@@ -1065,7 +1065,7 @@ def test_the_readme_matches_the_shipped_configuration():
     assert f"\u00a3{papertrade.STAKE_GBP:,.0f} of exposure" in readme
 
     # The paper arms, named as the code names them.
-    for name, _ in cohorts_for(strategy):
+    for name, _bar, _overrides in cohorts_for(strategy):
         assert name in readme, f"the README does not mention the {name} arm"
 
     # And the dashboard page count, in whichever way English spells it.

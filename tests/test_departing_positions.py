@@ -31,7 +31,7 @@ import inspect
 
 import pytest
 
-from cfdinvest.advisor.papertrade_run import _open_universe
+from cfdinvest.advisor.papertrade_run import Cohort, _open_universe
 from cfdinvest.schedule.app import _with_held
 
 
@@ -82,7 +82,7 @@ def test_a_position_open_only_in_the_paper_book_is_still_signalled(monkeypatch):
     )
     monkeypatch.setattr(
         "cfdinvest.advisor.papertrade_run.cohorts_for",
-        lambda strategy=None: (("c35", 0.35),),
+        lambda strategy=None: (Cohort("c35", 0.35, {}),),
     )
     names = _with_held(["AMD", "TSLA"], Config(["AMD", "TSLA"]))
     assert "COST" in names, (

@@ -2853,13 +2853,20 @@ def test_the_paper_arms_start_at_the_bar_the_engine_enters_on():
 
     config = load_config()
     arms = cohorts_for(config.strategy)
-    bars = [bar for _, bar in arms]
 
-    assert bars[0] == pytest.approx(config.strategy.entry_confidence), (
-        f"the baseline arm is {bars[0]}, the engine enters at "
+    assert arms[0].threshold == pytest.approx(config.strategy.entry_confidence), (
+        f"the baseline arm is {arms[0].threshold}, the engine enters at "
         f"{config.strategy.entry_confidence}"
     )
-    assert bars == sorted(bars), "the arms are not in order"
+    assert not arms[0].overrides, (
+        "the first arm carries overrides; it is the one the Capital bridge "
+        "mirrors and must run the strategy's own settings"
+    )
+    # The confidence arms still ascend among themselves. The variant arms
+    # sit at the baseline bar and vary something else, so they are excluded
+    # from the ordering rather than breaking it.
+    bars = [a.threshold for a in arms if not a.overrides]
+    assert bars == sorted(bars), "the confidence arms are not in order"
     assert len(set(bars)) == len(bars), "two arms share a bar"
     # Raising the bar is the experiment, so there must be arms above it.
     assert len(bars) >= 2
@@ -3007,7 +3014,7 @@ def test_the_arms_shown_are_the_arms_that_run():
     # written here.
     assert 'value.get("cohorts"' in page
 
-    arms = [name for name, _ in cohorts_for(load_config().strategy)]
+    arms = [arm.name for arm in cohorts_for(load_config().strategy)]
     assert len(arms) >= 2, "the comparison needs more than one arm"
     for arm in arms:
         assert f'"{arm}"' not in page, (

@@ -29,12 +29,12 @@ instrument for it.
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping, NamedTuple
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "EXCLUDED", "COHORTS", "RAISED_BARS", "cohorts_for",
+    "EXCLUDED", "COHORTS", "RAISED_BARS", "VARIANT_ARMS", "Cohort", "cohorts_for",
     "run_paper_pass", "run_all_cohorts",
 ]
 
@@ -47,8 +47,42 @@ __all__ = [
 RAISED_BARS: tuple[float, ...] = (0.50, 0.60, 0.70)
 
 
-def cohorts_for(strategy=None) -> tuple[tuple[str, float], ...]:
-    """The arms: the strategy's own entry bar first, then the raised ones.
+class Cohort(NamedTuple):
+    """One arm of the forward experiment.
+
+    A ``NamedTuple`` so ``arm[0]`` still reads as the name for the callers
+    that index it, while ``arm.overrides`` carries what this arm varies.
+    """
+
+    name: str
+    threshold: float
+    overrides: Mapping[str, Any] = {}
+
+
+#: Arms that vary something other than the confidence bar. Each changes one
+#: setting against the baseline so a difference is attributable, and each
+#: tests something the backtest cannot settle on its own.
+#:
+#: The time stop is here because the joint sweep found it the dominant
+#: parameter by a distance -- 59.3% mean CAGR at 0.29 against 12.2% at one
+#: day -- and because 0.29 was chosen on a backtest of one window. Halving
+#: and doubling it forward is the only way to learn whether that peak is
+#: real or fitted.
+#:
+#: The cooldown and the blackout are here because both were literals nobody
+#: had measured until this week: the book ran a fourteen-day cooldown
+#: against the engine's two hours, and the blackout had never once bitten.
+#: They now agree, and neither value has forward evidence.
+VARIANT_ARMS: tuple[tuple[str, dict], ...] = (
+    ("ts14", {"time_stop_days": 0.14}),
+    ("ts60", {"time_stop_days": 0.60}),
+    ("cool0", {"cooldown_days": 0.0}),
+    ("blk0", {"blackout_days": 0}),
+)
+
+
+def cohorts_for(strategy=None) -> tuple[Cohort, ...]:
+    """The arms: the strategy's own settings first, then the variations.
 
     The baseline arm is not a round number somebody liked -- it is read from
     ``strategy.entry_confidence``, the bar the engine actually enters on.
@@ -60,15 +94,29 @@ def cohorts_for(strategy=None) -> tuple[tuple[str, float], ...]:
     measurement that cannot be overfitted -- was validating a configuration
     returning 85.6% a year against the shipped 126.7%.
 
-    Three numbers had drifted apart with no single owner. There is one now.
+    **The baseline must stay first.** The Capital bridge mirrors
+    ``cohorts_for(...)[0]``, so the order here decides which arm reaches a
+    real account. Every other arm is simulation and touches nothing.
+
+    The confidence arms are unchanged and keep their names, because they
+    have been accumulating a record since 2026-08-26 and renaming them would
+    throw it away. The variant arms are added alongside.
+
+    Every arm is free: a pass is arithmetic over the same signals and the
+    same prices, and the book's stake is a fixed GBP 1,000 rather than a
+    share of any real balance. So the number of arms is bounded by what can
+    be interpreted, not by capital.
     """
     entry = 0.35 if strategy is None else float(
         getattr(strategy, "entry_confidence", 0.35)
     )
-    arms: list[tuple[str, float]] = [(f"c{round(entry * 100):02.0f}", entry)]
+    arms: list[Cohort] = [Cohort(f"c{round(entry * 100):02.0f}", entry, {})]
     arms += [
-        (f"c{round(bar * 100):02.0f}", bar) for bar in RAISED_BARS if bar > entry
+        Cohort(f"c{round(bar * 100):02.0f}", bar, {})
+        for bar in RAISED_BARS if bar > entry
     ]
+    arms += [Cohort(name, entry, dict(overrides))
+             for name, overrides in VARIANT_ARMS]
     return tuple(arms)
 
 
@@ -652,6 +700,7 @@ def run_all_cohorts(latest, prices, **kwargs) -> list[dict[str, Any]]:
     config = kwargs.get("config")
     arms = cohorts_for(getattr(config, "strategy", None))
     return [
-        run_paper_pass(latest, prices, threshold=bar, cohort=name, **kwargs)
-        for name, bar in arms
+        run_paper_pass(latest, prices, threshold=arm.threshold,
+                       cohort=arm.name, **{**kwargs, **arm.overrides})
+        for arm in arms
     ]
