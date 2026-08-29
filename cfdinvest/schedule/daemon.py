@@ -268,7 +268,15 @@ def jobs_due(
     # it reads only exists while the exchange is open. Frequency was never
     # the problem -- one reading a day over a hundred names is plenty for a
     # ninety-day trailing median -- the hour was.
-    if _due_daily(
+    #
+    # Gated on the market being open as well as on the hour. Moving the job
+    # into the session fixed the hour and not the day: on a Saturday every
+    # hour is out of session, so it went on writing readings its only reader
+    # discards -- two days in seven, plus holidays. ``market_open`` unknown
+    # is treated as closed here for the same reason it is below: a reading
+    # taken on a guess about whether the exchange was open is not a
+    # measurement of anything.
+    if market_open and _due_daily(
         moment, history.get("record-candidate-spreads"), CANDIDATE_SPREAD_AT_UTC
     ):
         due.append("record-candidate-spreads")

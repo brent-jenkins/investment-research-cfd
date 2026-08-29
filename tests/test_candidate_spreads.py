@@ -230,3 +230,38 @@ def test_the_lake_is_preferred_but_absence_falls_through(monkeypatch):
 
     monkeypatch.setattr(screen, "_spread_series_from_lake", lambda repo, cands: {})
     assert screen._spread_series(None, ["MU"]) == {"MU": "live"}
+
+
+def test_the_candidate_pass_does_not_run_when_the_market_is_shut():
+    """M-live: 92 readings taken on a Saturday.
+
+    Moving the job to 16:00 UTC fixed the hour and not the day. On a
+    Saturday every hour is out of session, so it went on recording
+    out-of-hours quotes -- two days in seven, plus holidays -- which the
+    screen filters out on the way in. Correct behaviour downstream, and a
+    store filling with rows nothing can use.
+    """
+    from cfdinvest.schedule import daemon
+
+    hour, minute = daemon.CANDIDATE_SPREAD_AT_UTC
+    moment = pd.Timestamp(f"2026-08-31T{hour:02d}:{minute + 1:02d}:00Z")
+    history = {
+        "ingest-daily": "2026-08-31T03:00:00Z",
+        "monitoring-snapshot": "2026-08-31T03:05:00Z",
+        "screen-universe": "2026-08-31T03:10:00Z",
+        "record-candidate-spreads": "2026-08-28T16:00:00Z",
+    }
+
+    assert "record-candidate-spreads" in daemon.jobs_due(
+        moment, history, market_open=True
+    ), "the job did not run at its appointment with the market open"
+
+    assert "record-candidate-spreads" not in daemon.jobs_due(
+        moment, history, market_open=False
+    ), "a spread reading was taken with the exchange shut"
+
+    # Unknown is treated as shut, for the same reason trading is: a reading
+    # taken on a guess about the session is not a measurement.
+    assert "record-candidate-spreads" not in daemon.jobs_due(
+        moment, history, market_open=None
+    )
