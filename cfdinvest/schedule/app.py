@@ -1742,8 +1742,30 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         # recent hourly bars current, the daily one refreshes the full
         # history and the macro series.
         backtest = _backtest_config(args, app_config)
+        # Held names are topped up too, not just the traded list.
+        #
+        # A departing instrument keeps its signals so it can exit on its own
+        # reversal or time stop (``_with_held``), and its position can now be
+        # priced at the broker (``_dealing_tickers``) -- but both of those
+        # read a lake that had stopped being updated for it, because this job
+        # fetched ``market.tickers`` alone. The exit decision would have been
+        # taken on bars that stopped arriving the day the name left the list,
+        # which is worse than either failure it was meant to fix: a stale
+        # signal is confidently wrong where a missing one is merely absent.
+        #
+        # Data is kept current for anything the book still holds, whether or
+        # not it is currently selectable. A name that has genuinely stopped
+        # trading is a different case -- ingestion reports it per-symbol and
+        # the rest of the fetch is unaffected.
         runner_module._refresh(
-            DataRepository(app_config), _with_fx_support(backtest.tickers), backtest
+            DataRepository(app_config),
+            _with_fx_support(
+                _with_held(
+                    backtest.tickers, app_config, getattr(args, "account", None)
+                )
+                or backtest.tickers
+            ),
+            backtest,
         )
     elif name == "run-intraday":
         _command_run_once(

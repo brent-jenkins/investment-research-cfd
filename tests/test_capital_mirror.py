@@ -185,7 +185,37 @@ def test_market_detail_is_fetched_for_the_held_set_not_the_traded_list():
         "market detail is fetched for the traded list again -- a held name "
         "outside it becomes unclosable"
     )
-    assert "describe(dealing_tickers" in source, (
-        "the session calendar covers only the traded list, so a held name "
+    # Both calendar lookups, checked by absence rather than presence: an
+    # assertion that `describe(dealing_tickers` appears is satisfied by
+    # either call, so reverting one of them passed a mutation.
+    assert "describe(tickers" not in source, (
+        "a session calendar is built from the traded list, so a held name "
         "outside it is refused for a session state nobody looked up"
+    )
+    assert source.count("describe(dealing_tickers") == 2, (
+        "expected both the session calendar and the opening-window calendar "
+        "to cover the held set"
+    )
+
+
+def test_intraday_ingestion_covers_what_is_still_held():
+    """M-live: a departing name's bars stopped arriving.
+
+    The run-out rule keeps a departed instrument's signals alive so it can
+    exit on its own terms, and the dealing path can now price it. Both read
+    the lake. The intraday top-up fetched ``market.tickers`` alone, so the
+    exit would have been decided on bars that stopped the day the name left
+    the list -- a stale signal, which is worse than an absent one because
+    nothing reports it as missing.
+    """
+    import inspect
+
+    from cfdinvest.schedule import app as schedule_app
+
+    source = inspect.getsource(schedule_app.run_daemon_job)
+    block = source[source.index('elif name == "ingest-intraday"'):]
+    block = block[:block.index('elif name == "run-intraday"')]
+    assert "_with_held(" in block, (
+        "the intraday top-up fetches only the traded list, so a held name "
+        "that left it stops receiving bars and exits on stale data"
     )
