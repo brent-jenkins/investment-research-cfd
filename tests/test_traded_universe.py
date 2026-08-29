@@ -253,3 +253,40 @@ def test_the_selection_is_refused_whole_not_truncated(monkeypatch):
     }])
     result = traded_universe(Config(tickers=("MU", "AMD"), follow=True))
     assert result.names != ("A", "B"), "the selection was truncated to fit"
+
+
+def test_the_universe_is_announced_on_change_not_on_every_call(monkeypatch, caplog):
+    """M-live: the same line twice a minute.
+
+    ``_traded`` is called by every job on the fifteen-minute cadence and
+    several times within each. Announcing unconditionally wrote "Traded
+    universe: 8 instruments from screen" every thirty seconds, which buries
+    the one message that matters -- the day the list moves.
+    """
+    import logging
+
+    from cfdinvest.schedule import app
+
+    monkeypatch.setattr(app, "_LAST_UNIVERSE", None)
+    _record(monkeypatch, [{"as_of": str(pd.Timestamp.now(tz="UTC")),
+                           "selected": ["AAA", "BBB"]}])
+    config = Config(follow=True)
+
+    with caplog.at_level(logging.INFO, logger="cfdinvest.schedule.app"):
+        for _ in range(5):
+            assert app._traded(config) == ["AAA", "BBB"]
+        announcements = [r for r in caplog.records if "Traded universe" in r.message]
+        assert len(announcements) == 1, (
+            f"announced {len(announcements)} times for one unchanged universe"
+        )
+
+        # A real change is announced, which is the point of keeping it at all.
+        _record(monkeypatch, [{"as_of": str(pd.Timestamp.now(tz="UTC")),
+                               "selected": ["AAA", "CCC"]}])
+        app._traded(config)
+        assert len([r for r in caplog.records if "Traded universe" in r.message]) == 2
+
+    # And the names are in the line -- "8 instruments" alone cannot be
+    # checked against anything later.
+    assert "AAA" in " ".join(r.getMessage() for r in caplog.records
+                             if "Traded universe" in r.getMessage())

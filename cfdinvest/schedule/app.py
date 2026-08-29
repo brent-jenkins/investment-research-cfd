@@ -272,6 +272,12 @@ def _universe(args) -> list[str] | None:
     return [part.strip() for part in args.tickers.split(",") if part.strip()]
 
 
+#: The last universe announced, so the daemon says it once per change
+#: rather than twice a minute. Process-local and deliberately not
+#: persisted: a restart re-announcing what it is trading is useful.
+_LAST_UNIVERSE: tuple | None = None
+
+
 def _traded(app_config, account=None) -> list[str]:
     """What to trade, from the screen when permitted and the config always.
 
@@ -283,8 +289,20 @@ def _traded(app_config, account=None) -> list[str]:
     from cfdinvest.universe.traded import traded_universe
 
     resolved = traded_universe(app_config, account)
+    # Logged on change, not on every resolution. This is called from every
+    # job on the fifteen-minute cadence and several times within each, so
+    # announcing it unconditionally wrote the same line twice a minute --
+    # which is how a log stops being read, and would bury the one message
+    # that matters: the day the list actually moves.
     if resolved.source != "config":
-        logger.info("Traded universe: %s", resolved.describe())
+        global _LAST_UNIVERSE
+        signature = (resolved.source, resolved.as_of, resolved.names)
+        if signature != _LAST_UNIVERSE:
+            _LAST_UNIVERSE = signature
+            logger.info(
+                "Traded universe: %s -- %s",
+                resolved.describe(), ", ".join(resolved.names),
+            )
     return list(resolved.names)
 
 
