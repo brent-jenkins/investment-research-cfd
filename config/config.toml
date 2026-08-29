@@ -97,53 +97,41 @@ data_root = "data"
 # Measured on daily bars, which is the related strategy and not the hourly
 # one that deals. This is a forward test on a demo account, not a proof.
 tickers = [
-    "AMD", "TSLA", "NVDA", "ORCL", "MSFT", "AVGO", "META", "AMZN",
-    # These are the screen's top eight *after* three names are held out by
-    # hand, under the weighting in force when they were chosen. Ranked
-    # without the overrides it read MU, AMD, INTC, TSLA, PLTR, NVDA, ORCL,
-    # MSFT, and the overrides are why it did not.
+    "MU", "INTC", "AMD", "LRCX", "AMAT", "PLTR", "NOW", "KLAC",
+    # The screen's top eight from the hundred-name pool, with no hand
+    # exceptions. MU, INTC and PLTR were held out until 2026-08-29 and the
+    # reasons no longer hold.
     #
-    # The screen was re-weighted towards volatility later the same day and
-    # this list deliberately does NOT follow it yet. Under 0.20/0.70/0.10
-    # the top eight would swap in COIN, MRNA, QCOM and SMCI, and SMCI trades
-    # at 41.61bp -- 4.20x the universe median. That is not a coincidence to
-    # be worked around: ranking harder on volatility pulls in volatile
-    # names, volatile names are dear, and the cost exclusion that would
-    # answer it does not exist in production yet.
+    # MU and PLTR were held out for survivorship: the old forty-nine were
+    # picked in 2026 knowing which had prospered, and the screen then ranked
+    # liquidity at 0.50 weight, so price x volume rewarded whatever had risen
+    # most. Both halves of that are gone -- the pool is a turnover rule now,
+    # and liquidity is down to 0.20 against volatility's 0.70.
     #
-    # It cannot be built usefully today either. Candidate spread readings
-    # began on 2026-08-28 and the usability floor is 25 of them, so the rule
-    # has roughly a month before it has anything to stand on. Until then the
-    # ranking is better than the list it would produce, and the list waits.
+    # And the survivorship signature is absent where it would show. A name in
+    # the pool only because it rose earns going long in a rising market;
+    # these earn in both directions and disproportionately short. Attributed
+    # by the direction actually held, MU takes 23.3% of its P&L short and
+    # PLTR 32.4%, against 18.3% for the whole book. PLTR alone is 14.1% of
+    # all P&L and MU 9.0%.
     #
-    # MU and PLTR are held out for survivorship. MU's $42bn turnover is
-    # largely an +855% two-year run showing up in price x volume; PLTR rose
-    # roughly tenfold across the test window and is in the candidate pool
-    # only because that pool was assembled in 2026 knowing it had. The
-    # screen ranks on liquidity, liquidity is price x volume, and price x
-    # volume rewards whatever went up most -- so concentrating into the top
-    # of this ranking concentrates into the pool's hindsight. That is the
-    # cost of a pool chosen after the fact, and it bites hardest exactly
-    # when the book is tightened. It wants a wider, mechanically-defined
-    # universe, which is ingestion work rather than analysis.
+    # INTC came out on the owner's spread decision of 2026-08-28, and its
+    # trailing spread is now 11.7bp -- 1.02x the universe median, exactly
+    # ordinary. The 28.73bp that motivated it was a whole-history median
+    # dominated by 2024-25.
     #
-    # INTC is held out by the owner's decision of 2026-08-28, and the
-    # reasoning behind that decision has since been shown to be
-    # time-dependent. Its core-session spread by year: 11.88bp in 2023
-    # (0.85x the universe median), 35.94bp in 2024 (3.63x), 47.38bp in 2025
-    # (5.02x), 14.00bp in 2026 (1.45x). The 28.73bp on file is a
-    # whole-history median dominated by 2024-25. INTC was genuinely dear
-    # then and is close to ordinary now, so a trailing cost rule would
-    # readmit it today at 1.18x on ninety days. A static ban is itself a
-    # hindsight artefact; this one stays only until the trailing rule
-    # exists to replace it.
+    # Measured, monthly reselection from the hundred over 3.65 years on
+    # hourly bars with per-bar spreads: no overrides returns 77.4% at 2.26
+    # return-per-drawdown against 71.2% and 1.75 with them. More importantly
+    # it is far steadier across halves -- 78.3/76.6 against 91.1/53.6 -- so
+    # the *override* arm is the period-dependent one.
     #
-    # Also dropped here, purely for ranking below eighth: AAPL, ADBE, CAT,
-    # COST, GOOGL, JNJ, JPM, LULU, NFLX, NKE, XOM. CAT was added on
-    # 2026-08-27 as a deliberate non-technology pick when twelve of nineteen
-    # were technology; the sector cap that motivated it was removed the
-    # following day, having been measured to buy nothing, so the reason for
-    # holding CAT against its rank went with it.
+    # Concentration is the live risk and it is not a measurement error: five
+    # of these eight are semiconductor names, and LRCX, AMAT and KLAC are the
+    # same equipment trade three times. That is one bet wearing several
+    # tickers, the per-instrument cap cannot see it, and the sector cap was
+    # removed on evidence gathered before the pool was wide enough for this
+    # to happen.
 ]
 # Hourly, not daily.
 #

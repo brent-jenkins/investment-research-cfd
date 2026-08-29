@@ -397,6 +397,22 @@ _CLASS_BY_TICKER: dict[str, str] = {
         "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
         "JPM", "XOM", "JNJ", "BA", "INTC", "PYPL", "NKE", "LULU", "DIS",
         "COST", "AVGO", "NFLX", "ADBE", "ORCL", "CAT",
+        # The rest of the hundred-name pool, added 2026-08-29 when the pool
+        # moved from forty-nine hand-picked names to a turnover rule. All US
+        # single stocks; an unclassified ticker reports "unknown" and the
+        # signal layer holds it flat, so a gap here silently stops trading
+        # rather than trading wrongly -- which is the safe direction, but it
+        # is still a gap.
+        "MU", "PLTR", "LLY", "UNH", "AMAT", "LRCX", "WMT", "CRM",
+        "COIN", "NOW", "GS", "BAC", "CSCO", "CVX", "KLAC", "QCOM",
+        "TXN", "HD", "UBER", "IBM", "PANW", "PG", "INTU", "BKNG",
+        "ABBV", "WFC", "MRK", "ANET", "VZ", "PEP", "PFE", "SHOP",
+        "TMO", "MCD", "TMUS", "ISRG", "AXP", "ABT", "RTX", "HON",
+        "SNPS", "AMGN", "SCHW", "GILD", "SPGI", "NEE", "CMCSA", "DHR",
+        "TJX", "UNP", "COP", "SBUX", "BLK", "DE", "MDT", "LMT",
+        "SLB", "CDNS", "LOW", "BMY", "PGR", "TGT", "CVS", "ADP",
+        "VRTX", "REGN", "GM", "UPS", "ABNB", "AMT", "CB", "MMM",
+        "SO", "MPC", "USB", "NOC", "EOG", "PLD", "DUK",
     )},
     "^VIX": "volatility",
 }

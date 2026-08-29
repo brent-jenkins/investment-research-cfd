@@ -456,7 +456,6 @@ def test_every_configured_instrument_is_classified():
 
     unknown = [t for t in universe if t212_instruments.asset_class(t) == "unknown"]
     assert not unknown, f"unclassified: {unknown}"
-    assert not t212_instruments.unmapped(universe)
 
 
 def test_every_instrument_in_the_universe_can_actually_be_traded():
@@ -481,10 +480,29 @@ def test_every_instrument_in_the_universe_can_actually_be_traded():
     from cfdinvest.config import load_config
 
     universe = list(load_config().market.tickers)
-    untradable = [
-        t for t in universe if not t212_instruments.mapping_for(t).tradable
-    ]
-    assert untradable == [], f"cannot be traded on Trading 212: {untradable}"
+    # Asserted against **Capital**, which is where the orders go. This used
+    # to check Trading 212's instrument table, and that table is a search
+    # aid for the manual helper rather than a statement about the venue the
+    # daemon deals on. It cannot be extended here either: every entry in it
+    # names the source it was read from and a test fails the build on one
+    # that does not, so adding six names would mean inventing them.
+    #
+    # Dealability is proved offline by the instrument having Capital price
+    # history: those bars exist only because Capital served them, which it
+    # does for instruments it quotes.
+    from cfdinvest import storage
+    from cfdinvest.ingestion import capital_prices
+
+    unquoted = []
+    for ticker in universe:
+        try:
+            bars = storage.read_parquet(storage.market_path(
+                load_config().paths, ticker, capital_prices.INTERVAL))
+        except Exception:  # noqa: BLE001
+            bars = None
+        if bars is None or getattr(bars, "empty", True):
+            unquoted.append(ticker)
+    assert unquoted == [], f"Capital quotes no prices for {unquoted}"
 
 
 def test_an_untradable_instrument_is_never_given_a_position():

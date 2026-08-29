@@ -168,6 +168,23 @@ DEFAULT_ASSET_CLASSES: dict[str, str] = {
             # Retired from the universe, kept so an older run still reads.
             "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLE", "XLV", "EEM",
             "PYPL", "DIS", "BA",
+            # The rest of the hundred-name pool, 2026-08-29. Classified
+            # rather than left to fall through: the "other" session is
+            # byte-identical to this one, so an unclassified US share gets
+            # the right hours by luck and the first non-US instrument added
+            # would be gated on the wrong session with nothing to say so.
+            # That is how 34 of 41 instruments once ended up on the wrong
+            # calendar.
+            "MU", "PLTR", "LLY", "UNH", "AMAT", "LRCX", "WMT", "CRM",
+            "COIN", "NOW", "GS", "BAC", "CSCO", "CVX", "KLAC", "QCOM",
+            "TXN", "HD", "UBER", "IBM", "PANW", "PG", "INTU", "BKNG",
+            "ABBV", "WFC", "MRK", "ANET", "VZ", "PEP", "PFE", "SHOP",
+            "TMO", "MCD", "TMUS", "ISRG", "AXP", "ABT", "RTX", "HON",
+            "SNPS", "AMGN", "SCHW", "GILD", "SPGI", "NEE", "CMCSA", "DHR",
+            "TJX", "UNP", "COP", "SBUX", "BLK", "DE", "MDT", "LMT",
+            "SLB", "CDNS", "LOW", "BMY", "PGR", "TGT", "CVS", "ADP",
+            "VRTX", "REGN", "GM", "UPS", "ABNB", "AMT", "CB", "MMM",
+            "SO", "MPC", "USB", "NOC", "EOG", "PLD", "DUK",
         )
     },
     **{t: "equity_eu" for t in (
