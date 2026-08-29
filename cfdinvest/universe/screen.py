@@ -139,12 +139,38 @@ class ScreenConfig:
     #: within-sector control, which is what says it is a cost effect and not
     #: a bet against whichever sector happens to be dear.
     #:
-    #: It became load-bearing when the screen was re-weighted towards
-    #: volatility on 2026-08-28. Ranking harder on movement pulls in
-    #: volatile names and volatile names are dear -- the new ranking's top
-    #: eight included SMCI at 4.20x the median -- so the term that refuses
-    #: them is no longer optional.
-    max_spread_multiple: float | None = 2.5
+    #: **Off since 2026-08-29.** The rule works and is tested; the default
+    #: is ``None`` because it was measured to cost money.
+    #:
+    #: It shipped on 2026-08-28 justified by a backtest of the forty-nine
+    #: name pool, where excluding above 2.5x was worth eleven points of
+    #: return. Re-measured on a hundred-name pool over Capital's full 3.65
+    #: years, trading every instrument and charging each its own per-bar
+    #: spread, every threshold *loses* money:
+    #:
+    #:     gate     excluded   net kept   net given up
+    #:     1.5x           10    101,265         17,181
+    #:     2.0x            6    107,842         10,604
+    #:     2.5x            1    116,598          1,848
+    #:     none            0    118,446              0
+    #:
+    #: And it is not a matter of the level. Net per trade *rises* with
+    #: spread -- 0.8 for names at or below the median, 0.9 from 1.0 to 1.5x,
+    #: 1.5 above that -- while spread against net P&L correlates +0.069
+    #: (p=0.50), which is nothing. The instruments that would have been
+    #: refused made money in all four years, so no window exists in which
+    #: this helped.
+    #:
+    #: What the original measurement actually found was that INTC and SMCI
+    #: had a bad 2024-25, and they happened to be the dear names in a pool
+    #: of forty-nine. Generalising "expensive" from two instruments was the
+    #: error; a name is usually dear *because* it moves, and movement is
+    #: what this strategy is paid for.
+    #:
+    #: The spread is still measured and still reported on every candidate --
+    #: knowing what an instrument costs is worth having. It simply no longer
+    #: refuses. Set a multiple to switch it back on.
+    max_spread_multiple: float | None = None
 
     #: Calendar days of spread history the median is taken over. Trailing,
     #: never whole-history: INTC ran 0.85x the median in 2023, 3.63x in

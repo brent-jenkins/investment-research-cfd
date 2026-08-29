@@ -1,19 +1,29 @@
-"""The screen refuses what it cannot afford to trade.
+"""Cost is measured on every candidate, and no longer refuses any of them.
 
-The screen ranked on liquidity, volatility and continuity, none of which
-know what an instrument costs to deal. That was survivable while the score
-was liquidity-led, because liquidity correlates loosely with cheapness. It
-stopped being survivable when the weighting moved to volatility on
-2026-08-28: ranking harder on movement pulls in volatile names, volatile
-names are dear, and the new ranking's top eight included SMCI at 4.20x the
-universe median. An instrument nobody can afford to trade should not rank.
+The screen ranks on liquidity, volatility and continuity, none of which know
+what an instrument costs to deal. A gate was added on 2026-08-28 to refuse
+anything above 2.5x the universe median, justified by a backtest of the
+forty-nine name pool where exclusion was worth eleven points of return.
 
-The rule is a gate, not a weight, and that was measured. Tapering size by
-cost added nothing the exclusion did not already give, and thresholds below
-2.5x bought return with drawdown in a way that did not survive pushing the
-range. What holds is that some exclusion beats none.
+**It was switched off on 2026-08-29**, measured on a hundred-name pool over
+Capital's full 3.65 years with every instrument traded and each charged its
+own per-bar spread. Every threshold lost money -- 1,848 given up at 2.5x,
+17,181 at 1.5x -- the refused instruments were profitable in all four years,
+and net per trade *rises* with spread rather than falling (0.8 at or below
+the median, 1.5 above 1.5x). Spread against net P&L correlates +0.069.
 
-M402 an unaffordable instrument ranked anyway
+What the original measurement found was that INTC and SMCI had a bad
+2024-25 and happened to be the dear names in a pool of forty-nine.
+Generalising from two instruments was the error. A name is usually dear
+*because* it moves, and movement is what the strategy is paid for.
+
+The machinery is kept and still tested: off by default is not removed, and
+if a venue or universe turns up where cost genuinely disqualifies, it is a
+config value rather than a rewrite. What must not regress is that cost is
+still *measured* on every candidate -- "not checked" and "checked and it
+does not disqualify" are different claims.
+
+M402 an unaffordable instrument ranked anyway, when the gate is asked for
 M403 cost applied after the ranking, so refused names still move the
      z-scores of the ones that survive
 M404 a missing spread reading treated as a cheap one
@@ -22,6 +32,7 @@ M405 a whole-history median instead of a trailing one, banning a name for a
 M406 a claim made on a handful of readings
 M407 a fixed basis-point threshold rather than one relative to the day
 M408 the spread measurement silently dropped when the score is attached
+M409 the gate back on by default, or the measurement lost with it
 """
 
 from __future__ import annotations
@@ -53,7 +64,8 @@ def test_an_unaffordable_instrument_is_refused_and_says_why():
 
     result = rank_candidates(
         prices, as_of="2025-10-01",
-        config=ScreenConfig(target=4, min_history=50, lookback=120),
+        config=ScreenConfig(target=4, min_history=50, lookback=120,
+                            max_spread_multiple=2.5),
         spreads=spreads,
     )
 
@@ -96,7 +108,8 @@ def test_a_refused_name_does_not_move_the_survivors_ranking():
     """
     names = ["AAA", "BBB", "CCC"]
     prices = {t: bars(seed=i) for i, t in enumerate(names)}
-    config = ScreenConfig(target=3, min_history=50, lookback=120)
+    config = ScreenConfig(target=3, min_history=50, lookback=120,
+                          max_spread_multiple=2.5)
     cheap = {t: spread(10) for t in names}
 
     without = rank_candidates(prices, as_of="2025-10-01", config=config, spreads=cheap)
@@ -206,7 +219,8 @@ def test_the_threshold_is_relative_to_the_day_not_a_fixed_figure():
     """
     names = ["AAA", "BBB", "CCC", "DEAR"]
     prices = {t: bars(seed=i) for i, t in enumerate(names)}
-    config = ScreenConfig(target=4, min_history=50, lookback=120)
+    config = ScreenConfig(target=4, min_history=50, lookback=120,
+                          max_spread_multiple=2.5)
 
     tight = rank_candidates(
         prices, as_of="2025-10-01", config=config,
@@ -251,11 +265,16 @@ def test_no_spread_data_at_all_leaves_the_screen_working():
     assert result.spread_excluded == ()
 
 
-def test_the_shipped_pool_refuses_the_names_it_should():
+def test_the_shipped_configuration_measures_cost_without_refusing_on_it():
     """The real configuration, not a fixture.
 
-    SMCI is the name that made this rule necessary: it entered the
-    volatility-led ranking's top eight at 4.20x the universe median.
+    The gate was switched off on 2026-08-29 after it measured as costing
+    money on a hundred-name pool across all four years -- net per trade
+    *rises* with spread, and the instruments it would have refused were
+    profitable in every year. What must still hold is that cost is
+    measured and reported on every candidate: "we did not check" and "we
+    checked and it does not disqualify" are different statements, and only
+    one of them is what this now does.
     """
     from cfdinvest.config import load_config
     from cfdinvest.repository import DataRepository
@@ -269,12 +288,43 @@ def test_the_shipped_pool_refuses_the_names_it_should():
     if not any("universe median spread" in n for n in result.notes):
         pytest.skip("no spread bars in this lake")
 
-    assert "SMCI" in result.spread_excluded, (
-        f"SMCI was not refused; refused set was {result.spread_excluded}"
+    assert ScreenConfig().max_spread_multiple is None, (
+        "the gate is on by default again; it measured as costing money"
     )
-    for ticker in result.selected:
-        candidate = {c.ticker: c for c in result.candidates}[ticker]
-        if candidate.spread_multiple is not None:
-            assert candidate.spread_multiple <= 2.5, (
-                f"{ticker} was selected at {candidate.spread_multiple}x"
-            )
+    assert result.spread_excluded == (), (
+        "something was refused for cost while the gate is off"
+    )
+    # Measured, though: every ranked candidate carries its spread.
+    priced = [c for c in result.ranked if c.spread_bp is not None]
+    assert priced, "no candidate carries a spread measurement at all"
+    for candidate in priced:
+        assert candidate.spread_multiple is not None
+        assert candidate.spread_bp > 0
+
+
+def test_the_gate_still_works_when_asked_for():
+    """Off by default is not the same as removed.
+
+    The rule is kept because the measurement that retired it is one pool
+    over one span. If a venue or a universe turns up where cost genuinely
+    disqualifies, switching it back on is a config value rather than a
+    rewrite.
+    """
+    prices = {t: bars(seed=i) for i, t in enumerate(["AAA", "BBB", "CCC", "DEAR"])}
+    spreads = {"AAA": spread(10), "BBB": spread(10), "CCC": spread(10),
+               "DEAR": spread(60)}
+    on = rank_candidates(
+        prices, as_of="2025-10-01",
+        config=ScreenConfig(target=4, min_history=50, lookback=120,
+                            max_spread_multiple=2.5),
+        spreads=spreads,
+    )
+    assert "DEAR" in on.spread_excluded
+
+    off = rank_candidates(
+        prices, as_of="2025-10-01",
+        config=ScreenConfig(target=4, min_history=50, lookback=120),
+        spreads=spreads,
+    )
+    assert off.spread_excluded == ()
+    assert "DEAR" in off.selected, "the default should rank it, not refuse it"
