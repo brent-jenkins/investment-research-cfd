@@ -588,6 +588,20 @@ hold_across_session_open = false
 # reproducible; the pool itself is not a measurement.
 
 [universe]
+# Trade the screen's latest recorded selection rather than market.tickers.
+# Switched on 2026-08-29 by the owner, the intention being full automation
+# on live data.
+#
+# market.tickers is still never rewritten -- it stays as the fallback and as
+# the record of what a person last chose. The selection is read from
+# selections.jsonl, which the screen has been appending to all along.
+#
+# The screen runs daily, so the traded list tracks conditions rather than
+# lagging them by up to a month. A name that leaves the list is not closed:
+# it keeps its signals and exits on its own reversal or time stop, and is
+# simply not re-entered. See universe/README.md.
+follow_screen = true
+
 # Ninety-nine names, from 2026-08-29. Chosen by a rule rather than by
 # hand: every US large cap Capital will deal, ranked by median daily
 # turnover over the trailing year, top hundred.
