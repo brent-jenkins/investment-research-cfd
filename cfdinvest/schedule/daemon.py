@@ -280,7 +280,27 @@ def jobs_due(
         # that describes it has been written.
         due.append("prune-runs")
 
-    if _due_monthly(moment, history.get("screen-universe"), SCREEN_AT_UTC):
+    # Daily since 2026-08-29, having been monthly.
+    #
+    # Monthly was right while the selection was only a report: consecutive
+    # rankings correlate +0.97 to +0.99, so daily meant twenty near-identical
+    # records a month and the drift they exist to show buried among them.
+    #
+    # ``universe.follow_screen`` made the selection an instruction as well as
+    # a record, and the two want opposite things. As an instruction, monthly
+    # means the traded list is up to a month behind the conditions it was
+    # chosen for, and a configuration change leaves a record of the wrong
+    # size standing until the next screen -- a window that opened for real
+    # today. Cadence costs nothing in return: measured over 3.65 years,
+    # daily returned 74.4% against monthly's 74.9%, well inside the 14.6pp
+    # that changing only the *start day* of a monthly cadence moves it.
+    #
+    # The legibility objection was answered where it belongs, at the read
+    # side: observations stay append-only and ``universe history`` collapses
+    # runs of identical selections. Recording only changes would have been
+    # the other fix and the wrong one -- it loses the evidence that the
+    # screen ran at all, which is most of what the record is for.
+    if _due_daily(moment, history.get("screen-universe"), SCREEN_AT_UTC):
         due.append("screen-universe")
 
     return [job for job in JOBS if job in due]

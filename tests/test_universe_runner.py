@@ -159,13 +159,21 @@ def test_the_sector_cap_says_when_it_bound(screened_lake, capsys):
     assert "displaced" in out.lower()
 
 
-def test_the_screen_is_owed_once_a_month(screened_lake):
-    """M264: a monthly job on a daily cadence.
+def test_the_screen_is_owed_once_a_day(screened_lake):
+    """M264, restated: the drift record must still be readable.
 
-    Twenty-five monthly screens moved the selection by one or two names a
-    month, with consecutive rankings correlating at +0.97 to +0.99. Daily
-    would be twenty identical records a month, and the drift they exist to
-    show would be buried in them.
+    This was monthly, and the reasoning was sound while the selection was
+    only a report -- consecutive rankings correlate +0.97 to +0.99, so daily
+    meant twenty near-identical records a month with the drift buried among
+    them. ``universe.follow_screen`` made the selection an instruction too,
+    and an instruction a month behind the conditions it was chosen for is a
+    different and worse problem.
+
+    The legibility objection is answered at the read side instead: every
+    screen is recorded and ``universe history`` collapses unchanged runs.
+    Recording only the changes was the other option and the wrong one -- it
+    cannot distinguish "the selection did not move" from "the screen did not
+    run", and today has supplied three separate examples of why that matters.
     """
     from cfdinvest.schedule import daemon
 
@@ -176,13 +184,44 @@ def test_the_screen_is_owed_once_a_month(screened_lake):
     }
     assert "screen-universe" in daemon.jobs_due("2026-08-27T12:01:00Z", history)
 
-    ran = dict(history, **{"screen-universe": "2026-08-01T03:10:00Z"})
+    # Once a day, and not again the same day.
+    ran = dict(history, **{"screen-universe": "2026-08-27T03:10:00Z"})
     assert "screen-universe" not in daemon.jobs_due("2026-08-27T12:01:00Z", ran)
-    assert "screen-universe" not in daemon.jobs_due("2026-08-31T23:59:00Z", ran)
+    assert "screen-universe" not in daemon.jobs_due("2026-08-27T23:59:00Z", ran)
 
-    # And it comes round again, once, however late the machine was.
-    assert "screen-universe" in daemon.jobs_due("2026-09-01T03:11:00Z", ran)
+    # And it comes round tomorrow, once, however late the machine was.
+    assert "screen-universe" in daemon.jobs_due("2026-08-28T03:11:00Z", ran)
     assert "screen-universe" in daemon.jobs_due("2026-09-20T09:00:00Z", ran)
+
+
+def test_the_history_collapses_unchanged_runs_but_records_them_all(screened_lake, capsys):
+    """The answer to what made the screen monthly.
+
+    A daily screen produces long runs of identical selections. They are all
+    recorded -- the record must be able to say the screen ran -- and the
+    reading collapses them so that a change is visible rather than buried.
+    """
+    from cfdinvest.universe.screen import record_screen, ScreenResult, load_screens
+
+    for day, names in (
+        ("2026-08-01", ("AAA", "BBB")),
+        ("2026-08-02", ("AAA", "BBB")),
+        ("2026-08-03", ("AAA", "BBB")),
+        ("2026-08-04", ("AAA", "CCC")),
+    ):
+        record_screen(
+            ScreenResult(as_of=f"{day}T03:10:00Z", selected=names), screened_lake
+        )
+
+    assert len(load_screens(screened_lake)) == 4, "a screen went unrecorded"
+
+    universe_cli._command_history(_Args(), screened_lake)
+    out = " ".join(capsys.readouterr().out.split())
+
+    assert "4 selection(s) recorded" in out
+    assert "2 distinct" in out, "unchanged runs were not collapsed"
+    assert "(3 screens)" in out, "the collapsed run does not say how many"
+    assert "AAA, CCC" in out, "the change that matters is missing"
 
 
 def test_a_screen_round_trips_into_the_history(screened_lake, capsys):

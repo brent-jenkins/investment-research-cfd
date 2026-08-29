@@ -158,6 +158,32 @@ able to re-run the rule is not the same as being able to see what it saw.
 Recomputing a ranking later reads a lake that has moved, and would quietly
 justify whatever was chosen.
 
+## How often it runs
+
+Daily since 2026-08-29, having been monthly, and the reason it changed is
+worth keeping because the original reasoning was correct.
+
+Monthly was right while the selection was only a *report*. Consecutive
+rankings correlate +0.97 to +0.99, so a daily screen writes twenty
+near-identical records a month and buries the drift they exist to show.
+
+`universe.follow_screen` made the selection an *instruction* as well as a
+record, and the two want opposite cadences. An instruction up to a month
+behind the conditions it was chosen for is a worse problem than an
+illegible history — and a configuration change leaves a record of the wrong
+size standing until the next screen, a window that opened for real the day
+`follow_screen` was built.
+
+Cadence costs nothing in return. Measured over 3.65 years, daily returned
+74.4% against monthly's 74.9% — well inside the 14.6pp that changing only
+the *start day* of a monthly cadence moves the same strategy.
+
+The legibility objection is answered at the read side: every screen is
+recorded and `universe history` collapses runs of identical selections.
+Recording only the changes was the other option and the wrong one, because
+it cannot distinguish "the selection did not move" from "the screen did not
+run" — a distinction this project has had to relearn three times.
+
 ## Following the screen
 
 `universe.follow_screen` (default **off**) lets the daemon trade the
@@ -207,3 +233,6 @@ Four judgement calls worth naming:
 | M272 | A scheduler path reading `market.tickers` directly |
 | M273 | The book opening in the old universe while the daemon follows the screen |
 | M274 | Absence flattened into emptiness in `_open_universe` |
+| M275 | A selection recorded for a different universe size being followed |
+| M276 | A mismatched selection truncated to fit instead of refused |
+| M277 | The daily history collapsing away the selection that changed |

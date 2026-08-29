@@ -239,13 +239,39 @@ def _command_history(args, config) -> int:
         print("No selection has been recorded yet.")
         return EXIT_OK
 
-    print(f"{len(rows)} selection(s) recorded, newest last.")
-    for row in rows[-args.limit:]:
-        selected = row.get("selected") or []
+    # Runs of identical selections are collapsed rather than repeated. The
+    # screen runs daily and consecutive rankings correlate +0.97 to +0.99,
+    # so printing every record verbatim would bury the changes -- which are
+    # the whole point of keeping a history -- among near-identical rows.
+    # Collapsed for reading only: every screen is still recorded, because
+    # "the selection did not move" and "the screen did not run" are
+    # different statements and the record must be able to tell them apart.
+    groups: list[dict] = []
+    for row in rows:
+        selected = list(row.get("selected") or [])
+        if groups and groups[-1]["selected"] == selected:
+            groups[-1]["until"] = str(row.get("as_of") or "")
+            groups[-1]["count"] += 1
+            continue
+        groups.append({
+            "selected": selected, "from": str(row.get("as_of") or "?"),
+            "until": str(row.get("as_of") or ""), "count": 1,
+            "notes": list(row.get("notes") or ()),
+        })
+
+    unchanged = len(rows) - len(groups)
+    summary = f"{len(rows)} selection(s) recorded"
+    if unchanged:
+        summary += f", {len(groups)} distinct ({unchanged} unchanged run-on)"
+    print(f"{summary}, newest last.")
+    for group in groups[-args.limit:]:
         print()
-        print(f"{str(row.get('as_of') or '?')[:19]}  {len(selected)} selected")
-        print(f"  {', '.join(selected)}")
-        for note in row.get("notes") or ():
+        held = ""
+        if group["count"] > 1:
+            held = f" .. {group['until'][:19]} ({group['count']} screens)"
+        print(f"{group['from'][:19]}{held}  {len(group['selected'])} selected")
+        print(f"  {', '.join(group['selected'])}")
+        for note in group["notes"]:
             print(f"  note: {note}")
     return EXIT_OK
 
