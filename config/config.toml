@@ -597,8 +597,14 @@ hold_across_session_open = false
 [universe]
 # Ninety-nine names, from 2026-08-29. Chosen by a rule rather than by
 # hand: every US large cap Capital will deal, ranked by median daily
-# turnover over the trailing year, top hundred, minus LIN which Capital
-# quotes too thinly to measure (2,637 bars against a median of 9,052).
+# turnover over the trailing year, top hundred.
+#
+# LIN is replaced by DUK, the next name down. Capital quotes LIN too
+# patchily to measure -- 376 distinct days inside a 1,333-day span, 42%
+# coverage -- while DUK reaches 96%. That is a data-availability
+# substitution rather than a judgement about the instrument, and it is
+# recorded because a hole in the list would otherwise look like a rule
+# with an exception.
 #
 # The previous forty-nine were picked in 2026 knowing which had prospered,
 # and that showed up everywhere -- concentrating into them amplified the
@@ -641,7 +647,7 @@ candidates = [
     "LOW", "BMY", "PGR", "TGT", "CVS", "ADP",
     "VRTX", "REGN", "GM", "UPS", "ABNB", "AMT",
     "CB", "MMM", "SO", "LULU", "MPC", "USB",
-    "NOC", "EOG", "PLD",
+    "NOC", "EOG", "PLD", "DUK",
 ]
 
 # How many the screen selects. Unset means "as many as are traded", so the
