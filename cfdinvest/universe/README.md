@@ -104,6 +104,50 @@ command names what it displaced and why.
 | M263 | The sector cap binding silently |
 | M264 | The monthly screen owed every day |
 | M265 | A selection recorded with no decision date |
+| M266 | The profile demotion applied before a score exists to demote |
+| M267 | The demotion multiplier a no-op |
+| M268 | The profile quantiles formed from too few names |
+
+## The profile demotion, and how it nearly passed as free
+
+The screen halves the score of a name that is at once volatile, expensive
+and mean-reverting — top quartile on volatility and on spread, bottom
+quartile on variance ratio, all judged against the pool that day rather
+than against fixed numbers, because spreads and volatility move together
+across the whole market.
+
+Choppiness is a **variance ratio**, not the more obvious net-move over
+distance-travelled. Path efficiency needs a cumulative return, and a
+cumulative return encodes which way the instrument went; a screen that
+ranks on that quietly becomes "hold whatever went up". A variance ratio is
+built only from dispersions, so it is blind to sign. `M172` and
+`test_the_screen_reads_no_return_series_at_all` guard this, and the first
+implementation tripped them — correctly.
+
+Worth recording, because it is the more useful failure. The rule was first
+applied by multiplying `Candidate.score` *before* the scoring pass ran. It
+halved `None`, and the scoring pass then overwrote the result outright. It
+reported its flags perfectly the whole time, so every diagnostic agreed it
+was working, and a 43-month backtest of it returned a change of exactly
+zero. That zero was written up as "the rule costs nothing" — an
+interpretation which is what a genuinely harmless rule looks like, and also
+what a rule that never executes looks like. The two were told apart only by
+asking where flagged names *ranked*, and finding INTC at first place in a
+month the rule claimed to have flagged it.
+
+Once it ran: 72.6% → 75.5% CAGR, −34.3% → −33.1% drawdown, both halves
+improving. Ten changed selections in forty-three months, all of them COIN,
+INTC or PLTR. **A thin result** — three names, a profile designed after
+watching INTC misbehave, so not an out-of-sample test of the idea.
+
+The strength is not tuned and cannot be. Swept from 0.75 to 0.0, every
+value gives an identical result: with a hundred candidates the scores pack
+tightly enough that even a quarter off the score displaces a flagged name
+from the top eight, and nothing weaker keeps it. At this pool size a
+demotion and a refusal are the same policy. It stays a multiplier for the
+case where they stop being the same — a smaller or more thinly scored pool,
+where a name far enough ahead should still be able to win despite the
+profile.
 
 ## What it writes
 

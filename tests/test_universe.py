@@ -8,11 +8,14 @@ make the replacement worth having.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from cfdinvest.universe import Candidate, ScreenConfig, rank_candidates
+from cfdinvest.universe import screen
 
 
 def series(price=100.0, vol_pct=30.0, volume=10_000_000, bars=200, drift=0.0,
@@ -355,3 +358,76 @@ def test_the_screen_reads_daily_bars_whatever_the_engine_trades():
 
     signature = inspect.signature(screen.select_universe)
     assert signature.parameters["interval"].default == "1d"
+
+
+def test_the_profile_demotion_actually_reaches_the_score():
+    """M-live: the demotion applied before the score exists.
+
+    This is not hypothetical. The rule was written to multiply
+    ``Candidate.score`` and was called *before* the scoring pass, so it
+    halved ``None`` and the scoring pass then overwrote the result. It
+    reported its flags correctly the whole time, so every diagnostic said
+    it was working, and a 43-month backtest of it measured a clean zero --
+    which reads as "the rule is free" rather than "the rule never ran".
+
+    The property, not the constant: a flagged name's score must be the
+    unflagged score times the demotion, and that must be enough to cost it
+    a slot it would otherwise have won.
+    """
+    index = pd.date_range(end=pd.Timestamp("2026-01-01", tz="UTC"),
+                          periods=200, freq="B")
+    prices, spreads = {}, {}
+    for n in range(24):                       # an ordinary pool to set quantiles
+        ticker = f"N{n:02d}"
+        prices[ticker] = series(vol_pct=20.0 + n * 0.5, bars=200, seed=n + 5)
+        spreads[ticker] = pd.Series(8.0 + n * 0.1, index=index)
+
+    # Volatile, dear, and going nowhere: a two-bar sawtooth, which is high
+    # dispersion and a variance ratio near zero at the same time.
+    swing = 100.0 * (1.0 + 0.05 * (-1.0) ** np.arange(len(index)))
+    prices["BAD"] = pd.DataFrame(
+        {"close": swing, "volume": [10_000_000] * len(index)}, index=index)
+    spreads["BAD"] = pd.Series(60.0, index=index)
+
+    config = ScreenConfig(target=8, min_history=120, lookback=120,
+                          max_per_sector=None, max_spread_multiple=None)
+    plain = rank_candidates(prices, as_of=index[-1], spreads=spreads,
+                            config=dataclasses.replace(
+                                config, hold_back_poor_profile=False))
+    demoted = rank_candidates(prices, as_of=index[-1], spreads=spreads,
+                              config=dataclasses.replace(
+                                  config, hold_back_poor_profile=True))
+
+    assert "BAD" in demoted.profile_held, "the sawtooth was not flagged at all"
+    assert plain.profile_held == (), "the rule ran while switched off"
+
+    before = {c.ticker: c.score for c in plain.ranked}
+    after = {c.ticker: c.score for c in demoted.ranked}
+    assert after["BAD"] == pytest.approx(before["BAD"] * screen.PROFILE_DEMOTION), (
+        "the flag was reported but the score was untouched -- the demotion "
+        "is being applied somewhere the scoring pass overwrites"
+    )
+    # Everything unflagged is left exactly alone.
+    for ticker, score in before.items():
+        if ticker not in demoted.profile_held:
+            assert after[ticker] == pytest.approx(score)
+    # And it has to move the ordering. A demotion that leaves the ranking
+    # untouched is indistinguishable from the bug above. Rank rather than
+    # selection: whether it costs a *slot* depends on how far ahead the
+    # name was, which is a property of the pool and not of the rule.
+    def order(result):
+        by_score = sorted(result.ranked, key=lambda c: (-(c.score or 0.0), c.ticker))
+        return [c.ticker for c in by_score].index("BAD")
+
+    assert order(demoted) > order(plain), (
+        "the flagged name held its place -- the demotion is not reaching "
+        "the ordering"
+    )
+    # On a tight cut it costs the slot outright.
+    tight = rank_candidates(prices, as_of=index[-1], spreads=spreads,
+                            config=dataclasses.replace(
+                                config, target=4, hold_back_poor_profile=True))
+    loose = rank_candidates(prices, as_of=index[-1], spreads=spreads,
+                            config=dataclasses.replace(
+                                config, target=4, hold_back_poor_profile=False))
+    assert "BAD" in loose.selected and "BAD" not in tight.selected

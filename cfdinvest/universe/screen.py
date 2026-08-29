@@ -143,6 +143,42 @@ class ScreenConfig:
     weight_volatility: float = 0.70
     weight_continuity: float = 0.10
 
+    #: Demote an instrument that is simultaneously volatile, dear and
+    #: mean-reverting -- top quartile on volatility AND on spread, bottom
+    #: quartile on variance ratio, all judged against the pool on the day.
+    #:
+    #: Each part is fine alone. Volatile is what the screen wants. Dear was
+    #: measured as harmless on its own (see ``max_spread_multiple``, off for
+    #: that reason). Choppy is weak. Together they describe an instrument
+    #: that charges to enter and then does not go anywhere, which is the one
+    #: combination a trend follower cannot survive.
+    #:
+    #: Measured point-in-time over 3.65 years, 100 candidates, eight slots:
+    #: 72.6% -> 75.5% CAGR, -34.3% -> -33.1% drawdown, and both halves
+    #: improve (79.6 -> 82.6, 66.1 -> 68.9). It changes ten selections in
+    #: forty-three months and the whole effect is three names: COIN, INTC
+    #: and PLTR leaving a month they would otherwise have been picked for.
+    #:
+    #: **That is a thin result and should be read as one.** Three names and
+    #: ten events is a small sample, and the profile was designed after
+    #: watching INTC misbehave, so it is not an out-of-sample test of the
+    #: idea. Both halves improving is mild reassurance, not proof. What
+    #: makes it worth keeping at that strength of evidence is the asymmetry:
+    #: with a hundred candidates and eight slots, demoting a structurally
+    #: poor instrument is close to free if the reasoning is wrong.
+    #:
+    #: An earlier version of this measured a clean zero and was written up
+    #: as costing nothing. It was not running at all -- see
+    #: ``_profile_flags``. The lesson kept here: a rule that reports its
+    #: flags correctly can still be inert, and "no effect" is a claim that
+    #: needs the same scepticism as a large one.
+    #:
+    #: Rolling, never a ban list. The profile is recomputed from trailing
+    #: data at every screen, so a name un-flags itself when it changes.
+    #: INTC is why that matters: 0.85x the median spread in 2023, 5.02x in
+    #: 2025, 1.02x now. A static exclusion would have been wrong twice.
+    hold_back_poor_profile: bool = True
+
     #: Refuse an instrument whose spread exceeds this multiple of the
     #: universe's own median on the day. ``None`` disables the rule.
     #:
@@ -239,6 +275,8 @@ class ScreenResult:
     sector_capped: tuple[str, ...] = ()
     #: Refused for cost, with the multiple that refused them.
     spread_excluded: tuple[str, ...] = ()
+    #: Held back as volatile, dear and choppy at once.
+    profile_held: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
 
     @property
@@ -420,6 +458,86 @@ def _apply_spread_gate(measured, spreads, cutoff, settings):
     return updated, tuple(refused), tuple(notes)
 
 
+def _profile_flags(measured, prices, spreads, cutoff, settings):
+    """Name what is volatile, dear and mean-reverting at once.
+
+    Identifies only. The demotion is applied after scoring, in
+    ``rank_candidates``, and that separation is not cosmetic: this ran
+    before the scores existed and multiplied ``None``, which the scoring
+    pass then overwrote outright. The rule reported flags and changed
+    nothing for as long as it existed, and a backtest of it measured a
+    clean zero -- which read as "costs nothing" rather than "never ran".
+
+    A demotion rather than a refusal, which is the right strength for the
+    evidence: the condition is too rare to test properly, so a name far
+    ahead of the alternatives should still be able to win despite it.
+
+    Judged against the pool on the day rather than against fixed numbers.
+    The whole market widens and calms together, so a fixed threshold would
+    drift with the market instead of with the instrument.
+
+    Choppiness is a **variance ratio** -- the variance of five-bar returns
+    against five times the variance of one-bar returns -- and not the more
+    obvious net-move-over-path-travelled. Path efficiency needs a cumulative
+    return, which encodes which way the instrument went, and directional
+    performance must not reach this screen at any strength: ranking on it
+    would quietly turn the universe into "hold whatever went up". A variance
+    ratio is built from dispersions and is blind to sign. Below one is
+    mean-reverting, above one trending.
+
+    Everything is measured at or before ``cutoff``, so a name un-flags
+    itself as its behaviour changes. Deliberately not a ban list.
+    """
+    import numpy as np
+    import pandas as pd
+
+    if not getattr(settings, "hold_back_poor_profile", False):
+        return (), ()
+    if not prices:
+        return (), ()
+
+    rows = {}
+    for candidate in measured:
+        if candidate.unranked != "" or candidate.spread_bp is None:
+            continue
+        frame = (prices or {}).get(candidate.ticker)
+        if frame is None or getattr(frame, "empty", True) or "close" not in frame:
+            continue
+        index = pd.DatetimeIndex(frame.index)
+        if index.tz is None:
+            index = index.tz_localize("UTC")
+        series = pd.Series(np.asarray(frame["close"]), index=index).dropna()
+        if cutoff is not None:
+            series = series[series.index <= cutoff]
+        series = series.tail(settings.lookback)
+        if len(series) < max(40, settings.lookback // 4):
+            continue
+        steps = series.pct_change().dropna()
+        single = float(steps.var())
+        if single <= 0:
+            continue
+        multi = float(steps.rolling(5).sum().dropna().var())
+        rows[candidate.ticker] = {
+            "vol": float(steps.std()),
+            "variance_ratio": multi / (5.0 * single),
+            "spread": float(candidate.spread_bp),
+        }
+
+    if len(rows) < 20:          # too few to form quantiles honestly
+        return (), ()
+    frame = pd.DataFrame(rows).T
+    flagged = set(frame.index[
+        (frame.vol >= frame.vol.quantile(0.75))
+        & (frame.spread >= frame.spread.quantile(0.75))
+        & (frame.variance_ratio <= frame.variance_ratio.quantile(0.25))
+    ])
+    if not flagged:
+        return (), ()
+    return tuple(sorted(flagged)), (
+        f"demoted as volatile, dear and mean-reverting: {', '.join(sorted(flagged))}",
+    )
+
+
 def rank_candidates(
     prices: Mapping[str, Any],
     as_of=None,
@@ -486,6 +604,9 @@ def rank_candidates(
     measured, spread_excluded, spread_notes = _apply_spread_gate(
         measured, spreads, cutoff, settings
     )
+    profile_held, profile_notes = _profile_flags(
+        measured, prices, spreads, cutoff, settings
+    )
 
     rankable = [c for c in measured if c.unranked == ""]
     if rankable:
@@ -507,6 +628,17 @@ def rank_candidates(
             scored.append(dataclasses.replace(candidate, score=float(score)))
         by_ticker = {c.ticker: c for c in scored}
         measured = [by_ticker.get(c.ticker, c) for c in measured]
+
+    # The demotion, applied *after* scoring because there is nothing to
+    # halve before it. Not a refusal: a name far enough ahead of the
+    # alternatives still wins despite the profile.
+    if profile_held:
+        held = set(profile_held)
+        measured = [
+            dataclasses.replace(c, score=float(c.score) * PROFILE_DEMOTION)
+            if c.ticker in held and c.score is not None else c
+            for c in measured
+        ]
 
     ordered = sorted(
         (c for c in measured if c.unranked == ""),
@@ -545,7 +677,8 @@ def rank_candidates(
         as_of=str(cutoff or ""), selected=tuple(selected),
         candidates=tuple(measured), sector_capped=tuple(capped),
         spread_excluded=spread_excluded,
-        notes=tuple([*spread_notes, *notes]),
+        profile_held=profile_held,
+        notes=tuple([*spread_notes, *profile_notes, *notes]),
     )
 
 
@@ -648,6 +781,24 @@ def _spread_series(repository, candidates) -> dict[str, Any]:
             out[str(ticker)] = daily
     return out
 
+
+#: What a flagged instrument's score is multiplied by.
+#:
+#: **This number is not tuned, and the measurement says it cannot be.**
+#: Swept over 0.75, 0.60, 0.50, 0.40, 0.25 and 0.0 on the production pool,
+#: every value returned an identical 75.5% CAGR and the same ten changed
+#: selections. With a hundred candidates the scores are packed tightly
+#: enough that even a quarter off displaces a flagged name from the top
+#: eight, and nothing short of that keeps it in. At this pool size a
+#: demotion and a refusal are the same policy.
+#:
+#: It stays a multiplier rather than becoming an exclusion because the two
+#: only coincide while the pool is large and densely scored. On a smaller
+#: or more spread-out pool a name far enough ahead of the alternatives
+#: should still be able to win despite the profile, and a refusal could
+#: never allow that. The gentler form is kept for the case where the
+#: difference starts to exist -- not because it has been shown to matter.
+PROFILE_DEMOTION: float = 0.5
 
 #: Where selection snapshots live, under the account root.
 SCREEN_DIR = "universe"
