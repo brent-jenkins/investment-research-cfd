@@ -139,9 +139,14 @@ def _command_screen(args, config) -> int:
     settings = ScreenConfig(target=int(target))
     if cap is not None:
         settings = dataclasses.replace(settings, max_per_sector=int(cap) or None)
+    # ``config`` here is the ScreenConfig; the application config and the
+    # account are passed separately so the spread resolver can reach the
+    # recorded observations when the bar archive is absent -- which is the
+    # normal case on a deployment.
     result = select_universe(
         DataRepository(config), pool, as_of=as_of,
         config=settings, sectors=sectors or None, interval=args.interval,
+        app_config=config, account=getattr(args, "account", None),
     )
 
     ranked = sorted(result.ranked, key=lambda c: -(c.score or 0.0))

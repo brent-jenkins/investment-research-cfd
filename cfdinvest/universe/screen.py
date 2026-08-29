@@ -689,6 +689,8 @@ def select_universe(
     config: ScreenConfig | None = None,
     sectors: Mapping[str, str] | None = None,
     interval: str = "1d",
+    app_config=None,
+    account: str | None = None,
 ) -> ScreenResult:
     """Read the lake and rank. Daily bars regardless of what the engine trades.
 
@@ -718,7 +720,7 @@ def select_universe(
 
     return rank_candidates(
         frames, as_of=as_of, config=config, sectors=sectors,
-        spreads=_spread_series(repository, candidates),
+        spreads=_spread_series(repository, candidates, app_config, account),
     )
 
 
@@ -734,13 +736,108 @@ SPREAD_INTERVAL = "capital_1h"
 SPREAD_HOURS = (10, 15)
 
 
-def _spread_series(repository, candidates) -> dict[str, Any]:
+def _spread_series(repository, candidates, config=None, account=None) -> dict[str, Any]:
     """Core-session spread per instrument per day, or ``{}``.
+
+    Two stores hold this fact and neither is wrong. ``capital_1h`` bars
+    carry a measured spread on every bar and are the richer source, but they
+    are a research archive: nothing on a deployment writes them. The live
+    reading is ``persist.spreads``, one observation per instrument per day,
+    appended by ``record-candidate-spreads``.
+
+    The lake is preferred where it exists and the observations are read
+    otherwise, and the source is logged either way. A deployment ran for a
+    month with a screen reading the archive it did not have while the store
+    it did have filled up beside it -- the cost gate and the profile
+    demotion both dormant, and reporting "cost unverified" perfectly
+    correctly the whole time.
 
     Never raises and never partially fails the screen: an unreadable spread
     store means cost is reported unverified, which the ranking handles, and
     is a great deal better than a screen that stops running.
     """
+    import pandas as pd
+
+    from_lake = _spread_series_from_lake(repository, candidates)
+    if from_lake:
+        logger.info(
+            "Screening spreads: %d instruments from the %s archive",
+            len(from_lake), SPREAD_INTERVAL,
+        )
+        return from_lake
+    live = _spread_series_from_observations(candidates, config, account)
+    if live:
+        logger.info(
+            "Screening spreads: %d instruments from recorded observations",
+            len(live),
+        )
+    return live
+
+
+def _spread_series_from_observations(candidates, config=None, account=None):
+    """The live store: one reading per instrument per day.
+
+    Readings taken with the exchange shut are dropped rather than averaged
+    in. An out-of-hours quote is several times the session spread on a name
+    nobody is making a market in, so including them would rank instruments
+    on a market the strategy never deals in -- the same reason
+    ``SPREAD_HOURS`` excludes the opening auction.
+    """
+    import pandas as pd
+
+    try:
+        from cfdinvest.persist import spreads as spread_store
+
+        rows = spread_store.load_spreads(config, account)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Recorded spreads unreadable: %s", error)
+        return {}
+    if not rows:
+        return {}
+
+    wanted = {str(t) for t in (candidates or ())}
+    kept: dict[str, list[tuple[Any, float]]] = {}
+    shut = 0
+    for row in rows:
+        ticker = str((row or {}).get("ticker") or "")
+        if ticker not in wanted:
+            continue
+        value = (row or {}).get("spread_bp")
+        if value is None:
+            continue
+        if not (row.get("session_open") and row.get("market_status")):
+            shut += 1
+            continue
+        try:
+            stamp = pd.Timestamp(row.get("at"))
+            reading = float(value)
+        except (TypeError, ValueError):
+            continue
+        if stamp.tzinfo is None:
+            stamp = stamp.tz_localize("UTC")
+        local = stamp.tz_convert("America/New_York")
+        low, high = SPREAD_HOURS
+        if not (low <= local.hour <= high):
+            continue
+        kept.setdefault(ticker, []).append((local.normalize().tz_localize(None), reading))
+
+    if shut:
+        logger.info(
+            "Ignored %d spread reading(s) taken with the exchange shut", shut
+        )
+    out: dict[str, Any] = {}
+    for ticker, pairs in kept.items():
+        series = pd.Series(
+            [v for _, v in pairs], index=pd.DatetimeIndex([d for d, _ in pairs])
+        )
+        daily = series.groupby(series.index).median().dropna()
+        if not daily.empty:
+            out[ticker] = daily
+    return out
+
+
+def _spread_series_from_lake(repository, candidates) -> dict[str, Any]:
+    """The research archive: a measured spread on every bar."""
     import pandas as pd
 
     try:
@@ -751,7 +848,8 @@ def _spread_series(repository, candidates) -> dict[str, Any]:
         logger.warning("No spread bars for screening: %s", error)
         return {}
     if bars is None or getattr(bars, "empty", True):
-        logger.warning("Spread bars empty; cost will be reported unverified")
+        logger.debug("No %s bars; falling back to recorded observations",
+                     SPREAD_INTERVAL)
         return {}
 
     working = bars.reset_index()

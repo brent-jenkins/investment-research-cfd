@@ -108,6 +108,7 @@ def test_the_candidate_pass_is_daily_not_on_the_trading_cadence():
         "ingest-daily": "2026-08-28T03:00:00Z",
         "monitoring-snapshot": "2026-08-28T03:05:00Z",
         "screen-universe": "2026-08-01T03:10:00Z",
+        "record-candidate-spreads": "2026-08-28T16:00:00Z",
     }
 
     # Mid-session, with a market open: the trading jobs are due and this is not.
@@ -119,12 +120,45 @@ def test_the_candidate_pass_is_daily_not_on_the_trading_cadence():
         "the candidate pass fired on the trading cadence"
     )
 
-    # And at the daily appointment it is, after the ingest it depends on.
-    daily = daemon.jobs_due(
-        pd.Timestamp("2026-08-29T03:01:00Z"), history, market_open=False
+    # Once a day, on its own appointment.
+    due = daemon.jobs_due(
+        pd.Timestamp("2026-08-29T16:01:00Z"), history, market_open=True
     )
-    assert "record-candidate-spreads" in daily
-    assert daily.index("ingest-daily") < daily.index("record-candidate-spreads")
+    assert "record-candidate-spreads" in due
+
+
+def test_the_candidate_spreads_are_read_while_the_exchange_is_open():
+    """M-live: forty-one readings taken with the market shut.
+
+    The job used to share the daily ingest's appointment at 03:00 UTC,
+    which is 23:00 the previous evening in New York. Every candidate
+    reading came back ``session_open=False``: the quote was the
+    out-of-hours one, several times the session spread on a name nobody is
+    making a market in. The screen filters to core-session hours precisely
+    so it does not rank on that, so the job was building a history that its
+    only consumer discards.
+
+    The property is the hour, not the frequency -- one reading a day is
+    ample for a ninety-day median. It must fall inside
+    ``screen.SPREAD_HOURS`` in *both* daylight-saving regimes, since the
+    appointment is fixed in UTC and New York moves under it.
+    """
+    from cfdinvest.schedule import daemon
+    from cfdinvest.universe import screen
+
+    hour, minute = daemon.CANDIDATE_SPREAD_AT_UTC
+    low, high = screen.SPREAD_HOURS
+    for winter_or_summer in ("2026-01-15", "2026-07-15"):
+        moment = pd.Timestamp(f"{winter_or_summer}T{hour:02d}:{minute:02d}:00Z")
+        local = moment.tz_convert("America/New_York")
+        assert low <= local.hour <= high, (
+            f"{hour:02d}:{minute:02d} UTC is {local.hour}:00 in New York on "
+            f"{winter_or_summer}, outside the core session the screen reads "
+            f"({low}-{high}) -- the readings would be discarded"
+        )
+
+    # And it must not be the housekeeping appointment, which is the bug.
+    assert daemon.CANDIDATE_SPREAD_AT_UTC != daemon.INGEST_AT_UTC
 
 
 def test_the_job_is_registered_and_reachable():
@@ -141,3 +175,58 @@ def test_the_job_is_registered_and_reachable():
     dispatch = inspect.getsource(app.run_daemon_job)
     assert 'elif name == "record-candidate-spreads":' in dispatch
     assert "_command_record_candidate_spreads(" in dispatch
+
+
+def test_the_screen_reads_recorded_spreads_when_the_archive_is_absent(tmp_path, monkeypatch):
+    """M-live: a screen reading a store nothing writes.
+
+    ``capital_1h`` bars carry a spread on every bar, and the screen read
+    only those. Nothing on a deployment writes them -- they are a research
+    archive built from a backfill -- while ``record-candidate-spreads``
+    filled a different store beside it. So the cost gate and the profile
+    demotion were both dormain in production, reporting "cost unverified"
+    perfectly correctly, for want of anything joining the two.
+    """
+    import pandas as pd
+
+    from cfdinvest.persist import spreads as store
+    from cfdinvest.universe import screen
+
+    path = tmp_path / "spreads" / "observations.jsonl"
+    monkeypatch.setattr(store, "_path", lambda config=None, account=None: path)
+
+    rows = []
+    for day in range(30):
+        stamp = pd.Timestamp("2026-06-01T16:00:00Z") + pd.Timedelta(days=day)
+        rows.append({"ticker": "MU", "at": str(stamp), "spread_bp": 7.0,
+                     "session_open": True, "market_status": True})
+        # Shut *inside* core hours -- a holiday. This is the reading the
+        # hour filter cannot catch, so it is the one that tests the session
+        # guard rather than passing for the wrong reason.
+        rows.append({"ticker": "MU", "at": str(stamp + pd.Timedelta(minutes=5)),
+                     "spread_bp": 90.0,
+                     "session_open": False, "market_status": False})
+    store.record_spreads(rows)
+
+    series = screen._spread_series_from_observations(["MU"])
+
+    assert "MU" in series, "recorded observations did not reach the screen"
+    assert float(series["MU"].median()) == 7.0, (
+        "an out-of-hours quote reached the ranking -- it is several times "
+        "the session spread and the screen must not rank on it"
+    )
+
+
+def test_the_lake_is_preferred_but_absence_falls_through(monkeypatch):
+    """Two stores, one answer: the archive wins where it exists, and its
+    absence is a fall-through rather than an empty result."""
+    from cfdinvest.universe import screen
+
+    monkeypatch.setattr(screen, "_spread_series_from_lake",
+                        lambda repo, cands: {"MU": "from-lake"})
+    monkeypatch.setattr(screen, "_spread_series_from_observations",
+                        lambda cands, config=None, account=None: {"MU": "live"})
+    assert screen._spread_series(None, ["MU"]) == {"MU": "from-lake"}
+
+    monkeypatch.setattr(screen, "_spread_series_from_lake", lambda repo, cands: {})
+    assert screen._spread_series(None, ["MU"]) == {"MU": "live"}

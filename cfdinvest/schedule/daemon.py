@@ -33,6 +33,7 @@ __all__ = [
     "INGEST_AT_UTC",
     "SNAPSHOT_AT_UTC",
     "SCREEN_AT_UTC",
+    "CANDIDATE_SPREAD_AT_UTC",
     "JOBS",
     "jobs_due",
 ]
@@ -75,6 +76,25 @@ SNAPSHOT_AT_UTC = (3, 5)
 #: notice drift, not to rebalance. Changing the traded universe stays a
 #: human act.
 SCREEN_AT_UTC = (3, 10)
+
+#: When the candidates' spreads are read. **Mid-session in New York, not on
+#: the housekeeping appointment**, and the difference is the whole value of
+#: the reading.
+#:
+#: It ran with the daily ingest at 03:00 UTC, which is 23:00 the previous
+#: evening in New York. Every one of the first forty-one candidate readings
+#: came back ``session_open=False``: US equities were shut, the quote was
+#: the out-of-hours one, and an out-of-hours spread is several times the
+#: session spread on a name nobody is making a market in. The screen filters
+#: to core-session hours precisely so it does not rank on that, so the job
+#: was accumulating a history that the thing it feeds would discard.
+#:
+#: 16:00 UTC is mid-session all year. New York is UTC-4 in summer and UTC-5
+#: in winter, so the core session (10:00-15:00 local, matching
+#: ``screen.SPREAD_HOURS``) covers 14:00-19:00 UTC and 15:00-20:00 UTC
+#: respectively; 16:00 sits inside both and needs no daylight-saving
+#: arithmetic of its own.
+CANDIDATE_SPREAD_AT_UTC = (16, 0)
 
 #: How often the lake and the signals are refreshed while a market is open.
 #:
@@ -237,9 +257,6 @@ def jobs_due(
 
     if _due_daily(moment, history.get("ingest-daily"), INGEST_AT_UTC):
         due.append("ingest-daily")
-        # On the same appointment as the ingest it follows: one reading a
-        # day over forty-nine names, against fifteen minutes over nineteen.
-        due.append("record-candidate-spreads")
 
     # Once a day, not on the intraday cadence: the snapshots and the prune
     # describe a day, and taken every fifteen minutes they would be ninety
@@ -247,6 +264,15 @@ def jobs_due(
     # monitoring snapshot because it is the first of the three -- and
     # because a prune that runs before the run it would prune is worse
     # than useless.
+    # Once a day like the ingest, but on its own appointment, because what
+    # it reads only exists while the exchange is open. Frequency was never
+    # the problem -- one reading a day over a hundred names is plenty for a
+    # ninety-day trailing median -- the hour was.
+    if _due_daily(
+        moment, history.get("record-candidate-spreads"), CANDIDATE_SPREAD_AT_UTC
+    ):
+        due.append("record-candidate-spreads")
+
     if _due_daily(moment, history.get("monitoring-snapshot"), SNAPSHOT_AT_UTC):
         due.append("monitoring-snapshot")
         due.append("risk-snapshot")
