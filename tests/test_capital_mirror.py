@@ -131,3 +131,61 @@ def test_the_trade_job_no_longer_reads_the_signal_frame():
     assert 'load_frame("signals"' not in source, (
         "the account still derives its own view from the signal frame"
     )
+
+
+def test_a_name_that_left_the_traded_list_can_still_be_closed():
+    """M-live: nine positions stranded on a funded demo account.
+
+    Narrowing the universe to eight names left eleven book positions
+    outside it. Market detail was fetched for ``market.tickers`` only, so
+    the bridge found no price for the other nine, refused them, and could
+    never close them. The run-out rule worked -- they were not liquidated
+    on departure -- but the other half of it did not: they could not exit
+    on their own merits either, while financing accrued daily.
+
+    The property: what may be *opened* comes from the traded list; what may
+    be *closed* is whatever is actually held.
+    """
+    class Position:
+        def __init__(self, epic):
+            self.epic = epic
+
+    traded = ["MU", "AMD"]
+    book = [{"ticker": "MU"}, {"ticker": "GOOGL"}]
+    held = [Position("GOOGL"), Position("XOM")]
+
+    priced = app._dealing_tickers(traded, book, held)
+
+    assert set(priced) == {"MU", "AMD", "GOOGL", "XOM"}
+    for departed in ("GOOGL", "XOM"):
+        assert departed in priced, (
+            f"{departed} is held but would not be priced, so nothing could "
+            "ever close it"
+        )
+    # The traded list is still fully covered -- this widens, never narrows.
+    assert set(traded) <= set(priced)
+
+
+def test_the_dealing_set_tolerates_an_empty_book_and_no_positions():
+    """Absence named, not inferred: no book and no positions is the traded
+    list exactly, not an empty set that would stop all dealing."""
+    assert app._dealing_tickers(["MU"], [], []) == ["MU"]
+    assert app._dealing_tickers(["MU"], None, None) == ["MU"]
+    assert app._dealing_tickers([], [], []) == []
+
+
+def test_market_detail_is_fetched_for_the_held_set_not_the_traded_list():
+    """Structural: the fix is easy to undo by passing `tickers` again."""
+    import inspect
+
+    source = inspect.getsource(app._command_trade_capital)
+    fetch = source[source.index("fetch_market_details"):]
+    fetch = fetch[:fetch.index(")")]
+    assert "dealing_tickers" in fetch, (
+        "market detail is fetched for the traded list again -- a held name "
+        "outside it becomes unclosable"
+    )
+    assert "describe(dealing_tickers" in source, (
+        "the session calendar covers only the traded list, so a held name "
+        "outside it is refused for a session state nobody looked up"
+    )

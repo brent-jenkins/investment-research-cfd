@@ -889,6 +889,37 @@ def _mirror_rows(app_config, account=None, cohort: str = "") -> list[dict]:
     return rows
 
 
+def _dealing_tickers(tickers, book_rows, held_positions) -> list[str]:
+    """The traded list, plus everything actually held.
+
+    The traded list says what may be *opened*. What may be *closed* is
+    whatever the broker says is open, and that is the broker's fact rather
+    than a configuration value -- so the two sets are fetched together and
+    only the opening side is filtered later.
+
+    Nine positions were stranded on a funded demo account for want of this.
+    Narrowing the universe to eight names left AAPL, GOOGL, META, MSFT,
+    ORCL, ADBE, XOM, NKE and COST held with no market detail; every pass
+    refused them for "no price", so nothing could ever close them. They
+    were not liquidated on departure -- correct, that is the run-out rule --
+    but they could not exit on their own merits either, and financing
+    accrued on all nine regardless of what their signals said.
+
+    The same principle as ``_with_held`` one layer up: leaving the list
+    stops re-entry and nothing else.
+    """
+    names = {str(t) for t in (tickers or ()) if t}
+    for row in book_rows or ():
+        ticker = str((row or {}).get("ticker") or "")
+        if ticker:
+            names.add(ticker)
+    for position in held_positions or ():
+        epic = str(getattr(position, "epic", "") or "")
+        if epic:
+            names.add(epic)
+    return sorted(names)
+
+
 def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     """One pass of the demo account: decide, then place what survives.
 
@@ -950,33 +981,6 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     }
     placed = order_store.open_orders(app_config, account_name)
 
-    markets = {
-        m.ticker: m
-        for m in capital.fetch_market_details(tickers, session, settings.broker)
-    }
-
-    now = pd.Timestamp.now(tz="UTC")
-    try:
-        calendar = describe(tickers, now)
-        session_open = {
-            str(i): bool(v) for i, v in calendar["is_open"].items()
-        }
-        # Whether each market was *also* open this many minutes ago. If it
-        # was not, we are inside the opening window and no new position is
-        # taken. Asked of the calendar rather than computed from a session
-        # start, so daylight saving, holidays and per-instrument sessions
-        # are handled by the thing that already knows about them.
-        delay = int(getattr(app_config.strategy, "open_delay_minutes", 0) or 0)
-        settled = describe(tickers, now - pd.Timedelta(minutes=delay)) if delay else None
-        open_allowed = {
-            ticker: (settled is None or bool(settled["is_open"].get(ticker, False)))
-            for ticker in session_open
-        }
-    except Exception as error:  # noqa: BLE001 - an unknown calendar is closed
-        logger.warning("Capital: no session calendar (%s); trading nothing", error)
-        session_open = {}
-        open_allowed = {}
-
     # What the account should hold comes from the shadow book, not from a
     # second reading of the signals. The book has already applied the entry
     # bar, the cooldown, the earnings blackout, the time stop and the last
@@ -989,6 +993,57 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     latest = _mirror_rows(app_config, account_name, arm)
     if not latest:
         logger.info("Capital: the shadow book holds nothing in %s; nothing to mirror", arm)
+
+    # Price the traded list *and* everything actually held. These are not
+    # the same set, and treating them as one stranded nine positions on a
+    # funded demo account: narrowing the universe left AAPL, GOOGL, META,
+    # MSFT, ORCL, ADBE, XOM, NKE and COST held with no market detail, so
+    # every pass refused them for "no price" and nothing could ever close
+    # them. They were not closed on departure -- correctly, that is the
+    # run-out rule -- but they could not be closed on their own merits
+    # either, which is the half nobody asked for.
+    #
+    # The traded list says what may be *opened*. What may be *closed* is
+    # whatever the broker says is open, and that is the broker's fact, not
+    # a configuration value. Same principle as ``_with_held`` one layer up.
+    dealing_tickers = _dealing_tickers(tickers, latest, held)
+    stranded = sorted(set(dealing_tickers) - set(tickers))
+    if stranded:
+        logger.info(
+            "Capital: pricing %d instrument(s) held outside the traded list "
+            "so they can still be closed on their own merits: %s",
+            len(stranded), ", ".join(stranded),
+        )
+
+    markets = {
+        m.ticker: m
+        for m in capital.fetch_market_details(
+            dealing_tickers, session, settings.broker
+        )
+    }
+
+    now = pd.Timestamp.now(tz="UTC")
+    try:
+        calendar = describe(dealing_tickers, now)
+        session_open = {
+            str(i): bool(v) for i, v in calendar["is_open"].items()
+        }
+        # Whether each market was *also* open this many minutes ago. If it
+        # was not, we are inside the opening window and no new position is
+        # taken. Asked of the calendar rather than computed from a session
+        # start, so daylight saving, holidays and per-instrument sessions
+        # are handled by the thing that already knows about them.
+        delay = int(getattr(app_config.strategy, "open_delay_minutes", 0) or 0)
+        settled = (describe(dealing_tickers, now - pd.Timedelta(minutes=delay))
+                   if delay else None)
+        open_allowed = {
+            ticker: (settled is None or bool(settled["is_open"].get(ticker, False)))
+            for ticker in session_open
+        }
+    except Exception as error:  # noqa: BLE001 - an unknown calendar is closed
+        logger.warning("Capital: no session calendar (%s); trading nothing", error)
+        session_open = {}
+        open_allowed = {}
 
     # The last look, over the instruments that might open. Priced from the
     # broker's own mid, which is the price an order would actually meet.
