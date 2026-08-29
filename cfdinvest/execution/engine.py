@@ -803,26 +803,39 @@ def _apply_position_limit(target_units, new_held, units, config):
         return target_units, new_held
     limit = int(limit)
     if limit <= 0:
-        return np.zeros_like(target_units), np.zeros_like(new_held)
+        # No new positions at all. Incumbents still keep theirs -- a limit
+        # of zero means "open nothing", not "close everything", and the
+        # difference is a book being liquidated by a configuration value.
+        hold = (target_units != 0) & (units != 0)
+        return (
+            np.where(hold, target_units, 0.0),
+            np.where(hold, new_held, 0).astype(new_held.dtype),
+        )
 
     wanted = target_units != 0
     if int(wanted.sum()) <= limit:
         return target_units, new_held
 
+    # **Every incumbent keeps its position, without exception.** The limit
+    # is a bound on *opening*, consulted when a new position is proposed,
+    # and never a reason to close one that is already open.
+    #
+    # It did not behave that way. Slots were handed to the largest
+    # incumbents up to the limit and the surplus were zeroed -- which is a
+    # close, whatever the comment above it said about letting them run. So
+    # lowering the cap under a live book, which is exactly what a capacity
+    # figure computed from a falling balance does, would have liquidated
+    # positions for an administrative reason and at a moment of the book's
+    # choosing rather than the strategy's.
+    #
+    # The book is therefore allowed to sit *above* the limit after the cap
+    # is lowered, and drains below it as positions exit on their own terms.
+    # That is the same rule departing instruments already follow: leaving
+    # the list stops re-entry and nothing else.
     incumbent = wanted & (units != 0)
-    # An incumbent cannot be refused, so it consumes its slot first. If
-    # incumbents alone exceed the limit the cap has been lowered under a
-    # live book: keep the largest and let the rest close naturally rather
-    # than flattening an entire book on a config change.
-    keep = np.zeros_like(wanted)
+    keep = incumbent.copy()
     order = np.argsort(-np.abs(target_units))
-    room = limit
-    for index in order:
-        if room <= 0:
-            break
-        if incumbent[index]:
-            keep[index] = True
-            room -= 1
+    room = limit - int(incumbent.sum())
     for index in order:
         if room <= 0:
             break

@@ -134,31 +134,69 @@ def test_a_refused_newcomer_is_flat_not_held():
     )
 
 
-def test_lowering_the_limit_drains_rather_than_flattens():
-    """M414: a config change liquidating a live book in one bar.
+def test_lowering_the_limit_closes_nothing_at_all():
+    """M414, restated: the limit bounds opening and never closing.
 
-    Three incumbents and room for two. The smallest loses its slot; the
-    other two are untouched. Zeroing all three -- "the book breaches, flatten
-    it" -- is the mutation, and it is the one that would actually be placed
-    as orders.
+    The first version of this fix stopped the book being flattened whole
+    and still zeroed the surplus -- three incumbents with room for two lost
+    the smallest, and the comment above the code called that "letting them
+    close naturally" when zeroing the units *is* the close.
+
+    It matters more now than it did. Capacity is computed from the balance,
+    so the limit falls on its own whenever the account does, and the old
+    behaviour would liquidate a position for an administrative reason at a
+    moment the strategy did not choose. The book is allowed to sit above
+    the limit and drains as positions exit on their own terms -- the same
+    rule a departing instrument already follows.
     """
     target = np.array([5.0, 3.0, 1.0])
     held_now = np.array([1, 1, 1], dtype=np.int8)
     units = np.array([5.0, 3.0, 1.0])
 
-    kept, _ = _apply_position_limit(target, held_now, units, Config(2))
-    assert int((kept != 0).sum()) == 2, "the whole book was flattened"
-    assert kept[0] != 0.0 and kept[1] != 0.0
-    assert kept[2] == 0.0, "the smallest incumbent was not the one dropped"
+    kept, directions = _apply_position_limit(target, held_now, units, Config(2))
 
-
-def test_a_limit_of_zero_holds_nothing():
-    """Zero is a real instruction, distinct from absent."""
-    target = np.array([5.0, 3.0])
-    kept, directions = _apply_position_limit(
-        target, np.array([1, 1], dtype=np.int8), np.array([5.0, 3.0]), Config(0)
+    assert int((kept != 0).sum()) == 3, (
+        "an open position was closed to satisfy a limit that had been "
+        "lowered under it"
     )
-    assert not kept.any() and not directions.any()
+    assert list(kept) == [5.0, 3.0, 1.0]
+    assert list(directions) == [1, 1, 1]
+
+
+def test_the_limit_still_refuses_newcomers_while_it_is_breached():
+    """Draining is not the same as ignoring the limit. While incumbents
+    alone fill or exceed it, nothing new may open."""
+    # Two incumbents, one newcomer, room for two.
+    target = np.array([5.0, 3.0, 4.0])
+    held_now = np.array([1, 1, 1], dtype=np.int8)
+    units = np.array([5.0, 3.0, 0.0])
+
+    kept, _ = _apply_position_limit(target, held_now, units, Config(2))
+
+    assert kept[0] != 0.0 and kept[1] != 0.0, "an incumbent was displaced"
+    assert kept[2] == 0.0, (
+        "a newcomer opened into a book that was already at its limit -- and "
+        "it ranked above one of the incumbents, which is exactly the swap "
+        "that pays a round trip to act on a difference the ranking cannot "
+        "resolve"
+    )
+
+
+def test_a_limit_of_zero_opens_nothing_and_closes_nothing():
+    """Zero is a real instruction, distinct from absent -- and it means
+    "open nothing", not "close everything". A capacity of zero is what a
+    balance too small to size a single slot produces, and liquidating the
+    book on it would turn a sizing constraint into a stop-out."""
+    target = np.array([5.0, 3.0, 2.0])
+    held_now = np.array([1, 1, 1], dtype=np.int8)
+    units = np.array([5.0, 3.0, 0.0])          # two held, one newcomer
+
+    kept, directions = _apply_position_limit(target, held_now, units, Config(0))
+
+    assert list(kept) == [5.0, 3.0, 0.0], (
+        "a limit of zero closed open positions instead of refusing new ones"
+    )
+    assert list(directions) == [1, 1, 0]
 
 
 def test_slots_are_applied_before_the_sizing_caps():
