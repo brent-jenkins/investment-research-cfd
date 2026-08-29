@@ -342,6 +342,101 @@ uses the shared root, exactly as before it existed. See
 The root `README.md` is out of date — it describes the project as
 "ingestion layer complete".
 
+### What changed on 2026-08-29
+
+The day the universe started choosing itself, and a run of safeguards that
+turned out not to be running.
+
+**`universe.follow_screen` is on.** The daemon trades the screen's latest
+recorded selection rather than `market.tickers`. The constraint that had
+blocked this was never really about the screen: acting on the ranking meant
+rewriting configuration, which is forbidden, so the answer was to read the
+other way round. `market.tickers` is never written, stays the fallback, and
+the selection comes from `selections.jsonl` — an observation, appended, as
+the house rule requires. `universe/traded.py` is the single owner; a test
+fails the build on any scheduler path reading the configured list directly.
+
+**The screen runs daily, not monthly.** Monthly was right while the
+selection was only a report — consecutive rankings correlate +0.97 to +0.99
+and daily buries the drift among near-identical rows. It became an
+instruction as well, and an instruction a month behind its conditions is the
+worse problem. Cadence costs nothing in return (daily 74.4% against
+monthly's 74.9%). Legibility is handled at the read side: every screen is
+recorded and `universe history` collapses unchanged runs.
+
+**A selection can be two days old and belong to a different book.** The
+screen's target derives from `len(market.tickers)`, so narrowing the traded
+list left a fresh record holding twenty names, ten of them never measured
+under the current strategy. Refused when the size does not match, and
+refused whole rather than truncated — the first eight of a twenty-name
+ranking is not the selection the screen would have made asking for eight.
+
+**Nine positions were stranded on the demo account.** Market detail and the
+session calendar were fetched for `market.tickers` while the rows to act on
+come from the shadow book, which deliberately holds departed names. So
+AAPL, GOOGL, META, MSFT, ORCL, ADBE, XOM, NKE and COST sat open with no
+mechanism that could ever close them, refused for "no price" every quarter
+hour. The traded list says what may be *opened*; what may be *closed* is
+whatever the broker says is open. Intraday ingestion covers held names too,
+or the exit would have been decided on bars that stopped arriving.
+
+**The position limit closes nothing.** `max_open_positions` was zeroing
+surplus incumbents while its own comment called that letting them run. It
+now bounds opening only: the book may sit above the limit and drains as
+positions exit on their own terms. This matters because capacity is about
+to be computed from the balance, so the limit falls whenever the account
+does — and the old behaviour would have liquidated positions in a drawdown.
+
+**Two spread stores, and the screen read the empty one.** `capital_1h` bars
+are a research archive nothing on a deployment writes; `record-candidate-
+spreads` had been filling `persist.spreads` beside it. The resolver now
+prefers the archive and falls through to the recorded observations. That
+job also ran at 03:00 UTC — 23:00 in New York — so every candidate reading
+was taken with the exchange shut. Moved to 16:00 UTC *and* gated on the
+market being open, because fixing the hour did not fix the day.
+
+**Confidence predicts, and the gate is already right.** Entry confidence
+separates trips monotonically across five buckets — win rate 33.6% to 67.5%,
+mean P&L −£260 to +£796, rank correlation +0.25. It is a product of three
+factors rather than a probability, so 0.35 sits near the 23rd percentile of
+bars where a view exists. Raising it looked worth +15.5pp on a fixed
+universe and is worth +1.6pp on the screened path that actually runs, where
+the screen already removes what the gate would. **It stays at 0.35.** The
+untested lever is confidence-weighted *sizing*, which keeps the trades
+instead of discarding them.
+
+**Universe size has a real optimum near ten**, and it is one of the few
+curves this project has produced that survives its own noise floor: 52.5%
+at four names rising to 86.4% at ten, then falling to 26.0% at twenty-four,
+monotone in both directions and far outside the ±14.6pp that changing only
+a rebalance start day can manufacture. Drawdown worsens the whole way, from
+−18.5% to −58.5%. Rank *within* the selection still predicts nothing
+(ranks 1–4 earned £476,774 against 5–8 at £484,668), so the screen is a
+threshold rather than a gradient — it separates worth-trading from not at
+around rank ten and does not order the good set.
+
+**Hold across weekends.** Flattening before every non-trading day costs
+10.3pp of CAGR (74.4% to 64.1%) for no reduction in drawdown, and forces
+275 extra round trips. The return gap is inside the noise floor; the extra
+spread bill is arithmetic.
+
+**`max_spread_multiple` is `None`, so no cost gate binds.** The profile
+demotion is live but withholds itself until an instrument has 25 spread
+readings, which the deployment will not reach until late September.
+
+**A recurring failure, recorded because it happened six times in one day.**
+A check written by whoever made the change tends to test the change rather
+than the requirement. The profile demotion measured a clean zero and read as
+"free" when it had never executed; a calendar assertion was satisfied by the
+wrong call site; the position limit's comment contradicted its code; three
+fixtures asserted "nothing owed twice a day" while describing a monthly
+cadence; a progress monitor greped only for success, so a crash looked
+identical to progress; and the spread job's hour was verified while its day
+was not. In every case the evidence could not distinguish success from
+failure, and was read as success. Prefer functional assertions over
+structural ones, and when checking a fix, check the property rather than the
+edit.
+
 ### What changed on 2026-08-28
 
 A long day of measurement. Most of it produced negative results, and those
@@ -354,7 +449,10 @@ with. Capping a sector at N names also drops the worst-ranked names in a
 crowded sector, and a rank-matched control ignoring sector entirely beat
 it, 0.75 against 0.65. Capping sector *weight* — which has no rank effect
 to borrow — did nothing at any level. Sweeping the name count directly
-gives a monotone curve peaking around eight.
+gives a monotone curve peaking around eight. **Superseded 2026-08-29**:
+measured over a wider range the curve peaks near *ten* and falls away
+sharply past twelve; eight sat mid-slope. `max_per_sector` is also back at
+five.
 
 **The screen ranks on volatility, and refuses what it cannot afford.**
 Weights moved to 0.20 liquidity / 0.70 volatility / 0.10 continuity:
@@ -396,6 +494,8 @@ Capacity was previously a side effect of the universe size. Separating them
 measured better — all 49 eligible with 8 slots returned 13.6% against 7.5%
 for a monthly list of eight, ahead in both halves — but the daemon still
 keys off `market.tickers`, so pointing it at all 49 is the unfinished half.
+**Closed 2026-08-29**: the daemon follows the screen, and the limit now
+bounds opening without ever closing a position.
 
 **The honest baseline is 76.3%/yr at −25.8%**, on Capital session bars over
 3.65 years with per-bar measured spreads, positive in both halves. Read
