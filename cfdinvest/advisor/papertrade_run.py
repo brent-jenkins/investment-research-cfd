@@ -143,6 +143,32 @@ def _open_universe(config) -> frozenset[str] | None:
     """
     market = getattr(config, "market", None)
     names = getattr(market, "tickers", None)
+    following = bool(
+        getattr(getattr(config, "universe", None), "follow_screen", False)
+    )
+
+    # ``None`` is answered before the resolver is consulted, and that order
+    # matters. The resolver returns a tuple either way, so asking it first
+    # would flatten "nothing configured" into "configured empty" -- turning
+    # the permissive case into a total block on new positions. Absent and
+    # empty are different statements here, as everywhere else.
+    if names is None and not following:
+        return None
+
+    # Resolved rather than read straight off the config, so that when the
+    # daemon follows the screen this follows it too. If it did not, the
+    # screen would choose the universe while the book went on opening in
+    # the old one -- and the book is what the demo account mirrors, so the
+    # divergence would show up as trades nobody chose.
+    if following:
+        try:
+            from cfdinvest.universe.traded import traded_universe
+
+            resolved = traded_universe(config)
+            if resolved.names or names is not None:
+                names = resolved.names
+        except Exception:  # noqa: BLE001 - the config's own list is the fallback
+            pass
     if names is None:
         return None
     return frozenset(str(t) for t in names if str(t))

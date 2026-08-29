@@ -157,3 +157,53 @@ and **every candidate with the numbers it was judged on** — because being
 able to re-run the rule is not the same as being able to see what it saw.
 Recomputing a ranking later reads a lake that has moved, and would quietly
 justify whatever was chosen.
+
+## Following the screen
+
+`universe.follow_screen` (default **off**) lets the daemon trade the
+screen's latest recorded selection instead of `market.tickers`.
+
+The constraint that shaped this is *no config mutation*, so the traded list
+is never rewritten. `market.tickers` stays exactly as a person left it and
+is the fallback; the selection is read from `selections.jsonl`, the
+append-only record the screen already kept. Configuration is rewritten,
+observations are appended — the setting reads an observation and leaves the
+configuration alone.
+
+`traded.py` is the single owner. `market.tickers` was read directly in
+seven places in the scheduler, and following the screen in six of them
+would have been indistinguishable from following it in all seven until
+something went wrong; a test asserts no direct read survives.
+
+Rank inside the selection is deliberately *not* used for anything. Measured
+over 3.65 years, ranks 1–4 earned £476,774 and ranks 5–8 earned £484,668,
+with no trend between them — the screen decides membership well and orders
+it not at all.
+
+Four judgement calls worth naming:
+
+- **A stale selection is used, and said out loud.** Falling back to the
+  configured list is the tempting design and the wrong one: a scheduler
+  outage would swap the whole book back, closing and opening eight
+  positions for a reason unrelated to any instrument. An old decision is
+  still a decision. Only silence about its age is unacceptable.
+- **An empty selection row is skipped, not obeyed.** A screen that chose
+  nothing is a failed screen, not an instruction to hold nothing.
+- **An unreadable store falls back rather than emptying the book.** "Trade
+  nothing" and "the record could not be read" are different statements and
+  only one is an instruction.
+- **Absent is not empty.** `_open_universe` answers `None` for nothing
+  configured (permissive) and `frozenset()` for a configured empty list
+  (permits nothing). The resolver returns a tuple either way, so consulting
+  it unconditionally flattened the first into the second — silently
+  stopping the book from opening anything. Caught by the existing suite,
+  which is what that distinction is there for.
+
+| | |
+| --- | --- |
+| M269 | An empty selection row obeyed instead of skipped |
+| M270 | An unreadable selection store emptying the book |
+| M271 | A stale selection discarded for the configured list |
+| M272 | A scheduler path reading `market.tickers` directly |
+| M273 | The book opening in the old universe while the daemon follows the screen |
+| M274 | Absence flattened into emptiness in `_open_universe` |

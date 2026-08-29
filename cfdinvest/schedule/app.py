@@ -272,6 +272,22 @@ def _universe(args) -> list[str] | None:
     return [part.strip() for part in args.tickers.split(",") if part.strip()]
 
 
+def _traded(app_config, account=None) -> list[str]:
+    """What to trade, from the screen when permitted and the config always.
+
+    One owner. ``market.tickers`` was read directly in seven places, so
+    following the screen would have meant seven edits and the certainty
+    that a later one would be missed -- the same defect that had the cost
+    gate reading an empty store while a full one sat beside it.
+    """
+    from cfdinvest.universe.traded import traded_universe
+
+    resolved = traded_universe(app_config, account)
+    if resolved.source != "config":
+        logger.info("Traded universe: %s", resolved.describe())
+    return list(resolved.names)
+
+
 def _with_held(tickers, config, account=None) -> list[str] | None:
     """The traded list plus anything still open that has left it.
 
@@ -585,7 +601,7 @@ def _backtest_config(args, app_config) -> BacktestConfig:
     grid -- see ``backtest.runner.attach_reference_prices``.
     """
     universe = _with_held(
-        _universe(args) or list(app_config.market.tickers) or None,
+        _universe(args) or _traded(app_config, getattr(args, "account", None)) or None,
         app_config,
         getattr(args, "account", None),
     )
@@ -941,7 +957,7 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     from cfdinvest.schedule.market_calendar import describe
 
     account_name = getattr(args, "account", None)
-    tickers = list(app_config.market.tickers or ())
+    tickers = _traded(app_config, account_name)
     if not tickers:
         return EXIT_OK
 
@@ -1292,7 +1308,7 @@ def _command_record_candidate_spreads(args, app_config) -> int:
     series and reading them twice would put two cadences in one file under
     one scope.
     """
-    traded = set(app_config.market.tickers or ())
+    traded = set(_traded(app_config, getattr(args, "account", None)))
     pool = [
         t for t in (getattr(app_config.universe, "candidates", ()) or ())
         if t not in traded
@@ -1335,7 +1351,9 @@ def _command_record_spreads(args, app_config) -> int:
 
     account = getattr(args, "account", None)
     tickers = list(
-        getattr(args, "spread_tickers", None) or app_config.market.tickers or ()
+        getattr(args, "spread_tickers", None)
+        or _traded(app_config, getattr(args, "account", None))
+        or ()
     )
     if not tickers:
         return EXIT_OK
@@ -1865,7 +1883,7 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
                 from cfdinvest.schedule import scheduler as scheduler_module
 
                 market_open = bool(
-                    scheduler_module.any_open(list(app_config.market.tickers), now)
+                    scheduler_module.any_open(_traded(app_config, account), now)
                 )
             except Exception as error:  # noqa: BLE001
                 logger.warning("Could not read the market calendar: %s", error)
@@ -1957,7 +1975,7 @@ def _command_send_test_email(args, smtp, transport) -> int:
 
 def _command_market_status(args, app_config) -> int:
     """Print the session state of every instrument in the universe."""
-    universe = _universe(args) or list(app_config.market.tickers)
+    universe = _universe(args) or _traded(app_config, getattr(args, "account", None))
     if not universe:
         print("No universe configured.", file=sys.stderr)
         return EXIT_USAGE
@@ -2075,7 +2093,7 @@ def _command_risk_snapshot(args, app_config) -> int:
 
 def _command_crontab(args, app_config) -> int:
     """Print crontab lines covering the universe's sessions."""
-    universe = _universe(args) or list(app_config.market.tickers)
+    universe = _universe(args) or _traded(app_config, getattr(args, "account", None))
     if not universe:
         print("No universe configured.", file=sys.stderr)
         return EXIT_USAGE

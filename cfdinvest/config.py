@@ -378,6 +378,30 @@ class UniverseConfig:
     #: bind and the screen says so rather than silently not applying it.
     sectors: dict[str, str] = field(default_factory=dict)
 
+    #: Whether the daemon trades the screen's latest recorded selection
+    #: instead of ``market.tickers``. **Off by default, and off is the state
+    #: the project ran in until it was measured.**
+    #:
+    #: The screen has ranked the pool monthly and recorded the result for
+    #: some time; what it could not do was act on it. That was deliberate --
+    #: a scheduled job rebalancing on a ranking never shown to predict
+    #: return would be claiming more than the evidence carries. It still
+    #: does not predict return: rank inside the selected list is worth
+    #: nothing, measured at £476,774 for ranks 1-4 against £484,668 for
+    #: ranks 5-8 with no trend between them. What the screen is good at is
+    #: deciding *membership*, and membership is all this setting hands it.
+    #:
+    #: The traded list is still never rewritten. ``market.tickers`` stays
+    #: exactly as a person left it and is the fallback; the selection is
+    #: read from the append-only record the screen already keeps. Nothing
+    #: here mutates configuration, which is the constraint that shaped the
+    #: whole design.
+    #:
+    #: Turning this on does not let anything trade. Execution stays gated on
+    #: its own environment variables, and a departing name still runs out
+    #: rather than being closed -- see ``schedule.app._with_held``.
+    follow_screen: bool = False
+
     #: How many instruments a screen selects. Defaults to however many are
     #: traded, so the screen answers "which twenty" rather than inventing a
     #: number of its own.
