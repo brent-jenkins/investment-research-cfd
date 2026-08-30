@@ -72,13 +72,25 @@ def test_the_range_excludes_the_bar_being_traded():
     assert bool(mask["A"].iloc[10])
 
 
+def _stop_start_signal(index):
+    """A signal that repeatedly turns on and off.
+
+    Needed because the gate now only binds where a signal *starts*. A
+    continuously-held direction has exactly one start, so a fixture built
+    from one cannot tell a working gate from a broken one -- which is what
+    the first version of this test did.
+    """
+    pattern = ["long" if (i // 3) % 2 == 0 else "flat" for i in range(len(index))]
+    return pd.DataFrame({"A": pattern}, index=index)
+
+
 def test_the_filter_is_off_outside_the_named_regimes():
     """The requirement is added where it helps rather than removed where it
     hurts -- measured: applied in sideways markets it returns 73.0% against
     74.4% for no filter at all."""
     index = pd.date_range("2026-01-01", periods=60, freq="h", tz="UTC")
     close = pd.DataFrame({"A": 100 + np.sin(np.arange(60))}, index=index)
-    direction = pd.DataFrame("long", index=index, columns=["A"])
+    direction = _stop_start_signal(index)
 
     trending = entry_mask(close, direction,
                           pd.Series(["uptrend"] * 60, index=index), lookback=10)
@@ -94,9 +106,8 @@ def test_an_unknown_regime_leaves_the_filter_off():
     the label is missing would be inferring from silence."""
     index = pd.date_range("2026-01-01", periods=60, freq="h", tz="UTC")
     close = pd.DataFrame({"A": 100 + np.sin(np.arange(60))}, index=index)
-    direction = pd.DataFrame("long", index=index, columns=["A"])
 
-    mask = entry_mask(close, direction,
+    mask = entry_mask(close, _stop_start_signal(index),
                       pd.Series(["unknown"] * 60, index=index), lookback=10)
     assert int(mask["A"].sum()) == 60
 
@@ -187,3 +198,38 @@ def test_disabled_by_default_and_when_unset():
         np.array([10.0]), np.array([10.0]), np.array([0.10]), Off()
     )
     assert trimmed[0] == 10.0
+
+
+def test_a_continuing_signal_is_not_re_gated():
+    """The rule that was measured: confirm where a move STARTS, not on every
+    re-entry into it.
+
+    With a 0.29-day time stop, positions close constantly while signals
+    persist. Demanding a fresh breakout for each re-entry gates a move
+    already confirmed once, and measured 63.0% against 78.1% for confirming
+    only at the start -- fifteen points, and the difference between the rule
+    that was validated and the rule first implemented.
+    """
+    index = pd.date_range("2026-01-01", periods=60, freq="h", tz="UTC")
+    close = pd.DataFrame({"A": 100 + np.sin(np.arange(60))}, index=index)
+    direction = pd.DataFrame("long", index=index, columns=["A"])
+
+    lenient = entry_mask(close, direction, lookback=10)
+    strict = entry_mask(close, direction, lookback=10, on_new_signal_only=False)
+
+    assert int(lenient["A"].sum()) > int(strict["A"].sum()), (
+        "a continuing signal is being re-gated on every bar, which is the "
+        "stricter rule that measured fifteen points worse"
+    )
+
+    # Confirmation is required once, not never: a signal that stops and
+    # starts is gated at each start. (A single unbroken run cannot show
+    # this -- its only start falls in the leading window, which is
+    # permitted by design.)
+    restarting = _stop_start_signal(index)
+    gated = entry_mask(close, restarting, lookback=10)
+    active = int((restarting["A"] != "flat").sum())
+    permitted_while_active = int(gated["A"][restarting["A"] != "flat"].sum())
+    assert permitted_while_active < active, (
+        "every start was permitted -- the gate requires confirmation nowhere"
+    )

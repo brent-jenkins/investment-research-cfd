@@ -70,7 +70,8 @@ DEFAULT_REGIMES: tuple[str, ...] = ("uptrend", "downtrend")
 
 
 def entry_mask(close, direction, trend=None, *, lookback: int = DEFAULT_LOOKBACK,
-               regimes: tuple[str, ...] = DEFAULT_REGIMES):
+               regimes: tuple[str, ...] = DEFAULT_REGIMES,
+               on_new_signal_only: bool = True):
     """Where a *new* position may open. ``True`` everywhere it is allowed.
 
     Parameters
@@ -111,6 +112,24 @@ def entry_mask(close, direction, trend=None, *, lookback: int = DEFAULT_LOOKBACK
     cleared = ((heading == "long") & (close > highs)) | (
         (heading == "short") & (close < lows)
     )
+
+    if on_new_signal_only:
+        # Require confirmation only where a signal STARTS, not on every
+        # entry into a flat position.
+        #
+        # This is the difference between the rule that was measured and the
+        # rule first implemented, and it is worth fifteen points. With a
+        # 0.29-day time stop, positions close constantly while signals
+        # persist; demanding a fresh breakout for each re-entry gates a move
+        # that has already been confirmed once, and returned 63.0% against
+        # 78.1% for confirming only at the start.
+        #
+        # The reading that fits: a breakout confirms a move is under way.
+        # Re-confirming the same move on every re-entry is not a stricter
+        # version of that idea, it is a different and worse one.
+        holding = (direction.reindex_like(close) != "flat")
+        continuing = holding & holding.shift(1).fillna(False)
+        cleared = cleared | continuing
 
     allowed = cleared
     if trend is not None and len(trend):
