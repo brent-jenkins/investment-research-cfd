@@ -1882,6 +1882,8 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         )
     elif name == "ingest-minute":
         _command_ingest_minute(args, app_config)
+    elif name == "record-headlines":
+        _command_record_headlines(args, app_config)
     elif name == "screen-universe":
         # Records what the rule says and nothing else. It cannot change the
         # traded universe -- the CLI it calls has no path that writes the
@@ -1943,6 +1945,64 @@ def _command_ingest_minute(args, app_config) -> int:
         "Minute bars: %d instrument(s), %d row(s) written%s",
         len(reports or ()), written,
         f"; no data for {', '.join(failed)}" if failed else "",
+    )
+    return EXIT_OK
+
+
+def _command_record_headlines(args, app_config) -> int:
+    """Archive what the news feed is showing, and nothing else.
+
+    No scoring and no inference: the title is the observation, and scoring
+    it is an interpretation that should be recomputed from the record rather
+    than frozen into it. See ``persist.headlines``.
+
+    Collected because the vendor keeps no archive. Every headline this
+    project has scored so far has been discarded, which is why sentiment is
+    the one input that has never been tested.
+
+    The same coverage as the minute ingest -- traded, plus held, plus every
+    name any screen has ever selected -- because a departed name's news is
+    exactly what would explain a position still open in it.
+    """
+    from cfdinvest.advisor import sentiment
+    from cfdinvest.persist import headlines as store
+
+    account = getattr(args, "account", None)
+    wanted = _with_held(_traded(app_config, account), app_config, account) or []
+    for extra in _ever_selected(app_config, account):
+        if extra not in wanted:
+            wanted.append(extra)
+    if not wanted:
+        return EXIT_OK
+
+    rows = []
+    for ticker in wanted:
+        try:
+            stories = sentiment.fetch_headlines(ticker)
+        except Exception as error:  # noqa: BLE001 - one feed, not an outage
+            logger.debug("No headlines for %s: %s", ticker, error)
+            continue
+        for story in stories or ():
+            title = str(story.get("title") or "").strip()
+            if not title:
+                continue
+            rows.append({
+                "ticker": str(ticker),
+                "title": title,
+                "published": str(story.get("published") or ""),
+                "publisher": str(story.get("publisher") or ""),
+                # A property of the headline, not a view about it: six of
+                # sixteen Lululemon stories over a fortnight were reports of
+                # the price move itself.
+                "price_report": bool(sentiment.is_price_report(title)),
+            })
+
+    written = store.record_headlines(rows, app_config, account)
+    have = store.coverage(app_config, account)
+    logger.info(
+        "Headlines: %d new of %d fetched across %d instruments; archive now "
+        "%d stories over %d days",
+        written, len(rows), len(wanted), have["stories"], have["days"],
     )
     return EXIT_OK
 
