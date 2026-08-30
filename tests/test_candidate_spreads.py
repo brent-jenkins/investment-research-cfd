@@ -265,3 +265,81 @@ def test_the_candidate_pass_does_not_run_when_the_market_is_shut():
     assert "record-candidate-spreads" not in daemon.jobs_due(
         moment, history, market_open=None
     )
+
+
+def test_minute_bars_are_collected_after_the_close_not_during_it():
+    """The opposite gating from the spread job, for the opposite reason.
+
+    A spread must be read while the market is open -- it describes a live
+    quote. A minute bar is a completed fact, so fetching mid-session
+    collects a partial day the next run must refetch. And it must NOT be
+    gated on the market being open, or an after-close job would never run
+    at all.
+    """
+    from cfdinvest.schedule import daemon
+
+    hour, minute = daemon.MINUTE_INGEST_AT_UTC
+    history = {
+        "ingest-daily": "2026-08-31T03:00:00Z",
+        "monitoring-snapshot": "2026-08-31T03:05:00Z",
+        "screen-universe": "2026-08-31T03:10:00Z",
+        "record-candidate-spreads": "2026-08-31T16:00:00Z",
+        "ingest-minute": "2026-08-30T23:00:00Z",
+    }
+    after_close = pd.Timestamp(f"2026-08-31T{hour:02d}:{minute + 1:02d}:00Z")
+
+    assert "ingest-minute" in daemon.jobs_due(after_close, history, market_open=False), (
+        "gated on an open market, so an after-close job could never run"
+    )
+    # And not on the trading cadence during the session.
+    assert "ingest-minute" not in daemon.jobs_due(
+        pd.Timestamp("2026-08-31T15:00:00Z"), history, market_open=True
+    )
+    # Not twice in one evening.
+    ran = dict(history, **{"ingest-minute": str(after_close)})
+    assert "ingest-minute" not in daemon.jobs_due(
+        after_close + pd.Timedelta(minutes=30), ran, market_open=False
+    )
+
+
+def test_the_minute_appointment_is_past_the_close_in_both_dst_regimes():
+    """Fixed in UTC while New York moves under it. The US close is 20:00 UTC
+    in summer and 21:00 in winter; fetching before either collects a partial
+    day."""
+    from cfdinvest.schedule import daemon
+
+    hour, minute = daemon.MINUTE_INGEST_AT_UTC
+    for day in ("2026-01-15", "2026-07-15"):
+        moment = pd.Timestamp(f"{day}T{hour:02d}:{minute:02d}:00Z")
+        local = moment.tz_convert("America/New_York")
+        assert local.hour >= 16 or local.hour < 4, (
+            f"{hour:02d}:{minute:02d} UTC is {local.hour}:00 in New York on "
+            f"{day} -- the session has not closed"
+        )
+
+
+def test_minute_collection_covers_departed_names_too():
+    """Same rule as the intraday top-up: minute retention is the shortest
+    the vendor offers, so a name that left the list still accrues history."""
+    import inspect
+
+    from cfdinvest.schedule import app as schedule_app
+
+    source = inspect.getsource(schedule_app._command_ingest_minute)
+    assert "_ever_selected(" in source, (
+        "minute collection stops the day a name leaves the universe, and "
+        "that history is not recoverable later"
+    )
+    assert "_with_held(" in source
+    assert 'resolution="1m"' in source and 'interval="capital_1m"' in source
+
+
+def test_minute_collection_refuses_without_credentials():
+    """It reaches a broker. No credentials must mean it declines rather than
+    raising into the daemon loop."""
+    import inspect
+
+    from cfdinvest.schedule import app as schedule_app
+
+    source = inspect.getsource(schedule_app._command_ingest_minute)
+    assert "complete" in source and "No Capital credentials" in source

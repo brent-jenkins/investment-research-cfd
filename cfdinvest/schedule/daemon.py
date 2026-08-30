@@ -34,6 +34,7 @@ __all__ = [
     "SNAPSHOT_AT_UTC",
     "SCREEN_AT_UTC",
     "CANDIDATE_SPREAD_AT_UTC",
+    "MINUTE_INGEST_AT_UTC",
     "JOBS",
     "jobs_due",
 ]
@@ -96,6 +97,27 @@ SCREEN_AT_UTC = (3, 10)
 #: arithmetic of its own.
 CANDIDATE_SPREAD_AT_UTC = (16, 0)
 
+#: When minute bars are collected, and it is **after the close** rather than
+#: during the session.
+#:
+#: The reasoning is the opposite of the spread job's. A spread must be read
+#: while the market is open because it describes a live quote; a minute bar
+#: is a completed fact, and fetching mid-session would collect a partial day
+#: that the next run would have to refetch.
+#:
+#: 23:00 UTC is past the US close in both daylight-saving regimes -- 20:00
+#: UTC in summer, 21:00 in winter -- with margin for late prints.
+#:
+#: Collected because it cannot be collected later. Minute history has the
+#: shortest retention of any resolution the vendor serves, so a day not
+#: fetched is permanently gone. It is *not* collected because it predicts:
+#: measured over 34,818 decision points, no minute feature separates
+#: positions worth closing from positions worth keeping. What it is for is
+#: measuring execution quality -- the book's assumed fills against the
+#: broker's actual ones -- and having the record if a later question needs
+#: it.
+MINUTE_INGEST_AT_UTC = (23, 0)
+
 #: How often the lake and the signals are refreshed while a market is open.
 #:
 #: A daily pipeline on daily bars gave one decision per instrument per
@@ -132,6 +154,7 @@ JOBS: tuple[str, ...] = (
     # needs their spread this minute -- only a history by the first of the
     # month.
     "record-candidate-spreads",
+    "ingest-minute",
     "monitoring-snapshot",
     "risk-snapshot",
     "prune-runs",
@@ -280,6 +303,12 @@ def jobs_due(
         moment, history.get("record-candidate-spreads"), CANDIDATE_SPREAD_AT_UTC
     ):
         due.append("record-candidate-spreads")
+
+    # Deliberately NOT gated on the market being open: this runs after the
+    # close, so by construction it is never due while trading. Gating it on
+    # an open market would mean it never ran at all.
+    if _due_daily(moment, history.get("ingest-minute"), MINUTE_INGEST_AT_UTC):
+        due.append("ingest-minute")
 
     if _due_daily(moment, history.get("monitoring-snapshot"), SNAPSHOT_AT_UTC):
         due.append("monitoring-snapshot")

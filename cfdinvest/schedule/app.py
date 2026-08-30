@@ -1876,6 +1876,8 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         _command_trade_capital(
             _job_args(args, "poll-live-quotes"), app_config, smtp, transport
         )
+    elif name == "ingest-minute":
+        _command_ingest_minute(args, app_config)
     elif name == "screen-universe":
         # Records what the rule says and nothing else. It cannot change the
         # traded universe -- the CLI it calls has no path that writes the
@@ -1887,6 +1889,58 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         universe_cli.main(
             ["screen"] + (["--account", args.account] if getattr(args, "account", None) else [])
         )
+
+
+def _command_ingest_minute(args, app_config) -> int:
+    """Collect minute bars for everything the book cares about.
+
+    The set is the traded list, plus what is held, plus everything any
+    screen has ever selected -- the same reasoning as the intraday top-up.
+    A name that left the universe still accrues history, because minute
+    retention is the shortest the vendor offers and a day not fetched is
+    gone rather than merely late.
+
+    Incremental by construction: ``backfill_ticker`` resumes from what is
+    already on disk, so a daily run fetches a day and an interrupted run
+    picks up where it stopped. Nothing here is atomic across instruments
+    and does not need to be.
+    """
+    from cfdinvest.broker.capital import client as capital
+    from cfdinvest.ingestion import capital_prices
+
+    account = getattr(args, "account", None)
+    backtest = _backtest_config(args, app_config)
+    wanted = _with_held(backtest.tickers, app_config, account) or list(
+        backtest.tickers
+    )
+    for extra in _ever_selected(app_config, account):
+        if extra not in wanted:
+            wanted.append(extra)
+    if not wanted:
+        return EXIT_OK
+
+    settings = capital.CapitalConfig.from_env()
+    if not getattr(settings, "complete", True):
+        logger.debug("No Capital credentials; no minute bars collected")
+        return EXIT_OK
+
+    try:
+        reports = capital_prices.backfill(
+            wanted, settings, app_config,
+            interval="capital_1m", resolution="1m",
+        )
+    except Exception as error:  # noqa: BLE001 - collection is best-effort
+        logger.warning("Minute ingestion failed: %s", error)
+        return EXIT_OK
+
+    written = sum(int(r.get("rows") or 0) for r in reports or ())
+    failed = [str(r.get("ticker")) for r in reports or () if r.get("error")]
+    logger.info(
+        "Minute bars: %d instrument(s), %d row(s) written%s",
+        len(reports or ()), written,
+        f"; no data for {', '.join(failed)}" if failed else "",
+    )
+    return EXIT_OK
 
 
 def _command_daemon(args, app_config, smtp, transport) -> int:

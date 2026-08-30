@@ -65,7 +65,9 @@ SCHEDULES: tuple[tuple[str, str, str], ...] = (
     ("monitoring-snapshot", "daily", "Operational health, recorded"),
     ("risk-snapshot", "daily", "The book's risk, recorded"),
     ("prune-runs", "daily", "Bound the artefact store"),
-    ("screen-universe", "monthly", "Rank the pool and record the selection"),
+    ("ingest-minute", "daily",
+     "Minute bars after the close, for everything ever selected"),
+    ("screen-universe", "daily", "Rank the pool and record the selection"),
 )
 
 
