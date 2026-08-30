@@ -623,6 +623,9 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
         time_stop_days=strategy.time_stop_days,
         earnings_dates=earnings or None,
         earnings_blackout_days=strategy.earnings_blackout_days,
+        decayed_position_multiplier=getattr(
+            strategy, "decayed_position_multiplier", None
+        ),
         thresholds=HysteresisThresholds(
             entry_confidence=strategy.entry_confidence,
             exit_confidence=strategy.exit_confidence,

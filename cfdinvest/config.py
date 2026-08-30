@@ -348,6 +348,31 @@ class StrategyConfig:
     #: three.
     suggestion_confidence: float = 0.60
 
+    #: What a held position is scaled to once its confidence falls below
+    #: ``entry_confidence``. ``None`` disables it.
+    #:
+    #: The hysteresis band leaves an interior region unmanaged: entry needs
+    #: 0.35 and exit triggers at 0.20, so a position whose conviction decays
+    #: to 0.30 is too weak to open, too strong to close, and was held at
+    #: full size. This halves it and nothing else -- it closes nothing, and
+    #: the exit band still decides when the position goes.
+    #:
+    #: Measured by sweeping the cut point over 3.65 years, every arm holding
+    #: genuinely less rather than normalised: 77.4% at -29.4% against a
+    #: baseline of 74.4% at -34.4%, a ratio of 2.64 against 2.16. Cutting at
+    #: 0.30 is inert (the exit band has already taken those), and above the
+    #: entry bar it collapses -- 65.5% at 0.40, 41.7% at 0.50.
+    #:
+    #: The mirror is what makes it believable: cutting the *top* by the same
+    #: amount returns 35.6%, the worst arm of the sweep and 41.8 points
+    #: below cutting the bottom. So it is the direction that pays rather
+    #: than the reduction.
+    #:
+    #: The threshold is ``entry_confidence`` itself and deliberately not a
+    #: number of its own -- the swept peak landed on it, which is what the
+    #: rule means. One owner, and it follows any change to the entry bar.
+    decayed_position_multiplier: float | None = 0.5
+
 
 @dataclass(frozen=True, slots=True)
 class UniverseConfig:

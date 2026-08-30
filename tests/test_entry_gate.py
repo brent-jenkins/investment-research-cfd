@@ -109,3 +109,81 @@ def test_too_little_history_is_permitted_not_refused():
 
     mask = entry_mask(close, direction, lookback=DEFAULT_LOOKBACK)
     assert bool(mask["A"].iloc[0]), "the leading window refused entries"
+
+
+# --------------------------------------------------------------------------- #
+# Trimming positions whose conviction has decayed below the entry bar.
+# --------------------------------------------------------------------------- #
+
+from cfdinvest.execution.engine import _trim_decayed
+
+
+class _Thresholds:
+    entry_confidence = 0.35
+    exit_confidence = 0.20
+
+
+class _Config:
+    thresholds = _Thresholds()
+    decayed_position_multiplier = 0.5
+
+
+def test_a_decayed_position_is_trimmed_not_closed():
+    """The gap the hysteresis band leaves open: entry needs 0.35, exit
+    triggers at 0.20, so a position at 0.30 is too weak to open and too
+    strong to close -- and was held at full size."""
+    target = np.array([10.0])
+    units = np.array([10.0])            # already held
+    trimmed = _trim_decayed(target, units, np.array([0.30]), _Config())
+
+    assert trimmed[0] == 5.0, "a decayed position was not trimmed"
+    assert trimmed[0] != 0.0, (
+        "trimming became closing -- the position must run on and exit on "
+        "its own terms"
+    )
+
+
+def test_a_position_still_worth_opening_is_left_alone():
+    trimmed = _trim_decayed(
+        np.array([10.0]), np.array([10.0]), np.array([0.50]), _Config()
+    )
+    assert trimmed[0] == 10.0
+
+
+def test_entries_are_untouched():
+    """A new position cannot be below the entry bar -- the band refuses it --
+    so this must never fire at entry, whatever the confidence says."""
+    trimmed = _trim_decayed(
+        np.array([10.0]), np.array([0.0]), np.array([0.10]), _Config()
+    )
+    assert trimmed[0] == 10.0, "the trim fired on an opening position"
+
+
+def test_the_threshold_is_the_entry_bar_not_a_number_of_its_own():
+    """The swept peak coincided with entry_confidence, which is what the
+    rule means: halve a position you would no longer open. Moving the entry
+    bar must move this with it."""
+    class Raised(_Config):
+        thresholds = type("T", (), {"entry_confidence": 0.60})()
+
+    at_045 = _trim_decayed(
+        np.array([10.0]), np.array([10.0]), np.array([0.45]), _Config()
+    )
+    assert at_045[0] == 10.0, "0.45 was trimmed against a 0.35 bar"
+
+    raised = _trim_decayed(
+        np.array([10.0]), np.array([10.0]), np.array([0.45]), Raised()
+    )
+    assert raised[0] == 5.0, (
+        "raising entry_confidence did not raise the trim threshold with it"
+    )
+
+
+def test_disabled_by_default_and_when_unset():
+    class Off(_Config):
+        decayed_position_multiplier = None
+
+    trimmed = _trim_decayed(
+        np.array([10.0]), np.array([10.0]), np.array([0.10]), Off()
+    )
+    assert trimmed[0] == 10.0

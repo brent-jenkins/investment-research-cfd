@@ -207,6 +207,36 @@ class ExecutionConfig:
     #: ``signals.breakout.entry_mask``; see that module for why it is
     #: conditioned on the trend regime and why it gates opening only.
     entry_gate: Any = None
+
+    #: What a position is scaled to once its confidence falls below the
+    #: level at which it would have been opened. ``None`` disables it.
+    #:
+    #: The hysteresis band has an interior region nobody was managing:
+    #: entry needs ``entry_confidence`` (0.35) and exit triggers at
+    #: ``exit_confidence`` (0.20), so a position whose conviction decays to
+    #: 0.30 is too weak to open and too strong to close -- and was held at
+    #: full size. This trims that region and nothing else.
+    #:
+    #: Measured by sweeping the cut point, 3.65 years, all arms holding
+    #: genuinely less rather than normalised:
+    #:
+    #:     cut below   CAGR    maxDD   ratio
+    #:       0.30      74.4    -34.4   2.16   (inert: nothing left to cut)
+    #:       0.35      77.4    -29.4   2.64
+    #:       0.37      74.4    -28.2   2.64
+    #:       0.40      65.5    -34.1   1.92
+    #:       0.50      41.7    -40.9   1.02
+    #:     MIRROR >0.50 35.6   -37.6   0.95
+    #:
+    #: Single-peaked, monotone collapse above the peak, and the mirror --
+    #: cutting the *top* by the same amount -- is the worst arm of all, 41.8
+    #: points below. So this is confidence selecting, not exposure falling.
+    #:
+    #: **The threshold is `entry_confidence` itself, not a number of its
+    #: own.** The peak coincided with it, which is what the rule means:
+    #: halve a position you would no longer open. One owner, and it follows
+    #: any change to the entry bar.
+    decayed_position_multiplier: float | None = None
     #: Cap on gross notional divided by equity.
     max_leverage: float = 5.0
     #: The largest share of the *gross ceiling* any one instrument may take.

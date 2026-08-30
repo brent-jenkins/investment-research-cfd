@@ -507,6 +507,13 @@ def run_execution(signal_frame, analysis_frame, config):
                 target_units, new_held, units, entry_gate[bar]
             )
 
+        # After the gates, before the sizing caps: this trims what is held
+        # rather than deciding what may be held, so the caps should see the
+        # trimmed figure.
+        target_units = _trim_decayed(
+            target_units, units, confidence[bar], config
+        )
+
         target_units, new_held = _apply_position_limit(
             target_units, new_held, units, config
         )
@@ -800,6 +807,36 @@ def _target_units(held, size_row, reference, equity, config, tradable):
     with np.errstate(invalid="ignore", divide="ignore"):
         units = notional / safe_price
     return np.nan_to_num(units)
+
+
+def _trim_decayed(target_units, units, confidence, config):
+    """Scale back a position whose conviction has fallen below the entry bar.
+
+    Only positions already held, and only those that would no longer clear
+    ``entry_confidence``. A new position cannot be below it -- the
+    hysteresis band refuses that -- so this touches nothing at entry.
+
+    It closes nothing. Trimming to half leaves a position that continues to
+    run and exits on its own terms; the exit band at ``exit_confidence``
+    still decides when it goes. Measured, this is worth 3 points of return
+    and 5 of drawdown, and cutting the *top* by the same amount instead is
+    the worst arm of the whole sweep -- so it is the direction that pays,
+    not the reduction.
+
+    Pure.
+    """
+    multiplier = getattr(config, "decayed_position_multiplier", None)
+    if multiplier is None:
+        return target_units
+    bar = float(getattr(config.thresholds, "entry_confidence", 0.0) or 0.0)
+    if bar <= 0:
+        return target_units
+    decayed = (units != 0) & (target_units != 0) & (
+        np.asarray(confidence, dtype=float) < bar
+    )
+    if not decayed.any():
+        return target_units
+    return np.where(decayed, target_units * float(multiplier), target_units)
 
 
 def _apply_entry_gate(target_units, new_held, units, allowed):

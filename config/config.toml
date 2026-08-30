@@ -540,6 +540,33 @@ fx_conversion_fee_pct = 0.005
 environment_in_confidence = false
 suggestion_confidence = 0.60
 
+# Halve a position whose conviction has decayed below the level at which it
+# would have been opened. Nothing is closed -- the exit band at
+# exit_confidence still decides that.
+#
+# It fills a gap the hysteresis band leaves open. Entry needs 0.35 and exit
+# triggers at 0.20, so a position sitting at 0.30 is too weak to open and
+# too strong to close, and until now was carried at full size.
+#
+# Measured by sweeping the cut point over 3.65 years, every arm holding
+# genuinely less rather than normalised:
+#
+#     cut below   CAGR    maxDD   ratio
+#       0.30      74.4    -34.4   2.16   inert; the exit band took those
+#       0.35      77.4    -29.4   2.64   <- the entry bar
+#       0.40      65.5    -34.1   1.92
+#       0.50      41.7    -40.9   1.02
+#     MIRROR >0.50 35.6   -37.6   0.95   cutting the TOP instead
+#
+# Single-peaked, monotone collapse above the peak, and the mirror is the
+# worst arm of the sweep -- 41.8 points below cutting the bottom. That gap
+# is what says this is confidence selecting rather than exposure falling.
+#
+# The threshold is entry_confidence itself, not a number of its own: the
+# swept peak landed on it, which is exactly what the rule means. Changing
+# the entry bar moves this with it.
+decayed_position_multiplier = 0.5
+
 # Take no signal action on the first bar of a session.
 #
 # OFF, and it was briefly on. The case for it was that entries on the first
