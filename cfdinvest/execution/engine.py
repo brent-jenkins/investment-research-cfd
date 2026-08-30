@@ -212,6 +212,18 @@ def run_execution(signal_frame, analysis_frame, config):
         index, columns, 0.0,
     )
 
+    # Shifted like everything else: the mask is derived from the same bar
+    # the signal is, so it must reach the loop on the same delay or a
+    # position would be gated on information the signal did not have.
+    # Missing entries default to True -- permitted -- because "no reading"
+    # is not "refused".
+    entry_gate = None
+    if getattr(config, "entry_gate", None) is not None:
+        entry_gate = _as_matrix(
+            fills_module.shift_for_execution(config.entry_gate, lag),
+            index, columns, 1.0,
+        ).astype(bool)
+
     # Every price the loop touches is restated in the account currency
     # before anything else sees it, so the state machine, the leverage cap
     # and the equity curve all work in one unit. Rates are 1.0 with FX
@@ -487,6 +499,14 @@ def run_execution(signal_frame, analysis_frame, config):
         # Slots before sizing. How many positions may be held is a different
         # question from how large each may be, and answering it after the
         # caps would size a book that is about to lose half its members.
+        # Before the slot limit: a refused entry frees no slot for anybody
+        # else, so refusing first keeps the two independent. Both gate
+        # opening and neither closes.
+        if entry_gate is not None:
+            target_units, new_held = _apply_entry_gate(
+                target_units, new_held, units, entry_gate[bar]
+            )
+
         target_units, new_held = _apply_position_limit(
             target_units, new_held, units, config
         )
@@ -780,6 +800,32 @@ def _target_units(held, size_row, reference, equity, config, tradable):
     with np.errstate(invalid="ignore", divide="ignore"):
         units = notional / safe_price
     return np.nan_to_num(units)
+
+
+def _apply_entry_gate(target_units, new_held, units, allowed):
+    """Refuse to *open* where the gate is shut. Close nothing.
+
+    An incumbent is never touched, whatever the gate says. The requirement
+    is a condition on entering, and a position already held has entered --
+    applying it afterwards would turn a filter into a liquidation trigger,
+    which is the same distinction ``_apply_position_limit`` exists to keep
+    and the one that has been got wrong twice in this file's history.
+
+    A refused newcomer is flat rather than short: zero the units *and* the
+    direction, or the position frame records a holding the book never took.
+
+    Pure.
+    """
+    if allowed is None:
+        return target_units, new_held
+    opening = (target_units != 0) & (units == 0)
+    refused = opening & ~np.asarray(allowed, dtype=bool)
+    if not refused.any():
+        return target_units, new_held
+    return (
+        np.where(refused, 0.0, target_units),
+        np.where(refused, 0, new_held).astype(new_held.dtype),
+    )
 
 
 def _apply_position_limit(target_units, new_held, units, config):

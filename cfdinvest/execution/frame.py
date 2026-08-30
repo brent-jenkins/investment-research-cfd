@@ -201,6 +201,12 @@ class ExecutionConfig:
     #: the ranking is not accurate enough to resolve -- the same reason the
     #: universe is not reselected weekly.
     max_open_positions: int | None = None
+
+    #: Bars by instrument, ``True`` where a *new* position may open. ``None``
+    #: leaves everything permitted. Built by
+    #: ``signals.breakout.entry_mask``; see that module for why it is
+    #: conditioned on the trend regime and why it gates opening only.
+    entry_gate: Any = None
     #: Cap on gross notional divided by equity.
     max_leverage: float = 5.0
     #: The largest share of the *gross ceiling* any one instrument may take.
