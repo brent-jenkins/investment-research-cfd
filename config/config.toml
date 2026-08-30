@@ -156,7 +156,29 @@ tickers = [
 # Finer intervals are available from the vendor but not usable: 15m and 5m
 # carry only ~85 days of history, which is too little to validate against.
 # Hourly is the shortest bar with two years behind it.
-interval = "1h"          # "1d", "1h" or "1wk"
+#
+# One source of truth for intraday, and it is the venue that fills the
+# orders. Until 2026-08-30 this read "1h" -- yfinance bars -- while every
+# order was placed at Capital's prices, so the book decided on one feed and
+# dealt on another. That is two sources of truth for the same question, and
+# the one that matters is whichever the fill happens against.
+#
+# What changes with it:
+#
+#   * the bars carry a bid, an ask and a spread, so cost can be charged as
+#     quoted rather than assumed -- see use_measured_spreads, which is only
+#     meaningful on this feed since yfinance serves no spread at all;
+#   * history reaches back to 2023-01-03 rather than yfinance's rolling
+#     730-day window, which is what let a headline CAGR be quoted over a
+#     span that excluded the worst year;
+#   * `close` is the bid/ask midpoint rather than a last trade, and
+#     `volume` is a tick count roughly 414x smaller than shares -- so no
+#     order-flow reading of this feed means what it appears to.
+#
+# yfinance is unchanged as the source for daily bars, real share volume and
+# the screening series (_SCREENING_INTERVAL = "1d"). It is a good picture of
+# the universe; it is simply not what we deal against.
+interval = "capital_1h"  # "capital_1h", "1d", "1h" or "1wk"
 start = "2005-01-01"
 # end = "2025-01-01"     # omit for "up to now"
 auto_adjust = true       # split/dividend-adjusted OHLC
@@ -592,6 +614,32 @@ decayed_position_multiplier = 0.5
 # twelve. Twelve bars is the middle of that plateau, not a peak -- there is
 # no cliff to fall off if the market changes.
 breakout_lookback = 12
+
+# Charge the spread Capital quoted, not a flat constant.
+#
+# The bars carry a bid and an ask, and preprocessing already keeps the
+# resulting spread_bp panel beside the prices -- so the measured figure was
+# sitting at execution time and was not being read. Every backtest this
+# project has produced charged 5.0bp round trip instead.
+#
+# Measured over Capital's full history on the eight-name book:
+#
+#     ticker    median    vs 5bp        ticker    median    vs 5bp
+#     TSLA        4.86     0.97x        AMAT       13.16     2.63x
+#     AMD         7.55     1.51x        BKNG       14.94     2.99x
+#     CAT        10.51     2.10x        LRCX       15.13     3.03x
+#     MU         12.01     2.40x        INTC       28.75     5.75x
+#     ALL        11.32     2.26x
+#
+# Only TSLA is cheaper than the assumption. At the opening hour, which is
+# when this strategy deals, every name is worse than its own median.
+#
+# It matters more here than it would for most books because the median
+# position lives about four hours and 80% close within one day. At that
+# horizon spread is nearly the entire cost and financing barely registers,
+# so halving the spread charge understates the whole strategy rather than
+# one line of it.
+use_measured_spreads = true
 
 # Take no signal action on the first bar of a session.
 #

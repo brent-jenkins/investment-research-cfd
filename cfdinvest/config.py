@@ -394,6 +394,21 @@ class StrategyConfig:
     #: Twelve is the middle of a plateau rather than a peak.
     breakout_lookback: int | None = 12
 
+    #: Charge the spread the broker quoted, rather than a flat constant.
+    #:
+    #: Capital's bars carry a bid and an ask, and preprocessing already keeps
+    #: the resulting ``spread_bp`` panel beside the prices -- so the measured
+    #: figure was present at execution time and was not being read. Measured
+    #: over Capital's full history on the eight-name book: median 11.32bp
+    #: against the 5.0bp constant, 2.26x. Only TSLA is cheaper than the
+    #: assumption; INTC runs 28.75bp, 5.75x.
+    #:
+    #: It matters disproportionately here because the median position lives
+    #: about four hours. At that horizon spread is nearly the whole cost and
+    #: financing barely registers, so undercharging it by half understates
+    #: the cost of the strategy rather than a corner of it.
+    use_measured_spreads: bool = True
+
 
 @dataclass(frozen=True, slots=True)
 class UniverseConfig:

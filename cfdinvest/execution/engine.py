@@ -330,8 +330,22 @@ def run_execution(signal_frame, analysis_frame, config):
     # spread exists it is used; elsewhere the constant stands, and the split
     # is counted so a run can say how much of its largest cost was read off
     # a quote rather than assumed.
+    # An explicit panel wins: a caller that supplied one meant it. Otherwise,
+    # if measured spreads are switched on, the analysis frame already carries
+    # ``spread_bp`` beside the prices on broker data -- the figure was present
+    # all along and simply not read. Off by default, so a recorded run keeps
+    # charging what it charged.
+    spread_source = config.spread_panel
+    if spread_source is None and getattr(config, "use_measured_spreads", False):
+        spread_source = analysis_frame.prices.get("spread_bp")
+        if spread_source is None:
+            logger.warning(
+                "Measured spreads are enabled but this frame carries no "
+                "spread_bp panel; every bar falls back to the %.1fbp constant",
+                config.default_spread_bps,
+            )
     spread_matrix, spread_measured, spread_cells = fills_module.resolve_spread_matrix(
-        index, columns, spread_constant, config.spread_panel
+        index, columns, spread_constant, spread_source
     )
 
     # Bars the operator may act on. Absent means every bar, which is what

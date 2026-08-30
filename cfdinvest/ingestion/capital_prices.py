@@ -272,6 +272,33 @@ def is_capital_interval(interval) -> bool:
     return str(interval or "").startswith("capital_")
 
 
+def resolution_for(interval) -> str:
+    """The broker resolution behind an interval label.
+
+    ``capital_1h`` is stored under its own name so it never collides with
+    the yfinance ``1h`` bars in the lake, but the API is asked for ``1h``.
+    Callers previously carried the pair by hand -- the minute job passes
+    ``interval="capital_1m", resolution="1m"`` -- which is two places for
+    one fact and a way for a top-up to fetch the wrong resolution into the
+    right directory.
+
+    Raises
+    ------
+    ValueError
+        On an interval this does not name a resolution for. Guessing would
+        silently fill a directory with bars of the wrong size, which is the
+        kind of error that surfaces as a strategy behaving oddly rather
+        than as a failure.
+    """
+    label = str(interval or "")
+    if not is_capital_interval(label):
+        raise ValueError(f"{label!r} is not a Capital interval")
+    resolution = label[len("capital_"):]
+    if resolution not in {"1m", "5m", "15m", "1h", "1d"}:
+        raise ValueError(f"no known Capital resolution for {label!r}")
+    return resolution
+
+
 def restrict_to_session(frame, *, hours: tuple[int, int] = SESSION_HOURS):
     """Drop pre-market and after-hours bars from a Capital frame.
 

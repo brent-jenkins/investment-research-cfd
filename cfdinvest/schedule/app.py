@@ -565,6 +565,11 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
             max_leverage=strategy.max_leverage,
             concentration=strategy.max_instrument_concentration,
             slippage_fraction=strategy.slippage_bps / 10_000.0,
+            # Carried onto the fallback deliberately: a failure to read
+            # financing rates is no reason to also stop charging the spread
+            # the broker quoted, and a cost model that changes silently when
+            # an unrelated read fails is the harder bug to find.
+            use_measured_spreads=getattr(strategy, "use_measured_spreads", False),
         )
 
     if missing:
@@ -627,6 +632,7 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
             strategy, "decayed_position_multiplier", None
         ),
         breakout_lookback=getattr(strategy, "breakout_lookback", None),
+        use_measured_spreads=getattr(strategy, "use_measured_spreads", False),
         thresholds=HysteresisThresholds(
             entry_confidence=strategy.entry_confidence,
             exit_confidence=strategy.exit_confidence,

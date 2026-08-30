@@ -586,12 +586,39 @@ def _refresh(repository: DataRepository, tickers, backtest_config) -> None:
     without saying so.
     """
     from cfdinvest.ingestion import MacroDataIngestor, MarketDataIngestor
+    from cfdinvest.ingestion import capital_prices
 
     config = repository.config
+    interval = backtest_config.interval
     logger.info("Refreshing market data for %d ticker(s)", len(tickers) or 0)
-    MarketDataIngestor(config).ingest(
-        list(tickers) or None, interval=backtest_config.interval
-    )
+
+    # Intraday bars come from the venue that fills the orders. yfinance is
+    # still the source for daily bars, volume and the screening series --
+    # but a decision taken on one feed and executed on another is two
+    # sources of truth, and the intraday one has to be the broker's.
+    #
+    # Routed here rather than inside MarketDataIngestor because that class
+    # is yfinance by definition: handing it "capital_1h" would send a label
+    # it cannot parse to a vendor that never had the data.
+    if capital_prices.is_capital_interval(interval):
+        from cfdinvest.broker.capital import client as capital
+
+        settings = capital.CapitalConfig.from_env()
+        if not getattr(settings, "complete", True):
+            # Raised rather than warned: this is the trading path's own
+            # data. Continuing would run the strategy on whatever bars
+            # happened to be on disk without saying the refresh never ran.
+            raise RuntimeError(
+                f"{interval} bars are the decision feed but no Capital "
+                "credentials are configured, so the lake cannot be topped up"
+            )
+        capital_prices.backfill(
+            list(tickers) or None, settings, config,
+            interval=interval,
+            resolution=capital_prices.resolution_for(interval),
+        )
+    else:
+        MarketDataIngestor(config).ingest(list(tickers) or None, interval=interval)
 
     if config.macro.api_key:
         with MacroDataIngestor(config) as ingestor:

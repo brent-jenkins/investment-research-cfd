@@ -74,6 +74,27 @@ class ExecutionConfig:
     #: nothing. At roughly 1,200 round trips a year that difference is the
     #: headline figure.
     spread_panel: pd.DataFrame | None = None
+    #: Read the spread off the analysis frame's own ``spread_bp`` panel when
+    #: no explicit ``spread_panel`` is supplied.
+    #:
+    #: Broker bars carry bid, ask and the spread between them, and
+    #: preprocessing already keeps that panel beside the prices -- so on
+    #: Capital data the measured figure is present at execution time and was
+    #: simply not being read. Measured on the eight-name book over Capital's
+    #: full history: median 11.32bp against the 5.0bp constant, 2.26x, with
+    #: only TSLA cheaper than the assumption and INTC at 5.75x.
+    #:
+    #: That gap matters more here than it would elsewhere. The median
+    #: position lives about four hours and 80% close within a day, so spread
+    #: is the dominant cost and financing is nearly irrelevant -- an error in
+    #: the spread is an error in almost the whole cost model.
+    #:
+    #: Default ``False`` deliberately. Turning this on changes what every
+    #: backtest charges, so it is a named, deliberate switch rather than a
+    #: silent improvement: a recorded figure stays reproducible, and a run
+    #: that charges measured spreads says so. An explicit ``spread_panel``
+    #: still wins, because a caller that supplied one meant it.
+    use_measured_spreads: bool = False
     #: Bars on which the operator may change a position, as a boolean Series
     #: over the analysis index. ``None`` means every bar, which is what every
     #: recorded run assumed.
