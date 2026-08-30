@@ -362,14 +362,45 @@ rebalance_threshold = 3.0     # was 0.25; drift rebalancing off entirely
 # traded on. The paper book's arms were then chosen as round numbers
 # (0.50/0.60/0.70) without anyone checking against it, so the forward record
 # was validating a configuration measurably worse than the one being
-# backtested. Measured over two years on hourly bars:
+# backtested.
 #
-#   entry bar   0.00    0.35    0.40    0.50    0.60    0.70    0.80
-#   CAGR      103.6%  126.7%  121.4%   85.6%   71.6%   67.7%   52.3%
+# SUPERSEDED, struck rather than deleted: 0.00/0.35/0.40/0.50/0.60/0.70/0.80
+# returning 103.6/126.7/121.4/85.6/71.6/67.7/52.3%, measured over two years
+# on yfinance bars at a flat 5bp. Both the feed and the cost model have since
+# changed, and each changes every number.
 #
-# 0.35 is the peak, and walk-forward across 18 out-of-sample months says to
-# leave it alone: re-fitting it on a rolling six-month window lost to the
-# fixed value in 17 of 18 windows.
+# Re-measured 2026-08-30 through the engine on Capital bars with measured
+# spreads, screen-gated at target 10, entry_size at the signal floor -- which
+# matters, because with that floor removed this is the ONLY filter left
+# between a signal and a position. Entry and exit move as a pair at the
+# existing ratio; the engine refuses exit above entry.
+#
+#   entry/exit    CAGR    maxDD   Calmar   trades
+#   0.00/0.00   141.4%   -44.7%     3.16    4,495
+#   0.15/0.09   141.4%   -44.7%     3.16    4,495   (inert: see below)
+#   0.25/0.14   134.5%   -42.0%     3.20    4,131
+#   0.30/0.17   129.8%   -44.3%     2.93    4,265
+#   0.35/0.20   130.5%   -40.3%     3.24    3,968   <- kept
+#   0.45/0.26    82.8%   -38.3%     2.16    2,835
+#   0.55/0.31    36.1%   -32.5%     1.11    2,199
+#
+# Confidence has a hard floor at exactly 0.1500 by construction, so 100% of
+# non-zero readings clear a 0.15 gate and that arm cannot bite. The two
+# identical rows are the sweep saying so, not a bug -- checked, because
+# identical arms are how this project has previously reported a baseline
+# twice under different labels.
+#
+# 0.35 is KEPT, and deliberately not moved to the peak. Removing the gate
+# buys +11.0pp of return for +4.4pp of drawdown, and Calmar is flat across
+# 0.00 to 0.35 (3.16 / 3.20 / 3.24, indistinguishable) -- so the extra
+# return is bought with proportional risk rather than earned. At 1.4x the
+# 8.0pp noise floor that is not enough to move a live parameter when the
+# risk-adjusted measure calls the arms equivalent and 0.35 carries the
+# lowest drawdown of the high-return group.
+#
+# The firm finding is the other end: raising the gate is destructive, at
+# -47.7pp for 0.45 and -94.4pp for 0.55. The superseded note said "-12pp at
+# 0.45" -- right in direction, four times understated in size.
 entry_confidence = 0.35
 exit_confidence = 0.20
 

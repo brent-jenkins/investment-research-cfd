@@ -124,12 +124,20 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
     Justification(
         path="execution.thresholds.entry_confidence",
         value=0.35,
-        feed="1h",
-        cost_model="flat_5bp",
-        source="scratch sweep, not retained",
-        figure="raising the gate is +1.6pp at 0.40 and -12pp at 0.45 on the "
-               "screened path; the middle confidence buckets are "
-               "indistinguishable so the gate cannot separate them",
+        feed=CURRENT_FEED,
+        cost_model=CURRENT_COST_MODEL,
+        source="scratchpad/confidence.py: seven entry/exit bands through the "
+               "engine, screen-gated at target 10, measured spreads, with "
+               "entry_size at the signal floor so this is the only filter",
+        figure="0.00 -> 141.4%/-44.7% (Calmar 3.16); 0.25 -> 134.5%/-42.0% "
+               "(3.20); 0.35 -> 130.5%/-40.3% (3.24); 0.45 -> 82.8%; 0.55 -> "
+               "36.1%. KEPT at 0.35 rather than moved to the peak: removing "
+               "the gate buys +11.0pp for +4.4pp of drawdown at flat Calmar, "
+               "which is 1.4x the 8.0pp floor and not enough to move a live "
+               "parameter when the risk-adjusted measure calls them equal. "
+               "The firm result is that raising it is destructive, -47.7pp "
+               "at 0.45. Confidence floors at 0.1500 by construction, so any "
+               "gate at or below that is inert",
     ),
     Justification(
         path="signal.high_volatility_multiplier",
@@ -264,7 +272,6 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
 PENDING_REMEASUREMENT: tuple[str, ...] = (
     "execution.breakout_lookback",
     "execution.decayed_position_multiplier",
-    "execution.thresholds.entry_confidence",
     "execution.time_stop_days",
     "execution.rebalance_threshold",
     "execution.stops.enabled",
