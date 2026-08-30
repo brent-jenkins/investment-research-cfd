@@ -302,3 +302,59 @@ def test_a_gate_that_cannot_be_built_warns_rather_than_silently_passing():
 
     source = inspect.getsource(runner)
     assert "entries are ungated this run" in source
+
+
+# --------------------------------------------------------------------------- #
+# Two gates, one field
+# --------------------------------------------------------------------------- #
+def test_two_gates_compose_rather_than_the_last_one_winning():
+    """``entry_gate`` is a public field and the breakout is not its only user.
+
+    ``run_from_analysis`` used to *assign* the breakout mask, so with
+    ``breakout_lookback`` set -- it is, at 12 -- any caller-supplied gate was
+    silently discarded and its arm measured the baseline under another name.
+    A universe screen expressed as a gate returns an identical number at
+    every target size that way, which reads as "size does not matter" rather
+    than as a bug. Verified live before the fix: 1,412 trades gated and
+    ungated alike; after it, 561 against 1,412.
+    """
+    import pandas as pd
+
+    from cfdinvest.backtest.runner import compose_entry_gates
+
+    index = pd.date_range("2026-01-05 14:00", periods=4, freq="1h", tz="UTC")
+    columns = pd.Index(["AAA", "BBB"])
+    breakout = pd.DataFrame(True, index=index, columns=columns)
+    screen = pd.DataFrame(True, index=index, columns=columns)
+    screen["BBB"] = False                      # never selected by the screen
+    breakout.iloc[0] = False                   # no breakout on the first bar
+
+    combined = compose_entry_gates(screen, breakout)
+    assert not combined["BBB"].any(), (
+        "a name the screen refused was permitted anyway; the masks were not "
+        "combined"
+    )
+    assert not combined["AAA"].iloc[0], "the breakout refusal was lost"
+    assert combined["AAA"].iloc[1:].all(), (
+        "a bar both gates permitted was refused"
+    )
+
+
+def test_composition_leaves_a_lone_gate_untouched():
+    """A run configuring only the breakout must behave exactly as it did, and
+    "no reading" is permitted rather than refused."""
+    import pandas as pd
+
+    from cfdinvest.backtest.runner import compose_entry_gates
+
+    index = pd.date_range("2026-01-05 14:00", periods=3, freq="1h", tz="UTC")
+    mask = pd.DataFrame([[True], [False], [True]], index=index, columns=["AAA"])
+    assert compose_entry_gates(None, mask) is mask
+    assert compose_entry_gates(mask, None) is mask
+
+    # A supplied gate that does not cover every column or bar must not
+    # refuse what it never spoke about.
+    wide = pd.DataFrame(True, index=index, columns=pd.Index(["AAA", "BBB"]))
+    partial = pd.DataFrame({"AAA": [True, True, True]}, index=index)
+    combined = compose_entry_gates(partial, wide)
+    assert combined["BBB"].all(), "an unmentioned name was refused"

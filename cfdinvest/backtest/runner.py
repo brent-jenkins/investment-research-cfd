@@ -128,6 +128,22 @@ def run_from_analysis(
             lookback=lookback,
         )
         if mask is not None:
+            # Combined, never replaced. ``entry_gate`` is a public
+            # ExecutionConfig field and the breakout is only one of the
+            # things that may shut it -- a universe screen is another. This
+            # used to assign, so with breakout_lookback set (it is, at 12)
+            # any caller-supplied gate was silently discarded and its arm
+            # measured the baseline under another name. That is the inert-arm
+            # failure this project has already paid for three times.
+            #
+            # AND is the right composition: both answer "may this be
+            # opened", and a name has to clear every gate rather than the
+            # last one to be written. Missing entries count as permitted,
+            # matching the engine's own default -- "no reading" is not
+            # "refused".
+            mask = compose_entry_gates(
+                getattr(execution_settings, "entry_gate", None), mask
+            )
             execution_settings = dataclasses.replace(
                 execution_settings, entry_gate=mask
             )
@@ -145,6 +161,33 @@ def run_from_analysis(
         signals=signals,
         execution=execution,
     )
+
+
+def compose_entry_gates(existing, mask):
+    """Combine two "may this be opened" masks, refusing unless both permit.
+
+    ``entry_gate`` is a public ExecutionConfig field and the breakout is only
+    one of the things that may shut it -- a universe screen is another, and
+    the two have to hold at once. This used to be an assignment, so with
+    ``breakout_lookback`` set (it is, at 12) a caller-supplied gate was
+    silently discarded and its arm measured the baseline under a different
+    label. A universe sweep built that way returns an identical number at
+    every size, which reads as "size does not matter" rather than as a bug.
+
+    Missing entries count as permitted, matching the engine's own default:
+    "no reading" is not "refused". Returns ``mask`` unchanged when nothing
+    was supplied, so a run that configures only the breakout is untouched.
+    """
+    if existing is None:
+        return mask
+    if mask is None:
+        return existing
+    aligned = (
+        existing.reindex(index=mask.index, columns=mask.columns)
+        .fillna(True)
+        .astype(bool)
+    )
+    return mask.astype(bool) & aligned
 
 
 def attach_reference_prices(analysis, repository, tickers, *, interval=None):
