@@ -342,6 +342,104 @@ uses the shared root, exactly as before it existed. See
 The root `README.md` is out of date — it describes the project as
 "ingestion layer complete".
 
+### What changed on 2026-08-30
+
+Twelve measurements, ten of them negative, and the negatives are the more
+useful half. Two things are settled, most of a day's ideas are dead, and
+two leads are worth real work.
+
+**Eligible must equal held.** The strongest result, and mechanical rather
+than statistical. Damage scales monotonically with the gap between the
+candidate pool and the slots available: pool 10 with no limit returns 86.4%
+on 3,861 trades; pool 16 holding 10 returns 63.4% on 9,394; pool 50 holding
+10 returns -53.7% on 30,118; pool 100 holding 10 returns -78.7% on 44,383.
+The last arm has *zero* universe churn -- with target equal to pool size the
+screen selects everything every day -- and still does seventeen times the
+baseline turnover, because the limit alone rotates ten slots among a hundred
+candidates as relative signal strength shifts. Every name eligible but
+unheld is a candidate to rotate in, and each rotation pays a round trip.
+
+This retires the older note that "all 49 eligible with 8 slots returned
+13.6% against 7.5%". That configuration now destroys the account. The
+screen's `target` is the only capacity control; `max_open_positions` stays
+unset as a safety bound rather than a tuning parameter.
+
+**There is no optimal universe size, only a robust band.** Every year wants
+a different number -- 2023 peaks at 10, 2024 at 4, 2025 at 16, 2026 at 20 --
+and no year's answer is inferable from the ones before it. What 8 to 12 has
+is that it never loses: no losing year at any size in that band, worst year
+between +8% and +15%, while 16 and above lose 23% to 40% in 2024. Choose it
+for robustness, not optimality. The returns are lumpy rather than smooth: at
+ten names the good years made 186.7% and 172.8% while the flat ones made
+15.5% and 9.3%.
+
+**The median position lives four hours.** Measured: median hold 4 session
+bars, mean 6.2, winners 8.8 against losers 3.3, and 80.5% of trips closed
+within one trading day. That single number explains most of the day's
+failures. Every intervention operating at the holding horizon worked --
+entry confidence, the breakout filter. Every intervention slower than the
+hold failed -- regime-conditional sizing, sideways pausing, churn demotion,
+cadence tuning. A label computed over a multi-day window cannot inform a
+decision about the next four hours; by the time it is confident, the
+position it would have governed has closed and two more have been and gone.
+
+**Twenty per cent of trips produce all of the profit.** Trips held 8 bars or
+more earn GBP528k; those held two bars or fewer lose GBP164k; the 672 in
+between earn GBP11k. Win rate climbs monotonically with duration from 30.5%
+to 97.7%. The strategy is a search process paying GBP164k in small losses to
+find GBP528k, which is why stops are monotonically harmful -- they convert
+prospective long winners into short losers -- and why "cut losses quicker"
+has no room to operate: the one-bar losers already exit as fast as possible.
+
+**Confidence predicts and is used at half strength.** On the screened path
+the bottom bucket loses GBP76k at a 41.6% win rate and the top earns GBP411k
+at 67.8%. But the middle three buckets are indistinguishable, which is why
+raising the *gate* fails -- it cuts good trades with bad, +1.6pp at 0.40 and
+-12pp at 0.45. **The gate stays at 0.35.** Sizing does not have that
+problem: it can shrink the bottom bucket without discarding the middle. That
+is the best-supported untested idea in the project.
+
+**What was measured and rejected.** Regime-conditional universe size loses
+to a constant (78.6% against 86.4%) while doing 2,400 more trades, though
+the trend labels do carry information -- the rule beat its own mirror by
+18.2pp. Pausing when sideways costs 3.3pp and *worsens* drawdown; the mirror
+shows trending bars worth only 1.27x sideways ones, and the trade count
+moves by one, so it reshuffles entry timing rather than avoiding a regime.
+Mean reversion loses in every year at every threshold. Minute-resolution
+features cannot inform exits: at 34,818 decision points sampled every five
+minutes, every feature's worst quartile still gains between +0.32% and
++0.49% from that moment, so closing on any of them destroys value.
+
+**The volatility multiplier is justified.** Raising it above 0.5 worsens
+drawdown monotonically (-34.4% to -41.9%) and halves H2 performance.
+Independently, the minute study found realised volatility to be the one
+clean monotone gradient it contains -- quiet positions gain +0.779% from
+here against +0.317% for volatile ones -- which is the same effect the
+multiplier already prices. **Leave it at 0.50.**
+
+**Two leads.** A breakout filter on the entry bar improves return 74.4% to
+76.7% and drawdown -34.4% to -31.2%, monotone across four lookbacks. And a
+crude momentum signal -- written as a *control* arm for the mean-reversion
+test -- returned 85.2% with no losing year, earning 115.6% and 97.9% in the
+two years the trend strategy went flat. It carries 6.8x the spread cost and
+none of the machinery the baseline has, so it is a lead rather than a
+result, but it is the strongest thing to come out of the session.
+
+**On method, because a third of the tests had to be re-run.** Three arms
+were inert and reported clean nulls: a demotion multiplying a score that did
+not yet exist, a sweep whose parameter lived on a different config object,
+and mean-reversion arms sized below the hysteresis floor so nothing could
+open. One test was contaminated -- correlating the early part of a trip
+against a total that contained it, producing rho +0.433 and an apparent
+GBP114k saving that fell to rho +0.04 when corrected. And two mirror arms
+beat their treatments, meaning the hypotheses were worse than their
+inversions.
+
+The common shape is yesterday's: **a check on what went in, where the
+failure was in what came out.** Assert the trade count, not the signal
+count. Correlate against what remains, not against the total. Run the
+mirror, and believe it when it wins.
+
 ### What changed on 2026-08-29
 
 The day the universe started choosing itself, and a run of safeguards that
