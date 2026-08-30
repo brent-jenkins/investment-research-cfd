@@ -120,12 +120,17 @@ def run_from_analysis(
     execution_settings = settings.execution
     lookback = int(getattr(settings.execution, "breakout_lookback", 0) or 0)
     if lookback:
-        from cfdinvest.signals.breakout import entry_mask
+        from cfdinvest.signals.breakout import entry_mask, gating_frame
 
+        # Which regime gates the confirmation is configurable rather than
+        # hardwired to the trend frame -- see ExecutionConfig.breakout_regime.
+        gate_frame, gate_labels = gating_frame(
+            regimes, getattr(settings.execution, "breakout_regime", "trend")
+        )
         mask = entry_mask(
-            analysis_frame.close, signals.direction,
-            getattr(regimes, "trend_regime", None) if regimes is not None else None,
+            analysis_frame.close, signals.direction, gate_frame,
             lookback=lookback,
+            **({"regimes": gate_labels} if gate_labels else {}),
         )
         if mask is not None:
             # Combined, never replaced. ``entry_gate`` is a public

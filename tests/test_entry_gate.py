@@ -358,3 +358,102 @@ def test_composition_leaves_a_lone_gate_untouched():
     partial = pd.DataFrame({"AAA": [True, True, True]}, index=index)
     combined = compose_entry_gates(partial, wide)
     assert combined["BBB"].all(), "an unmentioned name was refused"
+
+
+# --------------------------------------------------------------------------- #
+# Which regime the confirmation is required in
+# --------------------------------------------------------------------------- #
+def _regimes(trend_labels, vol_labels, index, columns=None):
+    """Book-level regime Series, one label per bar.
+
+    Series, not DataFrame. The pipeline produces one label for the whole
+    book per bar and ``entry_mask`` expects that -- an earlier version of
+    these tests passed DataFrames, which the production code never sees, so
+    they exercised a shape that does not occur and missed a real crash.
+    """
+    import pandas as pd
+    import types
+
+    flat = lambda rows: [r[0] if isinstance(r, list) else r for r in rows]
+    return types.SimpleNamespace(
+        trend_regime=pd.Series(flat(trend_labels), index=index),
+        volatility_regime=pd.Series(flat(vol_labels), index=index),
+    )
+
+
+def test_both_is_the_intersection_not_the_union():
+    """The whole reason this needed a derived frame.
+
+    ``entry_mask`` returns True where the filter does NOT apply, so ANDing a
+    trend-gated mask with a volatility-gated one yields "confirm if trending
+    OR loud" -- the union of the conditions, which is the opposite of asking
+    for both. Only the bar that is trending *and* loud may be gated.
+    """
+    import pandas as pd
+
+    from cfdinvest.signals.breakout import gating_frame
+
+    index = pd.date_range("2026-01-05", periods=4, freq="1D", tz="UTC")
+    columns = pd.Index(["AAA"])
+    regimes = _regimes(
+        [["uptrend"], ["uptrend"], ["sideways"], ["sideways"]],
+        [["high"], ["low"], ["high"], ["low"]],
+        index, columns,
+    )
+    frame, labels = gating_frame(regimes, "both")
+    assert labels == ("gate",)
+    got = list(frame)
+    assert got == ["gate", "off", "off", "off"], (
+        f"expected only the trending-and-loud bar to be gated, got {got}"
+    )
+
+
+def test_each_mode_selects_the_frame_it_names():
+    import pandas as pd
+
+    from cfdinvest.signals.breakout import gating_frame
+
+    index = pd.date_range("2026-01-05", periods=2, freq="1D", tz="UTC")
+    columns = pd.Index(["AAA"])
+    regimes = _regimes([["uptrend"], ["sideways"]], [["high"], ["low"]],
+                       index, columns)
+
+    frame, labels = gating_frame(regimes, "trend")
+    assert labels == ("uptrend", "downtrend")
+    assert list(frame) == ["uptrend", "sideways"]
+
+    frame, labels = gating_frame(regimes, "volatility")
+    assert labels == ("high",)
+    assert list(frame) == ["high", "low"]
+
+    # "any" means gate everywhere: no frame, which entry_mask already reads
+    # as "the filter applies unconditionally".
+    frame, labels = gating_frame(regimes, "any")
+    assert frame is None and labels == ()
+
+
+def test_an_unknown_mode_is_refused_rather_than_defaulted():
+    """Silently falling back to the trend regime would make a typo measure
+    the baseline under another name -- the inert-arm failure this project
+    has paid for repeatedly."""
+    import pandas as pd
+    import pytest as _pytest
+
+    from cfdinvest.signals.breakout import gating_frame
+
+    index = pd.date_range("2026-01-05", periods=1, freq="1D", tz="UTC")
+    regimes = _regimes([["uptrend"]], [["high"]], index, pd.Index(["AAA"]))
+    with _pytest.raises(ValueError, match="unknown breakout gating regime"):
+        gating_frame(regimes, "voaltility")
+
+
+def test_a_missing_regime_frame_leaves_the_filter_off():
+    """Absence is not evidence. An unavailable regime must not be read as
+    'not trending' and used to refuse entries."""
+    from cfdinvest.signals.breakout import gating_frame
+    import types
+
+    frame, labels = gating_frame(types.SimpleNamespace(trend_regime=None,
+                                                       volatility_regime=None),
+                                 "both")
+    assert frame is None and labels == ()

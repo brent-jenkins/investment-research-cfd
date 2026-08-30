@@ -145,3 +145,82 @@ def entry_mask(close, direction, trend=None, *, lookback: int = DEFAULT_LOOKBACK
     # refused: "not enough history to test" is not "failed the test".
     allowed = allowed.where(highs.notna() & lows.notna(), True)
     return allowed.fillna(True)
+
+
+#: Which regime decides where a breakout confirmation is required.
+#:
+#: The gate has always been conditioned on the *trend* regime -- confirm a
+#: move where a trend is running -- and that was never measured against the
+#: alternatives, it was simply the frame the runner happened to pass.
+#:
+#: The interesting alternative is volatility, and the reason is a finding
+#: this project already has: magnitude is predictable here and direction is
+#: not. Predicted-loud names move 2.18x as far as predicted-quiet, and 44.6%
+#: of nominated top-quintile movers land there against a 19.6% base rate --
+#: but news, earnings, attention, order-flow proxies and absorption all
+#: predict how far and none predicts which way. A breakout says which way
+#: once a move starts. Requiring one specifically where a large move is
+#: forecast composes the two: magnitude picks the moment, the breakout picks
+#: the side.
+GATING_REGIMES: dict[str, tuple[str, ...]] = {
+    "trend": ("uptrend", "downtrend"),
+    "volatility": ("high",),
+    "both": ("gate",),
+    "any": (),
+}
+
+
+def gating_frame(regimes, mode: str = "trend"):
+    """The label frame and labels the breakout filter should be gated on.
+
+    Returns ``(frame, labels)``. A ``None`` frame means apply the filter
+    everywhere, which is what ``entry_mask`` already does with no regime.
+
+    ``both`` is not the intersection of two masks and cannot be built by
+    combining them. ``entry_mask`` returns True where the filter does *not*
+    apply, so ANDing a trend mask with a volatility mask yields "confirm if
+    trending OR loud" -- the union of the conditions, which is the opposite
+    of what asking for both means. So a derived frame is labelled ``gate``
+    only where a trend is running *and* volatility is high, and the filter
+    is conditioned on that single label.
+
+    Unknown labels leave the filter off for that bar rather than on, which
+    ``entry_mask`` already guarantees: an absent regime is not evidence that
+    a trend is running, and refusing an entry on that basis would be
+    inferring from absence.
+    """
+    if regimes is None:
+        return None, ()
+    key = str(mode or "trend").lower()
+    if key not in GATING_REGIMES:
+        raise ValueError(
+            f"unknown breakout gating regime {mode!r}; "
+            f"expected one of {sorted(GATING_REGIMES)}"
+        )
+    if key == "any":
+        return None, ()
+    if key == "trend":
+        return getattr(regimes, "trend_regime", None), GATING_REGIMES["trend"]
+    if key == "volatility":
+        return (
+            getattr(regimes, "volatility_regime", None),
+            GATING_REGIMES["volatility"],
+        )
+
+    trend = getattr(regimes, "trend_regime", None)
+    volatility = getattr(regimes, "volatility_regime", None)
+    if trend is None or volatility is None:
+        return None, ()
+    import pandas as pd
+
+    # Both are book-level Series -- one label per bar, not per instrument --
+    # which is also what ``entry_mask`` expects. An earlier version of this
+    # reindexed on ``.columns`` and only worked on a DataFrame; the tests
+    # passed because they supplied one, which is a shape this pipeline never
+    # produces. Testing the wrong shape is testing nothing.
+    aligned = volatility.reindex(trend.index)
+    both = (
+        trend.isin(GATING_REGIMES["trend"])
+        & aligned.isin(GATING_REGIMES["volatility"])
+    )
+    return pd.Series("off", index=trend.index).mask(both, "gate"),         GATING_REGIMES["both"]

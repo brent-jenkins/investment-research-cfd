@@ -95,6 +95,40 @@ class ExecutionConfig:
     #: that charges measured spreads says so. An explicit ``spread_panel``
     #: still wins, because a caller that supplied one meant it.
     use_measured_spreads: bool = False
+    #: Which regime decides where a breakout confirmation is required:
+    #: ``"trend"`` (the historical behaviour), ``"volatility"``, ``"both"``
+    #: or ``"any"``. See ``signals.breakout.gating_frame``.
+    #:
+    #: It was conditioned on the trend regime because that is the frame the
+    #: runner happened to pass, not because the alternatives were measured.
+    #: Volatility is the interesting one: magnitude is predictable on this
+    #: book and direction is not, so requiring confirmation where a large
+    #: move is forecast lets the breakout supply the side that the magnitude
+    #: forecast cannot.
+    #:
+    #: **Measured 2026-08-30, and the composition fails.** Screen-gated at
+    #: target 10 on Capital bars with measured spreads:
+    #:
+    #:     gated on        CAGR    maxDD   Calmar   trades
+    #:     any           131.7%   -40.7%     3.24    3,730
+    #:     trend         130.5%   -40.3%     3.24    3,968
+    #:     volatility    118.3%   -42.0%     2.82    4,051
+    #:     both          122.0%   -41.9%     2.91    4,117
+    #:
+    #: Conditioning on volatility costs 12.2pp against trend, beyond the
+    #: 8.0pp floor. The mechanism reads clearly in hindsight: gating *only*
+    #: in loud names means not requiring confirmation in quiet ones, and this
+    #: book's quiet positions are its better ones -- the minute study found
+    #: them gaining +0.779% from here against +0.317% for volatile ones. It
+    #: removes the confirmation exactly where confirmation was paying.
+    #:
+    #: The incidental finding is the more useful one: ``any`` matches
+    #: ``trend`` within the floor, so the regime conditioning is decoration.
+    #: The gate earns its +9.9pp by existing, not by being restricted to
+    #: trending bars, and that had never been compared against not
+    #: conditioning at all. Left at ``trend`` regardless: +1.3pp is no
+    #: evidence to move a live parameter, even toward something simpler.
+    breakout_regime: str = "trend"
     #: Bars on which the operator may change a position, as a boolean Series
     #: over the analysis index. ``None`` means every bar, which is what every
     #: recorded run assumed.
