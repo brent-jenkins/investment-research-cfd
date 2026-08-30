@@ -132,7 +132,12 @@ def _command_screen(args, config) -> int:
 
     traded = list(config.market.tickers or ())
     pool = _pool(config)
-    target = args.target or getattr(config.universe, "target", None) or len(traded)
+    from cfdinvest.universe.traded import resolve_target
+
+    # One owner: resolve_target honours an explicit universe.target, then
+    # computes from the curve. The guard in traded_universe reads the same
+    # function, so the screen and the check cannot disagree about the size.
+    target = args.target or resolve_target(config, len(traded))
     sectors = dict(getattr(config.universe, "sectors", {}) or {})
 
     cap = getattr(config.universe, "max_per_sector", None)

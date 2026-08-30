@@ -602,6 +602,33 @@ hold_across_session_open = false
 # simply not re-entered. See universe/README.md.
 follow_screen = true
 
+# How many instruments to hold -- COMPUTED, not set.
+#
+# `target` is left unset deliberately so the number is derived at each
+# screen from the curve below, read through the noise floor. On the
+# 2026-08-30 measurement that gives twelve: eight, ten and twelve are
+# statistically indistinguishable (the noise floor is 14.6pp, measured by
+# changing only the day of the month a screen runs on), and
+# `size_preference = "largest"` takes the top of that band because the
+# owner's objective is maximum growth.
+#
+# This is also the OPEN POSITION CAP, and deliberately the same number.
+# Every name eligible but unheld is a candidate to rotate into, and each
+# rotation pays a round trip: a pool of 100 with 10 slots destroys the
+# account on 44,383 trades while the screen itself contributes no churn at
+# all. So `max_open_positions` stays unset and this is the only capacity
+# control.
+#
+# Set `target` explicitly only to pin the answer against the measurement.
+size_preference = "largest"
+
+# Measured CAGR by universe size, 2026-08-30: 3.65 years, daily screening,
+# per-bar spreads, run-out semantics. Data, not configuration -- replaced
+# when the sweep is re-run rather than tuned. There is no optimum in it:
+# 2023 wants ten, 2024 four, 2025 sixteen, 2026 twenty. What eight-to-twelve
+# has is no losing year at any size in the band, worst year +8% to +15%,
+# while sixteen and above lose 23% to 40% in 2024.
+
 # Ninety-nine names, from 2026-08-29. Chosen by a rule rather than by
 # hand: every US large cap Capital will deal, ranked by median daily
 # turnover over the trailing year, top hundred.
@@ -784,3 +811,14 @@ GE = "industrial"
 BA = "industrial"
 T = "telecom"
 VZ = "telecom"
+
+[universe.size_curve]
+4 = 52.5
+6 = 61.7
+8 = 74.4
+10 = 86.4
+12 = 83.7
+16 = 62.5
+20 = 40.5
+24 = 26.0
+

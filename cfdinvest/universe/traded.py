@@ -25,7 +25,8 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["TradedUniverse", "traded_universe", "STALE_AFTER_DAYS"]
+__all__ = ["TradedUniverse", "traded_universe", "resolve_target",
+           "STALE_AFTER_DAYS"]
 
 #: A selection older than this is used anyway, and said out loud.
 #:
@@ -114,12 +115,18 @@ def traded_universe(app_config, account: str | None = None) -> TradedUniverse:
     # ranking is a different selection from the one the screen would make
     # asking for eight, because the sector cap and the profile demotion both
     # bind differently at different sizes.
-    if configured and len(names) != len(configured):
+    # The intended size, which is not always the ticker count. The screen's
+    # target defaults to len(market.tickers) but can be set explicitly, and
+    # comparing against the ticker count then refuses every selection the
+    # screen makes -- the guard would fire on the configuration working as
+    # designed rather than on the drift it exists to catch.
+    intended = resolve_target(app_config, len(configured))
+    if intended and len(names) != intended:
         logger.warning(
             "The recorded selection holds %d instruments and %d are "
-            "configured, so it was made under a different configuration; "
+            "intended, so it was made under a different configuration; "
             "trading the configured list until the next screen",
-            len(names), len(configured),
+            len(names), intended,
         )
         return TradedUniverse(
             names=configured,
@@ -151,3 +158,46 @@ def _is_stale(as_of: str) -> bool:
         return (pd.Timestamp.now(tz="UTC") - stamp).days > STALE_AFTER_DAYS
     except Exception:  # noqa: BLE001
         return True
+
+
+def resolve_target(app_config, fallback: int) -> int:
+    """How many to hold, derived rather than asserted.
+
+    Three inputs. The *viability ceiling* -- how many positions this balance
+    can size at all, given the broker's minimum deal sizes; below that a
+    slot cannot be sized by conviction and every decision quantises to
+    nothing. The *measured return curve*. And the *noise floor*, which
+    decides when a difference between two sizes is real: changing only the
+    day of the month a screen runs on moves CAGR by 14.6pp, so anything
+    smaller than that is not a preference, it is sampling error.
+
+    Falls back to the traded count when the curve is absent, and says so.
+    A number computed from no measurement is the kind that looks derived
+    and is not.
+    """
+    from cfdinvest.risk.capacity import operating_size
+
+    # An explicit target wins. The override check used to live at the call
+    # site, so moving the resolver here silently dropped it -- and the guard,
+    # which now shares this function, would have ignored a pinned value.
+    explicit = getattr(app_config.universe, "target", None)
+    if explicit:
+        return int(explicit)
+
+    curve = {int(k): float(v)
+             for k, v in (getattr(app_config.universe, "size_curve", {}) or {}).items()}
+    if not curve:
+        logger.info("No size curve configured; holding the traded count (%d)", fallback)
+        return fallback
+
+    ceiling = None      # the balance ceiling is applied by the dealing path,
+                        # which is the only layer that knows the balance
+    chosen = operating_size(
+        curve, ceiling=ceiling,
+        prefer=str(getattr(app_config.universe, "size_preference", "largest")),
+    )
+    if chosen.slots is None:
+        logger.warning("Size not computed (%s); holding %d", chosen.note, fallback)
+        return fallback
+    logger.info("Universe size computed: %s -- %s", chosen.describe(), chosen.note)
+    return int(chosen.slots)

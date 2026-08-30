@@ -290,3 +290,101 @@ def test_the_universe_is_announced_on_change_not_on_every_call(monkeypatch, capl
     # checked against anything later.
     assert "AAA" in " ".join(r.getMessage() for r in caplog.records
                              if "Traded universe" in r.getMessage())
+
+
+def test_the_guard_compares_against_the_intended_size_not_the_ticker_count(monkeypatch):
+    """M-live: the guard refusing the configuration working as designed.
+
+    ``universe.target`` sets how many the screen selects, and defaults to
+    the ticker count. Setting it explicitly -- ten held against an
+    eight-name fallback list -- made every selection the wrong size by the
+    guard's reckoning, so it would have refused each one and traded the
+    fallback forever while warning about drift that was not happening.
+    """
+    config = Config(tickers=("MU", "AMD"), follow=True)
+    config.universe.target = 3
+
+    _record(monkeypatch, [{"as_of": str(pd.Timestamp.now(tz="UTC")),
+                           "selected": ["A", "B", "C"]}])
+    result = traded_universe(config)
+    assert result.names == ("A", "B", "C"), (
+        "a selection matching the configured target was refused for not "
+        "matching the ticker count"
+    )
+    assert result.source == "screen"
+
+    # And the guard still fires on a genuine mismatch against the target.
+    _record(monkeypatch, [{"as_of": str(pd.Timestamp.now(tz="UTC")),
+                           "selected": ["A", "B", "C", "D", "E"]}])
+    stale = traded_universe(config)
+    assert stale.names == ("MU", "AMD")
+    assert "5 instruments" in stale.source
+
+
+def test_the_traded_count_is_computed_from_the_curve_not_asserted():
+    """The owner asked for a calculated number, not a chosen one.
+
+    Read through the noise floor rather than by taking the curve's maximum:
+    8, 10 and 12 sit within 14.6pp of each other, so the peak at 10 is not
+    distinguishable from its neighbours and picking it would be a coin-toss
+    dressed as an optimisation.
+    """
+    from cfdinvest.universe.traded import resolve_target
+
+    class Uni:
+        follow_screen = True
+        target = None
+        size_preference = "largest"
+        size_curve = {4: 52.5, 6: 61.7, 8: 74.4, 10: 86.4,
+                      12: 83.7, 16: 62.5, 20: 40.5, 24: 26.0}
+
+    config = Config(follow=True)
+    config.universe = Uni()
+
+    assert resolve_target(config, 8) == 12, "returns-first did not take the band's top"
+
+    Uni.size_preference = "smallest"
+    assert resolve_target(config, 8) == 8, "risk-first did not take the band's bottom"
+
+    # An explicit target overrides the computation, and no curve falls back
+    # to the traded count rather than inventing one.
+    Uni.size_curve = {}
+    assert resolve_target(config, 9) == 9
+
+
+def test_reducing_the_traded_count_closes_nothing():
+    """The owner's rule, end to end: ten positions are open and the computed
+    count falls to eight. Nothing may be closed for that reason.
+
+    Two mechanisms carry it and both are checked here, because either one
+    failing alone would liquidate positions on a configuration change.
+    """
+    from cfdinvest.advisor import papertrade_run
+    from cfdinvest.execution.engine import _apply_position_limit
+    import numpy as np
+
+    # 1. A name that leaves the traded list keeps its position; it is only
+    #    barred from being re-entered.
+    _open = papertrade_run._open_universe(Config(tickers=("A", "B"), follow=False))
+    assert _open == frozenset({"A", "B"})
+
+    # 2. The position limit bounds opening and never closing: ten held, a
+    #    limit of eight, and all ten survive.
+    class Cfg:
+        max_open_positions = 8
+
+    target = np.arange(1.0, 11.0)
+    held = np.ones(10, dtype=np.int8)
+    units = np.arange(1.0, 11.0)          # all ten already open
+    kept, directions = _apply_position_limit(target, held, units, Cfg())
+
+    assert int((kept != 0).sum()) == 10, (
+        "reducing the count closed open positions -- the book must be "
+        "allowed to sit above the limit and drain on its own exits"
+    )
+    # And nothing new may open while it is over.
+    newcomer = np.append(units[:10], 0.0)
+    kept2, _ = _apply_position_limit(
+        np.append(target, 99.0), np.append(held, 1).astype(np.int8),
+        newcomer, Cfg())
+    assert kept2[-1] == 0.0, "a newcomer opened into an already-full book"

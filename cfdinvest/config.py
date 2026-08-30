@@ -402,10 +402,26 @@ class UniverseConfig:
     #: rather than being closed -- see ``schedule.app._with_held``.
     follow_screen: bool = False
 
-    #: How many instruments a screen selects. Defaults to however many are
-    #: traded, so the screen answers "which twenty" rather than inventing a
-    #: number of its own.
+    #: How many instruments a screen selects. **An override.** Left unset,
+    #: the number is *computed* from ``size_curve`` and the account balance
+    #: -- see ``risk.capacity.operating_size``. Set it only to pin the
+    #: answer deliberately.
     target: int | None = None
+
+    #: Measured CAGR against universe size, from which the traded count is
+    #: derived. Data rather than configuration: it is the output of a sweep
+    #: and is replaced when the sweep is re-run, not tuned by hand.
+    #:
+    #: Measured 2026-08-30 over 3.65 years, daily screening, per-bar
+    #: spreads, run-out semantics. There is no optimum in it -- every year
+    #: wants a different size -- so it is read through the noise floor
+    #: rather than by taking its maximum.
+    size_curve: dict[int, float] = field(default_factory=dict)
+
+    #: Which end of the statistically-indistinguishable band to take.
+    #: ``largest`` is the owner's stated objective (maximum growth);
+    #: ``smallest`` takes the least risk for the same measured return.
+    size_preference: str = "largest"
 
     #: Most instruments from any one sector. ``None`` leaves the screen's own
     #: default in force -- one owner, and this is an override rather than a
