@@ -5,24 +5,39 @@ range means the trend is extending. In a sideways market the same event is
 the textbook false breakout, and reverts. So the requirement is added where
 there is something to confirm and left off elsewhere.
 
-That conditioning is measured rather than assumed, and the direction was a
-surprise -- the first hypothesis was the opposite, that the filter would
-help in chop by refusing entries into noise. It does not; applied only in
-sideways markets it returns 73.0% against 74.4% for no filter at all.
-Applied only in trending markets it returns 78.1%.
+**The figures that justified this DO NOT describe this code.** They were
+measured in a harness that gated only the first bar of a signal run, because
+its "already open" test looked at the previous bar's *intended size* rather
+than at whether a position existed. This module, applied through
+``execution.engine._apply_entry_gate``, gates every entry into a flat
+position -- and with a 0.29-day time stop, positions close constantly while
+signals persist, so it demands a fresh breakout for every re-entry. Much
+stricter, and materially different.
 
-Measured across four lookbacks so the conditioning is not fitted to one:
+Measured, same parameters, 3.65 years:
 
-    lookback   always   trending only
-     6 bars     75.9        77.0
-    12 bars     76.5        78.0
-    24 bars     76.7        78.1
-    48 bars     76.7        77.9
+    harness rule (gate the first bar of a run)   78.1%   2,398 trades
+    this rule    (gate every entry)              63.0%   1,866 trades
 
-Trending-only wins at every lookback by 1.1 to 1.5 points, against a
-baseline of 74.4%, and improves drawdown from -34.4% to -31.1% at the same
-time. Both directions of the comparison were run because a filter that
-helps everywhere would make the conditioning decoration.
+So the standalone case for this filter is **withdrawn**. What the harness
+validated -- trending-only beating always-on at every lookback by 1.1 to 1.5
+points -- was a test of the weaker rule, and does not transfer.
+
+What survives is narrower and is about risk rather than return. Combined
+with a confidence-based size cut, this gate reduces drawdown monotonically
+in lookback (-24.1%, -29.0%, -28.8%, -31.9% at 6, 12, 24 and 48 bars against
+-34.4% for no filter) on consistently fewer trades. Its effect on *return*
+across those same arms is scattered -- 93.1, 82.4, 84.9, 76.5 -- and is not
+distinguishable from noise.
+
+**Nothing here is wired to production.** The mechanism exists and is tested;
+the case for switching it on is unfinished, and the drawdown finding above
+is entangled with a normalisation flaw in the size cut it was measured
+alongside. See CLAUDE.md, 2026-08-30.
+
+The conditioning on trend regime is kept because it was measured in both
+directions and the sideways-only arm was clearly worse -- that comparison
+was internally consistent whichever rule the harness implemented.
 
 **This gates opening only.** A position already held is never closed for
 failing the test -- that is the engine's job to enforce, and
@@ -40,9 +55,14 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["entry_mask", "DEFAULT_LOOKBACK", "DEFAULT_REGIMES"]
 
-#: Session bars of range a new position must clear. The result is flat from
-#: 12 to 48 (78.0 / 78.1 / 77.9), so this is the middle of a plateau rather
-#: than a peak -- there is no cliff to fall off if the market changes.
+#: Session bars of range a new position must clear.
+#:
+#: **Not currently justified by a measurement of this code.** The plateau
+#: that chose 24 was measured on the harness rule described above, which
+#: this module does not implement. Under the rule it does implement, return
+#: across lookbacks is scattered and drawdown improves monotonically as the
+#: lookback *shortens* -- so if this is ever switched on, the number should
+#: be chosen from a sweep of the real thing rather than inherited from here.
 DEFAULT_LOOKBACK = 24
 
 #: Where the requirement applies. Everything else is left unfiltered.

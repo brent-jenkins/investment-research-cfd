@@ -226,6 +226,35 @@ treated as safe.
 
 Tests are the deliverable, not a formality.
 
+**A figure from an invalidated test is retracted everywhere, not just in the
+next sentence.** When a measurement turns out to have been wrong -- the arm
+was inert, the harness measured a different rule than the code implements,
+the correlation was against a quantity containing its own predictor -- the
+number does not become "approximate" or "indicative". It becomes *unknown*,
+and every place it was written down has to be corrected or deleted.
+
+This is not pedantry. A retracted number that survives in a docstring is
+worse than no number, because the next reader has no way to tell it apart
+from a measured one, and will build on it. Several figures in this file have
+already had to be superseded in place; the ones that did the damage were the
+ones quoted confidently somewhere else while the correction lived only in a
+conversation.
+
+The rule, in order:
+
+1. **Say what the test actually measured**, not what it was named for.
+   "Trending-only breakout returns 78.1%" was true of a harness that gated
+   the first bar of a signal run, and false of the engine that gates every
+   entry -- which returns 63.0%. Same name, different rule, 15 points apart.
+2. **Correct the source, not just the summary.** Docstrings, config
+   comments, commit messages that get read as documentation, the state
+   section here, and any README that quoted it.
+3. **Leave the retraction visible.** Strike the figure and say why it was
+   wrong, rather than silently deleting it -- otherwise the same test gets
+   run again and the same number gets believed.
+4. **Prefer no figure to a stale one.** "Not currently measured" is a
+   statement somebody can act on. A wrong number is not.
+
 - **Mutation-check every suite.** Reintroduce each property as a bug and
   confirm the test fails. Several real gaps were found this way — tautological
   assertions, unreachable guards, tests that passed either way. Each layer's
@@ -393,7 +422,16 @@ has no room to operate: the one-bar losers already exit as fast as possible.
 
 **Confidence predicts and is used at half strength.** On the screened path
 the bottom bucket loses GBP76k at a 41.6% win rate and the top earns GBP411k
-at 67.8%. But the middle three buckets are indistinguishable, which is why
+at 67.8%. **RETRACTED IN PART, 2026-08-30 (evening).** Those buckets were
+built from the confidence on the *fill* bar, not the bar the decision was
+made on -- ``execution_lag`` is 1, so the engine gates on the previous bar's
+value and the analysis read one bar later. That is why the bottom bucket
+spans 0.00-0.37 when the entry gate is 0.35, which should have been
+impossible and was noticed only when the owner asked. The *ordering* is not
+in doubt -- a mirror arm that cut the top bucket instead returned 51.7%
+against 85.1% for cutting the bottom -- but the bucket boundaries, the
+per-bucket totals and the 0.37 threshold derived from them are all one bar
+out and must be re-measured before being quoted. But the middle three buckets are indistinguishable, which is why
 raising the *gate* fails -- it cuts good trades with bad, +1.6pp at 0.40 and
 -12pp at 0.45. **The gate stays at 0.35.** Sizing does not have that
 problem: it can shrink the bottom bucket without discarding the middle. That
@@ -417,13 +455,46 @@ clean monotone gradient it contains -- quiet positions gain +0.779% from
 here against +0.317% for volatile ones -- which is the same effect the
 multiplier already prices. **Leave it at 0.50.**
 
-**Two leads.** A breakout filter on the entry bar improves return 74.4% to
-76.7% and drawdown -34.4% to -31.2%, monotone across four lookbacks. And a
+**Two leads.** ~~A breakout filter on the entry bar improves return 74.4% to
+76.7% and drawdown -34.4% to -31.2%, monotone across four lookbacks.~~
+**RETRACTED 2026-08-30 (evening): that was measured on a harness rule the
+implementation does not match.** The harness gated the first bar of a signal
+run; the engine gates every entry, and returns 63.0% rather than 78.1% on
+the same parameters. See ``signals/breakout.py``. What survives is a
+drawdown reduction in combination with a size cut, monotone in lookback, and
+that finding is itself entangled with the normalisation flaw below. And a
 crude momentum signal -- written as a *control* arm for the mean-reversion
 test -- returned 85.2% with no losing year, earning 115.6% and 97.9% in the
 two years the trend strategy went flat. It carries 6.8x the spread cost and
 none of the machinery the baseline has, so it is a lead rather than a
 result, but it is the strongest thing to come out of the session.
+
+**A normalisation flaw, found at the end of the day and not yet resolved.**
+The confidence size-cut arms were normalised so that mean size over bars
+with a *non-zero signal* matched the baseline. But 18% of those bars sit
+below the 0.35 entry gate and can never open a position, so normalising
+across them scales the bars that *can* open by about 1.12 -- the arm runs
+more real exposure than the baseline it is compared against. Return and
+drawdown both rising (85.1% at -35.9% against 74.4% at -34.4%) is what that
+would look like. **RESOLVED the same evening, and the flaw was the whole effect.** Run
+without the normalisation, so exposure genuinely falls:
+
+    baseline                    74.4%   -34.4%   2,500 trades
+    cut <0.37, normalised       85.1%   -35.9%   2,881 trades
+    cut <0.37, NOT normalised   74.4%   -28.2%   2,420 trades
+
+The un-normalised cut returns *exactly* the baseline. Every point of the
+apparent +10.7pp was the 1.12 exposure inflation. **The 85.1% figure is
+withdrawn and must not be quoted.**
+
+What the cut really does is worth having and is a different claim: the same
+return for 6.2 points less drawdown and 80 fewer trades, a ratio of 2.64
+against 2.16. A risk improvement, not a return improvement.
+
+It was found because the owner asked why trades existed below a 0.35 entry
+gate. Nothing in the test would have surfaced it -- the arm reproduced to
+the decimal across three separate harnesses, which is exactly what a
+correctly-implemented wrong measurement looks like.
 
 **On method, because a third of the tests had to be re-run.** Three arms
 were inert and reported clean nulls: a demotion multiplying a score that did
