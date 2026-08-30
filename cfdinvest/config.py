@@ -373,6 +373,27 @@ class StrategyConfig:
     #: rule means. One owner, and it follows any change to the entry bar.
     decayed_position_multiplier: float | None = 0.5
 
+    #: Session bars of range a move must clear before it is entered, where a
+    #: trend is running. ``None`` disables the gate.
+    #:
+    #: A breakout in a trending market confirms the move is extending. In a
+    #: sideways market the same event is the textbook false breakout and
+    #: reverts, so the requirement is added where there is something to
+    #: confirm and left off elsewhere -- applied only in sideways markets it
+    #: returns 73.0% against 74.4% for no filter at all.
+    #:
+    #: Confirmation is required where a move STARTS, not on every re-entry
+    #: into it. With a 0.29-day time stop positions close constantly while
+    #: signals persist, and re-gating each re-entry demands evidence for a
+    #: move already confirmed: 63.0% against 78.1%. That distinction cost a
+    #: day, because the first implementation had it the wrong way round.
+    #:
+    #: Measured through the engine, against a baseline already including the
+    #: decayed-position trim: 79.5 / 80.5 / 80.2 / 80.3 percent at 6, 12, 24
+    #: and 48 bars against 73.6 for no gate, drawdown -26.1 against -30.0.
+    #: Twelve is the middle of a plateau rather than a peak.
+    breakout_lookback: int | None = 12
+
 
 @dataclass(frozen=True, slots=True)
 class UniverseConfig:

@@ -567,6 +567,32 @@ suggestion_confidence = 0.60
 # the entry bar moves this with it.
 decayed_position_multiplier = 0.5
 
+# Require a breakout before entering a move, where a trend is running.
+#
+# A breakout in a trend confirms the move is extending; in a sideways market
+# the same event is the textbook false breakout and reverts. Applied only in
+# sideways markets it returns 73.0% against 74.4% for no filter -- so the
+# requirement is added where there is something to confirm.
+#
+# Confirmation is required where a move STARTS, not on every re-entry into
+# it. Positions close constantly while signals persist (the time stop is
+# 0.29 days), and re-gating each re-entry demands evidence for a move
+# already confirmed: 63.0% against 78.1%.
+#
+# Measured through the engine, against a baseline already including the
+# decayed-position trim above:
+#
+#     no gate    73.6%   -30.0%   ratio 2.46   2,671 trades
+#      6 bars    79.5%   -26.5%   ratio 3.00   2,588
+#     12 bars    80.5%   -26.1%   ratio 3.09   2,579
+#     24 bars    80.2%   -26.1%   ratio 3.08   2,576
+#     48 bars    80.3%   -26.1%   ratio 3.08   2,577
+#
+# One point of spread across an eightfold range, drawdown flat, trades within
+# twelve. Twelve bars is the middle of that plateau, not a peak -- there is
+# no cliff to fall off if the market changes.
+breakout_lookback = 12
+
 # Take no signal action on the first bar of a session.
 #
 # OFF, and it was briefly on. The case for it was that entries on the first

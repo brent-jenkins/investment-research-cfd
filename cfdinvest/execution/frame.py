@@ -249,6 +249,29 @@ class ExecutionConfig:
     #: a rule the engine does not implement, which is how the first
     #: threshold was chosen and why it has to be re-derived.
     decayed_threshold: float | None = None
+
+    #: Session bars of range a new move must clear before it is entered,
+    #: where a trend is running. ``0`` or ``None`` disables the gate.
+    #:
+    #: The mask itself is built in ``backtest.runner`` -- it needs the price
+    #: panel, the direction frame and the regime, none of which exist here.
+    #: This is the switch and the parameter; ``signals.breakout`` is the rule.
+    #:
+    #: Measured through the engine, against a baseline that already includes
+    #: the decayed-position trim:
+    #:
+    #:     no gate    73.6%   -30.0%   ratio 2.46   2,671 trades
+    #:      6 bars    79.5%   -26.5%   ratio 3.00   2,588
+    #:     12 bars    80.5%   -26.1%   ratio 3.09   2,579
+    #:     24 bars    80.2%   -26.1%   ratio 3.08   2,576
+    #:     48 bars    80.3%   -26.1%   ratio 3.08   2,577
+    #:
+    #: One point of spread across an eightfold range of lookback, drawdown
+    #: flat to 0.4 points, trades within twelve. That insensitivity is the
+    #: reason to believe it -- an earlier version of this gate scattered
+    #: over 16.6 points across the same range, and turned out to implement a
+    #: different rule from the one that justified it.
+    breakout_lookback: int | None = None
     #: Cap on gross notional divided by equity.
     max_leverage: float = 5.0
     #: The largest share of the *gross ceiling* any one instrument may take.

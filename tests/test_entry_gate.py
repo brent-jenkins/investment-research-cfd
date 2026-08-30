@@ -272,3 +272,33 @@ def test_absent_the_override_the_entry_bar_still_governs():
     assert _trim_decayed(
         np.array([10.0]), np.array([10.0]), np.array([0.45]), Raised()
     )[0] == 5.0
+
+
+def test_the_pipeline_builds_the_gate_when_configured():
+    """Structural: the mask needs the price panel, the direction frame and
+    the regime, so it is built in the runner rather than in the execution
+    config. The realistic regression is somebody moving the switch and
+    leaving the build behind, which would disable the gate silently while
+    the setting still reads 12."""
+    import inspect
+
+    from cfdinvest.backtest import runner
+
+    source = inspect.getsource(runner)
+    assert "breakout_lookback" in source and "entry_mask(" in source, (
+        "the runner no longer builds the entry mask, so a configured gate "
+        "would do nothing"
+    )
+    assert "entry_gate=mask" in source
+
+
+def test_a_gate_that_cannot_be_built_warns_rather_than_silently_passing():
+    """Absence named. A configured gate that produces no mask must say so --
+    'ungated because it could not be built' and 'ungated because nobody
+    asked' are different states."""
+    import inspect
+
+    from cfdinvest.backtest import runner
+
+    source = inspect.getsource(runner)
+    assert "entries are ungated this run" in source

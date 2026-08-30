@@ -626,6 +626,7 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
         decayed_position_multiplier=getattr(
             strategy, "decayed_position_multiplier", None
         ),
+        breakout_lookback=getattr(strategy, "breakout_lookback", None),
         thresholds=HysteresisThresholds(
             entry_confidence=strategy.entry_confidence,
             exit_confidence=strategy.exit_confidence,
