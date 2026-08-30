@@ -373,6 +373,49 @@ rebalance_threshold = 3.0     # was 0.25; drift rebalancing off entirely
 entry_confidence = 0.35
 exit_confidence = 0.20
 
+# How large a signal must be before the book acts on it, and the level an
+# open position is closed below.
+#
+# The fourth limit found living only in a dataclass default, after
+# max_leverage, slippage_bps and entry_confidence: _execution_config built
+# HysteresisThresholds passing only the confidence pair, so no configuration
+# file named these and no sweep could reach them.
+#
+# It exists to stop a position being opened for a rounding error and closed
+# again next bar. It had become the binding SELECTION rule instead: of
+# 51,232 bar x ticker cells, 29,079 carried a view, 23,841 cleared the
+# confidence gate, and only 8,269 cleared this -- 65% of what confidence had
+# already approved, discarded. The book sat flat on 50.6% of bars holding
+# 1.45 names while the screen was offering ten.
+#
+# Measured through the engine on Capital bars with measured spreads,
+# screen-gated at target 10. Entry and exit move together because the engine
+# refuses an inverted band:
+#
+#     entry/exit    CAGR    maxDD   Calmar   trades   flat bars
+#     0.02/0.01   130.5%   -40.3%     3.24    3,968        6.5%   <- set
+#     0.04/0.02   126.2%   -40.8%     3.09    2,770       12.1%
+#     0.06/0.03    89.5%   -50.7%     1.77    2,063       28.3%
+#     0.08/0.04    89.3%   -47.3%     1.89    1,639       42.5%
+#     0.10/0.05    82.3%   -41.3%     1.99    1,283       52.5%   <- was
+#     0.15/0.075   36.6%   -45.1%     0.81      727       71.5%
+#     0.20/0.10    24.4%   -37.7%     0.65      442       81.3%
+#
+# Not leverage in disguise. Removing the floor lifts mean gross leverage
+# from 0.695 to 1.123, but levering the old book by that same 1.62x returns
+# 101.8% at -43.4% -- under half the gain, and worse drawdown. The balance
+# comes from holding 4.12 names rather than 1.45. Drawdown is flat at -40.3%
+# against -41.3% and Calmar rises 1.99 to 3.24.
+#
+# 0.02 is signal.min_size, so this removes the floor rather than lowering
+# it: every non-zero signal clears it. Because exit must not exceed entry,
+# that also retires the size-based exit -- positions leave on a direction
+# flip or the time stop. Loosening the exit alone is worth +11.5pp of the
+# +48.2pp, so the entry side carries the majority, but they are not
+# separable here and the figure is the pair's.
+entry_size = 0.02
+exit_size = 0.01
+
 # Execution friction beyond the spread, in basis points of price. The spread
 # is charged separately; this is what the quote moves between deciding and
 # filling.

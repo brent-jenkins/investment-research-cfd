@@ -255,6 +255,54 @@ class StrategyConfig:
     #: named somewhere a person can see it.
     entry_confidence: float = 0.35
     exit_confidence: float = 0.20
+
+    #: The signal size required to open, and the level an open position is
+    #: closed below. **Fourth limit found living only in a dataclass
+    #: default**, after max_leverage, slippage_bps and entry_confidence --
+    #: ``_execution_config`` built HysteresisThresholds passing only the
+    #: confidence pair, so nothing in any configuration file named these and
+    #: no sweep could reach them.
+    #:
+    #: It was put there as a hysteresis floor, to stop a position being
+    #: opened for a rounding error and closed again next bar. It had become
+    #: the binding *selection* rule: of 51,232 bar x ticker cells, 29,079
+    #: carried a view, 23,841 cleared the confidence gate and only 8,269
+    #: cleared this. It discarded 65% of what confidence had already
+    #: approved, and the book sat flat on 50.6% of bars holding 1.45 names
+    #: against a screen offering ten.
+    #:
+    #: Measured 2026-08-30 through the engine on Capital bars with measured
+    #: spreads, screen-gated at target 10, entry and exit scaled together
+    #: because the band must satisfy exit <= entry:
+    #:
+    #:     entry/exit    CAGR    maxDD   Calmar   trades   flat bars
+    #:     0.02/0.01   130.5%   -40.3%     3.24    3,968        6.5%
+    #:     0.04/0.02   126.2%   -40.8%     3.09    2,770       12.1%
+    #:     0.06/0.03    89.5%   -50.7%     1.77    2,063       28.3%
+    #:     0.08/0.04    89.3%   -47.3%     1.89    1,639       42.5%
+    #:     0.10/0.05    82.3%   -41.3%     1.99    1,283       52.5%
+    #:     0.15/0.075   36.6%   -45.1%     0.81      727       71.5%
+    #:     0.20/0.10    24.4%   -37.7%     0.65      442       81.3%
+    #:
+    #: **Not leverage in disguise, and the control is the reason that can be
+    #: said.** Removing the floor raises mean gross leverage 0.695 to 1.123,
+    #: but levering the 0.10 book by the same 1.62x returns 101.8% at -43.4%
+    #: -- it reproduces under half the gain and worsens drawdown. The rest
+    #: comes from holding 4.12 names instead of 1.45, which is
+    #: diversification rather than exposure. This project once credited such
+    #: a gain to selection when it was a mixture nobody had separated, so
+    #: the control ran before the finding was believed.
+    #:
+    #: 0.02 is the floor of ``signal.min_size``, so this is "remove the
+    #: floor" rather than "lower it" -- 100% of non-zero signals clear it.
+    #: And because exit must not exceed entry, an entry at the signal floor
+    #: necessarily retires the size-based exit as well: positions then leave
+    #: on a direction flip or the time stop. Loosening the exit alone is
+    #: worth +11.5pp of the +48.2pp, so the entry side carries the majority,
+    #: but the two are not separable at the bottom of the range and the
+    #: figure should be read as the pair.
+    entry_size: float = 0.02
+    exit_size: float = 0.01
     #: Execution friction beyond the spread, in basis points of price.
     #:
     #: The spread is charged separately and properly; this is what the

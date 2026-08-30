@@ -212,15 +212,33 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
     ),
     Justification(
         path="execution.thresholds.entry_size",
-        value=0.1,
-        feed="unmeasured",
-        cost_model="unmeasured",
-        source="NONE -- no measurement of this against return has been found",
-        figure="discards 65% of signals that already cleared the confidence "
-               "gate: 23,841 cells pass confidence, 8,269 clear this floor. "
-               "It is a hysteresis floor meant to suppress trivial "
-               "rebalances, and appears never to have been swept as a "
-               "selection parameter, which is what it has become",
+        value=0.02,
+        feed=CURRENT_FEED,
+        cost_model=CURRENT_COST_MODEL,
+        source="scratchpad/entrysize.py: seven entry/exit bands through the "
+               "engine, screen-gated at target 10, measured spreads, plus a "
+               "uniform-leverage control and an entry/exit decomposition",
+        figure="0.02/0.01 -> 130.5% at -40.3%, Calmar 3.24, flat 6.5% of "
+               "bars; 0.10/0.05 -> 82.3% at -41.3%, Calmar 1.99, flat 52.5%. "
+               "+48.2pp against an 8.0pp floor. CONTROL: levering the old "
+               "book by the same 1.62x returns 101.8% at -43.4%, so under "
+               "half the gain is exposure and the rest is holding 4.12 names "
+               "instead of 1.45. 0.02 is signal.min_size, so this removes "
+               "the floor rather than lowering it, and because exit must not "
+               "exceed entry it retires the size-based exit too -- exit "
+               "alone is worth +11.5pp, the pair is not separable here",
+    ),
+    Justification(
+        path="execution.thresholds.exit_size",
+        value=0.01,
+        feed=CURRENT_FEED,
+        cost_model=CURRENT_COST_MODEL,
+        source="scratchpad/entrysize.py, same sweep -- the band moves as a "
+               "pair because the engine refuses exit_size > entry_size",
+        figure="loosening the exit alone (0.10/0.01) returns 93.8% at -43.1% "
+               "against 82.3% at -41.3%, so +11.5pp of the pair's +48.2pp. "
+               "At or below signal.min_size the size-based exit cannot fire, "
+               "so positions leave on a direction flip or the time stop",
     ),
     Justification(
         path="execution.rebalance_threshold",
@@ -244,10 +262,6 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
 #: current feed and cost model. The test fails if a path listed here is no
 #: longer stale, so this cannot rot with entries that have been fixed.
 PENDING_REMEASUREMENT: tuple[str, ...] = (
-    # Highest value first: this one is not stale, it is unjustified. It
-    # discards two thirds of qualified signals and is the reason the book
-    # sits flat on 50.6% of bars.
-    "execution.thresholds.entry_size",
     "execution.breakout_lookback",
     "execution.decayed_position_multiplier",
     "execution.thresholds.entry_confidence",

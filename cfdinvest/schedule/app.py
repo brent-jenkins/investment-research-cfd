@@ -634,6 +634,12 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
         breakout_lookback=getattr(strategy, "breakout_lookback", None),
         use_measured_spreads=getattr(strategy, "use_measured_spreads", False),
         thresholds=HysteresisThresholds(
+            # The size pair is passed explicitly for the same reason the
+            # confidence pair is: left to the dataclass default it was the
+            # strategy's real entry bar with no owner, and no sweep could
+            # reach it.
+            entry_size=getattr(strategy, "entry_size", 0.10),
+            exit_size=getattr(strategy, "exit_size", 0.05),
             entry_confidence=strategy.entry_confidence,
             exit_confidence=strategy.exit_confidence,
             exit_on_flat=strategy.exit_on_flat,
