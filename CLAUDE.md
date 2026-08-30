@@ -476,25 +476,43 @@ below the 0.35 entry gate and can never open a position, so normalising
 across them scales the bars that *can* open by about 1.12 -- the arm runs
 more real exposure than the baseline it is compared against. Return and
 drawdown both rising (85.1% at -35.9% against 74.4% at -34.4%) is what that
-would look like. **RESOLVED the same evening, and the flaw was the whole effect.** Run
-without the normalisation, so exposure genuinely falls:
+would look like. **RESOLVED, and then the resolution was itself wrong.** Four arms, all
+measured, in the order they were run:
 
     baseline                    74.4%   -34.4%   2,500 trades
     cut <0.37, normalised       85.1%   -35.9%   2,881 trades
     cut <0.37, NOT normalised   74.4%   -28.2%   2,420 trades
+    CONTROL: 1.12x, no cut      71.9%   -44.0%   3,050 trades
 
-The un-normalised cut returns *exactly* the baseline. Every point of the
-apparent +10.7pp was the 1.12 exposure inflation. **The 85.1% figure is
-withdrawn and must not be quoted.**
+The un-normalised arm returning exactly the baseline looked like proof that
+the whole +10.7pp was exposure, and that was written here as a retraction
+before the control had run. The control refutes it: uniform 1.12x leverage
+returns 71.9%, *worse* than baseline. Exposure alone does not buy the gain.
 
-What the cut really does is worth having and is a different claim: the same
-return for 6.2 points less drawdown and 80 fewer trades, a ratio of 2.64
-against 2.16. A risk improvement, not a return improvement.
+What the arms actually separate:
 
-It was found because the owner asked why trades existed below a 0.35 entry
-gate. Nothing in the test would have surfaced it -- the arm reproduced to
-the decimal across three separate harnesses, which is exactly what a
-correctly-implemented wrong measurement looks like.
+* **Trimming low-confidence bars**: return unchanged, drawdown -6.2pp. A
+  clean risk improvement, and it costs nothing.
+* **Amplifying the rest** -- which the normalisation did as a side effect --
+  +10.7pp of return for +7.7pp of drawdown.
+* **Amplifying everything uniformly**: -2.5pp return, +9.6pp drawdown.
+  Strictly worse on both.
+
+So the effect is *differential*: it comes from putting more into
+high-confidence signals specifically, not from more exposure. Confidence
+ordering does convert into money, which was the original claim.
+
+Two things are worth keeping about how this went. The 85.1% was correct and
+the reasoning behind it was not -- it was credited to selection when the
+mechanism was a mixture, and a mixture nobody had separated. And the
+retraction was written from an argument rather than from the control that
+was already queued to test it, which is the same haste in the opposite
+direction. **Neither a finding nor its retraction should be recorded ahead
+of the measurement that settles it.**
+
+The bucket boundary of 0.37 remains untrustworthy -- it came from an
+analysis measured on the fill bar rather than the decision bar -- and is
+being re-derived by sweeping thresholds directly.
 
 **On method, because a third of the tests had to be re-run.** Three arms
 were inert and reported clean nulls: a demotion multiplying a score that did
