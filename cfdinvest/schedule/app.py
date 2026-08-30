@@ -926,6 +926,154 @@ def _advisor_inputs(app_config, account):
     return book, prices, latest, as_of
 
 
+def _engine_rows(app_config, account=None) -> list[dict]:
+    """What the *engine* says to hold, in the shape the bridge decides from.
+
+    Replaces reading the shadow book, and the reason is not tidiness. The
+    book implements the time stop, the cooldown, the blackout and the
+    confidence gate -- and none of the breakout gate, the size hysteresis,
+    the decayed trim, the leverage cap or the concentration cap. The account
+    mirrored the book, so it has been trading a rule set no backtest
+    describes. Measured through the engine on 2026-08-30: the book's rules
+    return 163.7% at -52.8% where the engine's return 130.5% at -40.3%.
+
+    Read, never recomputed. ``run-intraday`` already runs the pipeline and
+    persists it; running it again here would be a second computation to keep
+    in step, which is the whole family of bug this change exists to close.
+
+    The translation is exact. The engine holds ``units`` of an instrument
+    against its own equity; the bridge sizes at ``share x
+    exposure_per_unit_size x balance``. So for the account to hold the same
+    *fraction* of its balance that the engine holds of its equity:
+
+        share = units x price / (equity x exposure_per_unit_size)
+
+    Every cap, gate and trim is already inside ``units``, so none of them
+    has to be re-expressed here -- which is the point. A rule this function
+    knows about is a rule that can drift.
+
+    Returns rows carrying ``units`` and ``equity`` with ``size`` still
+    absent, because the caller needs the instrument list *before* it can
+    price anything -- what may be closed is whatever the broker says is
+    open, which is only known after the rows are read. ``_size_engine_rows``
+    fills the share in once marks exist. Splitting it that way beats reading
+    the run twice or pricing a list nobody has assembled yet.
+
+    Never raises. No readable run means the account opens nothing this pass,
+    which is the safe direction.
+    """
+    import pandas as pd
+
+    from cfdinvest.persist import readers
+
+    exposure = float(
+        getattr(getattr(app_config, "strategy", None),
+                "exposure_per_unit_size", 4.0) or 4.0
+    )
+    try:
+        frames = readers.load_execution_frame(None, app_config, account)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("No readable run to mirror (%s); holding nothing", error)
+        return []
+
+    positions = frames.get("positions")
+    equity = frames.get("equity")
+    if positions is None or getattr(positions, "empty", True):
+        logger.warning("The latest run recorded no positions; holding nothing")
+        return []
+    if equity is None or getattr(equity, "empty", True):
+        logger.warning("The latest run recorded no equity; cannot size, holding nothing")
+        return []
+
+    last = positions.iloc[-1]
+    equity_value = float(
+        equity["equity"].iloc[-1] if "equity" in getattr(equity, "columns", [])
+        else equity.iloc[-1]
+    )
+    if not equity_value or equity_value <= 0:
+        logger.warning("The run's final equity is %r; cannot size", equity_value)
+        return []
+
+    confidence = _engine_confidence(app_config, account)
+
+    rows = []
+    for ticker, units in last.items():
+        name = str(ticker)
+        try:
+            held = float(units)
+        except (TypeError, ValueError):
+            continue
+        if not held or "=X" in name:      # reference pairs are not traded
+            continue
+        rows.append({
+            "ticker": name,
+            "direction": "long" if held > 0 else "short",
+            "size": None,                 # filled by _size_engine_rows
+            "confidence": confidence.get(name),
+            "units": abs(held),
+            "equity": equity_value,
+            "exposure_per_unit_size": exposure,
+        })
+    logger.info(
+        "Engine says hold %d instrument(s) on equity %.2f: %s",
+        len(rows), equity_value,
+        ", ".join(f"{r['ticker']} {r['direction']}" for r in rows) or "nothing",
+    )
+    return rows
+
+
+def _size_engine_rows(rows, prices) -> list[dict]:
+    """Fill in each row's share of the balance, once marks are known.
+
+        share = units x price / (equity x exposure_per_unit_size)
+
+    An instrument that cannot be priced keeps ``size`` absent rather than
+    being given a guess: the bridge already refuses an unsized row by name,
+    and "not priced" and "priced at nothing" are different statements.
+    """
+    marks = {str(k): v for k, v in (prices or {}).items()}
+    for row in rows or ():
+        price = marks.get(str(row.get("ticker")))
+        equity = float(row.get("equity") or 0.0)
+        exposure = float(row.get("exposure_per_unit_size") or 0.0)
+        if not price or equity <= 0 or exposure <= 0:
+            logger.debug("%s has no usable mark; left unsized", row.get("ticker"))
+            continue
+        row["size"] = float(row["units"]) * float(price) / (equity * exposure)
+    return rows
+
+
+def _engine_confidence(app_config, account=None) -> dict[str, float]:
+    """The latest bar's confidence per instrument, or an empty map.
+
+    Passed through so the bridge's own entry gate agrees with the one the
+    engine already applied, rather than second-guessing it on a default.
+    """
+    import pandas as pd
+
+    from cfdinvest.persist import readers
+
+    try:
+        frame = readers.load_frame("signals", None, app_config, account)
+    except Exception as error:  # noqa: BLE001
+        logger.debug("No signals to read confidence from: %s", error)
+        return {}
+    if frame is None or getattr(frame, "empty", True):
+        return {}
+    working = frame.reset_index()
+    if "timestamp" not in working.columns or "confidence" not in working.columns:
+        return {}
+    working["timestamp"] = pd.to_datetime(
+        working["timestamp"], utc=True, errors="coerce"
+    )
+    working = working[working["timestamp"] == working["timestamp"].max()]
+    return {
+        str(row.get("ticker")): row.get("confidence")
+        for _, row in working.iterrows()
+        if row.get("ticker")
+    }
+
+
 def _mirror_rows(app_config, account=None, cohort: str = "") -> list[dict]:
     """What the shadow book holds, in the shape the bridge decides from.
 
@@ -1068,18 +1216,25 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     }
     placed = order_store.open_orders(app_config, account_name)
 
-    # What the account should hold comes from the shadow book, not from a
-    # second reading of the signals. The book has already applied the entry
-    # bar, the cooldown, the earnings blackout, the time stop and the last
-    # look; re-deriving any of that here would be a second decision path to
-    # keep in step, and a divergence between the two would stop meaning
-    # "the simulation's fills were wrong".
-    from cfdinvest.advisor.papertrade_run import cohorts_for
-
-    arm = cohorts_for(app_config.strategy)[0][0]
-    latest = _mirror_rows(app_config, account_name, arm)
+    # What the account should hold comes from the ENGINE, read back from the
+    # run the intraday job already persisted.
+    #
+    # It used to come from the shadow book, on the reasoning that the book
+    # had already applied the entry bar, the cooldown, the blackout and the
+    # time stop, so re-deriving them here would be a second decision path.
+    # The reasoning was right and the premise was wrong: the book applies
+    # those four and *none* of the breakout gate, the size hysteresis, the
+    # decayed trim, the leverage cap or the concentration cap. So the second
+    # decision path existed anyway, and the account has been trading it --
+    # 163.7% at -52.8% where the engine returns 130.5% at -40.3%, measured
+    # 2026-08-30.
+    #
+    # Read rather than recomputed: run-intraday persists the pipeline and
+    # this reads its final bar, so there is still exactly one place where a
+    # position is decided.
+    latest = _engine_rows(app_config, account_name)
     if not latest:
-        logger.info("Capital: the shadow book holds nothing in %s; nothing to mirror", arm)
+        logger.info("Capital: the engine holds nothing; nothing to mirror")
 
     # Price the traded list *and* everything actually held. These are not
     # the same set, and treating them as one stranded nine positions on a
@@ -1108,6 +1263,20 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
             dealing_tickers, session, settings.broker
         )
     }
+
+    # Now that the instruments are priced, turn the engine's units into the
+    # share of balance the bridge sizes from. Done here rather than earlier
+    # because the list to price is not known until the rows are read.
+    # CapitalMarket carries bid and offer, not a mid -- asking it for one
+    # returns None for every instrument and sizes nothing, silently.
+    _size_engine_rows(latest, {
+        name: (
+            (float(detail.bid) + float(detail.offer)) / 2.0
+            if getattr(detail, "bid", None) and getattr(detail, "offer", None)
+            else None
+        )
+        for name, detail in markets.items()
+    })
 
     now = pd.Timestamp.now(tz="UTC")
     try:

@@ -118,19 +118,74 @@ def test_an_unreadable_book_mirrors_nothing(monkeypatch):
     assert app._mirror_rows(None, None, "c35") == []
 
 
-def test_the_trade_job_no_longer_reads_the_signal_frame():
-    """The seam, asserted against the source.
+def test_the_account_takes_its_positions_from_the_engine():
+    """There is one decision path, and the account reads it rather than
+    deciding again.
 
-    Reading both would leave the old path in place beside the new one, and
-    whichever ran last would win silently.
+    This used to assert the account read the *shadow book* instead of the
+    signal frame, on the reasoning that the book had already applied the
+    rules. The reasoning was right and the premise was wrong: the book
+    applies the time stop, cooldown, blackout and confidence gate, and none
+    of the breakout gate, size hysteresis, decayed trim, leverage cap or
+    concentration cap. So the second decision path existed anyway and the
+    account was trading it -- 163.7% at -52.8% against the engine's 130.5%
+    at -40.3%.
+
+    Asserted functionally, on what reaches the bridge, rather than by
+    grepping the source: the previous version of this test passed while the
+    account traded a different strategy, because the string it looked for
+    was still there and still wrong.
     """
-    import inspect
+    import pandas as pd
 
-    source = inspect.getsource(app._command_trade_capital)
-    assert "_mirror_rows(" in source
-    assert 'load_frame("signals"' not in source, (
-        "the account still derives its own view from the signal frame"
+    positions = pd.DataFrame(
+        {"AAA": [0.0, 4.0], "BBB": [0.0, -2.0], "GBPUSD=X": [0.0, 9.0]},
+        index=pd.date_range("2026-08-28 14:00", periods=2, freq="1h", tz="UTC"),
     )
+    equity = pd.DataFrame(
+        {"equity": [100_000.0, 125_000.0]}, index=positions.index
+    )
+
+    class Cfg:
+        strategy = type("S", (), {"exposure_per_unit_size": 4.0})()
+
+    import cfdinvest.persist.readers as readers
+
+    real_exec, real_frame = readers.load_execution_frame, readers.load_frame
+    readers.load_execution_frame = lambda *a, **k: {
+        "positions": positions, "equity": equity
+    }
+    readers.load_frame = lambda *a, **k: pd.DataFrame()
+    try:
+        rows = app._engine_rows(Cfg())
+    finally:
+        readers.load_execution_frame, readers.load_frame = real_exec, real_frame
+
+    by_ticker = {r["ticker"]: r for r in rows}
+    assert set(by_ticker) == {"AAA", "BBB"}, (
+        "the reference currency pair was treated as tradeable"
+    )
+    assert by_ticker["AAA"]["direction"] == "long"
+    assert by_ticker["BBB"]["direction"] == "short", "the short lost its sign"
+    assert by_ticker["AAA"]["size"] is None, "sized before anything was priced"
+
+    # share = units x price / (equity x exposure_per_unit_size)
+    app._size_engine_rows(rows, {"AAA": 250.0, "BBB": 50.0})
+    assert by_ticker["AAA"]["size"] == pytest.approx(
+        4.0 * 250.0 / (125_000.0 * 4.0)
+    )
+    assert by_ticker["BBB"]["size"] == pytest.approx(
+        2.0 * 50.0 / (125_000.0 * 4.0)
+    )
+
+
+def test_an_unpriced_instrument_is_left_unsized_rather_than_guessed():
+    """"Not priced" and "priced at nothing" are different statements, and the
+    bridge already refuses an unsized row by name."""
+    rows = [{"ticker": "AAA", "units": 3.0, "equity": 100_000.0,
+             "exposure_per_unit_size": 4.0, "size": None}]
+    app._size_engine_rows(rows, {})
+    assert rows[0]["size"] is None, "an unpriced position was given a size"
 
 
 def test_a_name_that_left_the_traded_list_can_still_be_closed():

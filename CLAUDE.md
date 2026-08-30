@@ -86,13 +86,28 @@ These are standing instructions from the project owner, not preferences.
   reproducing to the decimal, because a correctly-implemented wrong
   measurement looks exactly like a right one.
 
-  Two known violations, both open as of 2026-08-30. `advisor.papertrade_run`
-  re-implements the time stop, the re-entry cooldown, the earnings blackout
-  and the confidence gate rather than reading the engine's decision — the
-  same duplication that once let the shadow book run a 1-day time stop and
-  a 14-day cooldown against a backtest configured differently. And any
-  research script that computes a position, a fill or a cost itself rather
-  than reading one back from a run.
+  **It reached the dealing path, and that is the serious part.**
+  `advisor.papertrade_run` re-implements the time stop, the re-entry
+  cooldown, the earnings blackout and the confidence gate — and, more to the
+  point, implements *none* of the breakout gate, the size hysteresis, the
+  decayed trim, the leverage cap or the concentration cap. Then
+  `_command_trade_capital` takes the account's intended positions **from
+  that book** rather than from the engine, on the reasoning that the book
+  had already applied the rules. It had applied a different set.
+
+  So the demo account has not been trading the strategy any backtest
+  describes. Measured through the engine on 2026-08-30, the book's rule set
+  returns 163.7% at −52.8% where the engine's returns 130.5% at −40.3%: more
+  levered, less risk-controlled, worse risk-adjusted. Every forward figure
+  taken from that account measures a strategy nobody chose.
+
+  This is the third form the same root cause took in one weekend — a
+  measurement that never became behaviour, a gate silently overwritten by
+  another gate, and now a second rule set placing real orders. The first two
+  cost wrong numbers. This one placed trades.
+
+  Also open: any research script that computes a position, a fill or a cost
+  itself rather than reading one back from a run.
 
   The paper book is the sharper case because it is the *forward record*.
   Its value is being evidence nobody could edit after the outcome; if it
