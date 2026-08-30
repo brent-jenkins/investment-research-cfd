@@ -315,3 +315,124 @@ def test_no_fallback_is_attempted_for_a_vendor_feed():
         Repo(), ["GBPUSD=X"], interval="1h",
     )
     assert asked == ["1h"], f"expected exactly one lookup, got {asked}"
+
+
+# --------------------------------------------------------------------------- #
+# Once a series is being collected, it is never dropped
+# --------------------------------------------------------------------------- #
+def test_ingestion_covers_every_candidate_not_only_the_traded_list(tmp_path):
+    """A candidate the screen picks tomorrow needs history today.
+
+    Without this its first intraday tick fetches years of bars inline on a
+    fifteen-minute job -- and, less obviously, seeding that history flips
+    ``universe.screen._spread_series`` from the live observation store to the
+    capital_1h archive, because it prefers the archive *if it exists at all*.
+    An archive kept for only the traded names would then freeze for everyone
+    else, which is the mirror image of the failure that function's docstring
+    records.
+    """
+    from cfdinvest.schedule import app
+
+    class Cfg:
+        universe = type("U", (), {"candidates": ("AAA", "BBB", "CCC")})()
+        market = type("M", (), {"interval": "capital_1h"})()
+        paths = type("P", (), {"data_root": str(tmp_path)})()
+
+    covered = app._screen_candidates(Cfg())
+    assert set(covered) >= {"AAA", "BBB", "CCC"}
+
+
+def test_a_name_dropped_from_the_candidates_keeps_being_collected(tmp_path):
+    """Owner's rule: once a series is being collected it is not stopped.
+
+    A hole cannot be backfilled once the vendor's retention window passes,
+    so a configuration edit must not be able to create one. The set is the
+    configured candidates *union what is already on disk*, which makes it
+    monotonic.
+    """
+    from cfdinvest.schedule import app
+
+    folder = tmp_path / "raw" / "market" / "capital_1h"
+    folder.mkdir(parents=True)
+    for name in ("AAA", "DROPPED", "GBPUSD=X"):
+        (folder / f"{name}.parquet").write_bytes(b"")
+
+    class Cfg:
+        universe = type("U", (), {"candidates": ("AAA", "BBB")})()
+        market = type("M", (), {"interval": "capital_1h"})()
+        paths = type("P", (), {"data_root": str(tmp_path)})()
+
+    covered = app._screen_candidates(Cfg())
+    assert "DROPPED" in covered, (
+        "a name removed from the candidate list stopped being collected; its "
+        "history will acquire a hole that cannot be backfilled later"
+    )
+    assert "BBB" in covered, "a newly configured candidate was not picked up"
+    assert "GBPUSD=X" not in covered, (
+        "a reference currency pair was added to the instrument fetch"
+    )
+    assert len(covered) == len(set(covered)), "an instrument is fetched twice"
+
+
+def test_an_unreadable_lake_falls_back_to_the_configured_candidates(tmp_path):
+    """Absence named: no directory means the configured list, which is the
+    old behaviour, rather than an empty fetch."""
+    from cfdinvest.schedule import app
+
+    class Cfg:
+        universe = type("U", (), {"candidates": ("AAA", "BBB")})()
+        market = type("M", (), {"interval": "capital_1h"})()
+        paths = type("P", (), {"data_root": str(tmp_path / "nothing-here")})()
+
+    assert app._screen_candidates(Cfg()) == ["AAA", "BBB"]
+
+
+def test_a_delisted_name_is_the_one_reason_to_stop_collecting(tmp_path):
+    """The exception to "never stop": a series that has genuinely ended.
+
+    Not the same as leaving the traded list -- there is simply nothing left
+    to fetch. Recorded rather than inferred, because "no new bars today"
+    looks identical for a holiday, an outage and a delisting, and guessing
+    would stop collecting a live instrument.
+    """
+    import json
+
+    from cfdinvest.schedule import app
+
+    folder = tmp_path / "raw" / "market" / "capital_1h"
+    folder.mkdir(parents=True)
+    for name in ("ALIVE", "GONE"):
+        (folder / f"{name}.parquet").write_bytes(b"")
+    (tmp_path / "metadata").mkdir()
+    (tmp_path / "metadata" / "delisted.json").write_text(
+        json.dumps({"GONE": {"reason": "delisted", "last_bar": "2026-06-30"}}),
+        encoding="utf-8",
+    )
+
+    class Cfg:
+        universe = type("U", (), {"candidates": ()})()
+        market = type("M", (), {"interval": "capital_1h"})()
+        paths = type("P", (), {"data_root": str(tmp_path)})()
+
+    covered = app._screen_candidates(Cfg())
+    assert "ALIVE" in covered
+    assert "GONE" not in covered, "a dead series is still being requested"
+
+
+def test_an_unreadable_delisted_list_collects_everything(tmp_path):
+    """Errs towards collecting too much: a missed bar cannot be recovered
+    later, a wasted request can."""
+    from cfdinvest.schedule import app
+
+    folder = tmp_path / "raw" / "market" / "capital_1h"
+    folder.mkdir(parents=True)
+    (folder / "ALIVE.parquet").write_bytes(b"")
+    (tmp_path / "metadata").mkdir()
+    (tmp_path / "metadata" / "delisted.json").write_text("{ not json", encoding="utf-8")
+
+    class Cfg:
+        universe = type("U", (), {"candidates": ()})()
+        market = type("M", (), {"interval": "capital_1h"})()
+        paths = type("P", (), {"data_root": str(tmp_path)})()
+
+    assert app._screen_candidates(Cfg()) == ["ALIVE"]

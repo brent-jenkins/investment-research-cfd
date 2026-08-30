@@ -383,6 +383,109 @@ def _with_held(tickers, config, account=None) -> list[str] | None:
     return names
 
 
+def _screen_candidates(config) -> list[str]:
+    """Every instrument the screen may rank, plus everything already ingested.
+
+    **Once a series is being collected it is never dropped.** Owner's
+    instruction, and it is stronger than "every current candidate": a name
+    removed from ``universe.candidates`` would otherwise stop being fetched
+    and its history would acquire a hole exactly where somebody later wants
+    to know what happened. Holes cannot be backfilled once the vendor's
+    retention window has passed, and the whole point of a lake is that the
+    past stays available.
+
+    So the set is the configured candidates *union what is already on disk*,
+    which makes it monotonic under configuration changes.
+
+    **The one exception is a series that has genuinely ended** -- delisted,
+    suspended, or the vendor simply stopping. That is not the same as a name
+    leaving the traded list, and it is the only reason to stop fetching:
+    there is nothing left to fetch. Such a name is recorded in
+    ``metadata/delisted.json`` and skipped here, so it does not cost a
+    failed request on every tick forever.
+
+    Marking is deliberate rather than automatic. "No new bars today" is what
+    a market holiday, a data outage and a delisting all look like from here,
+    and inferring death from silence would quietly stop collecting a live
+    instrument -- the failure this rule exists to prevent, arrived at from
+    the other side. Until a detector exists that can tell those apart, a
+    dead name costs one logged line per tick, which is the cheaper mistake.
+
+    Order is not preserved against the traded list by design -- the caller
+    appends these after the names it already cares about, so a partial
+    failure degrades the candidates rather than the book.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for ticker in (
+        getattr(getattr(config, "universe", None), "candidates", ()) or ()
+    ):
+        name = str(ticker)
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    for name in _already_ingested(config):
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _already_ingested(config) -> list[str]:
+    """Instruments the decision feed already holds bars for.
+
+    Read from the lake rather than from configuration, because the point is
+    to survive a configuration change. Never raises: an unreadable directory
+    means the configured candidates alone, which is the old behaviour.
+    """
+    from pathlib import Path
+
+    try:
+        root = Path(getattr(getattr(config, "paths", None), "data_root", "data"))
+        interval = getattr(getattr(config, "market", None), "interval", None)
+        if not interval:
+            return []
+        folder = root / "raw" / "market" / str(interval)
+        if not folder.is_dir():
+            return []
+        dead = _delisted(config)
+        return sorted(
+            path.stem for path in folder.glob("*.parquet")
+            if path.stem and "=X" not in path.stem and path.stem not in dead
+        )
+    except Exception as error:  # noqa: BLE001 - collection is best-effort
+        logger.warning("Could not list what is already ingested: %s", error)
+        return []
+
+
+def _delisted(config) -> frozenset[str]:
+    """Instruments whose series has ended, and which are not worth fetching.
+
+    Read from ``metadata/delisted.json``: either a list of tickers or an
+    object keyed by ticker (so a reason and a date can be recorded beside
+    it). Absent means none, which is the common case.
+
+    Never raises. An unreadable file means nothing is skipped, which errs
+    towards collecting too much rather than too little -- the right
+    direction, since a missed bar cannot be recovered later and a wasted
+    request can.
+    """
+    import json
+    from pathlib import Path
+
+    try:
+        root = Path(getattr(getattr(config, "paths", None), "data_root", "data"))
+        path = root / "metadata" / "delisted.json"
+        if not path.is_file():
+            return frozenset()
+        blob = json.loads(path.read_text(encoding="utf-8"))
+        names = blob.keys() if isinstance(blob, dict) else blob
+        return frozenset(str(n) for n in (names or ()) if str(n))
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not read the delisted list: %s", error)
+        return frozenset()
+
+
 def _confirmed_instruments(config, account=None) -> list[str]:
     """Anything with a confirmed position on the real account."""
     from cfdinvest.livequotes.poller import held_instruments
@@ -1688,6 +1791,26 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         # a position reopened in it later is not decided on a series with a
         # hole in the middle.
         for name in _ever_selected(app_config, account):
+            if name not in wanted:
+                wanted.append(name)
+        # And every candidate the screen may rank, not only what is traded.
+        #
+        # Two reasons, and the second is the one that bites. A candidate the
+        # screen picks tomorrow needs history today, or its first intraday
+        # tick fetches years of bars inline on a fifteen-minute job. And
+        # `universe.screen._spread_series` prefers the capital_1h archive
+        # over the live observation store *if the archive exists at all* --
+        # all or nothing, not per instrument. Seeding history for the
+        # candidates therefore switched the screen's cost term from a store
+        # refreshed daily to an archive that would never update again, which
+        # is the mirror image of the failure that function's own docstring
+        # warns about: a deployment ran a month reading an archive it did
+        # not have while the store it did have filled up beside it.
+        #
+        # Keeping the archive current for every candidate makes preferring
+        # it correct. Incremental after the first fetch -- backfill resumes
+        # from what is on disk -- so an ordinary tick costs a few bars each.
+        for name in _screen_candidates(app_config):
             if name not in wanted:
                 wanted.append(name)
         runner_module._refresh(

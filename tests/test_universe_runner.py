@@ -307,16 +307,31 @@ def test_the_daily_ingest_fetches_every_candidate_the_screen_ranks(
     )
     assert {"AAA", "BBB"} <= set(daily), "the traded universe was dropped"
 
-    # And the intraday job does not: those instruments are not traded, and
-    # the screen reads daily bars.
+    # And the intraday job fetches them too, since 2026-08-30.
+    #
+    # This assertion used to be its inverse -- that the intraday job did NOT
+    # ask for candidates, because they are not traded and the screen ranks on
+    # daily bars. Both halves of that were true and the conclusion was still
+    # wrong, for two reasons found on the same afternoon.
+    #
+    # A candidate the screen selects tomorrow has no intraday history, so its
+    # first tick fetches years of bars inline on a fifteen-minute job. And
+    # `universe.screen._spread_series` prefers the capital_1h archive over the
+    # live observation store *if the archive exists at all* -- all or nothing,
+    # not per instrument -- so an archive kept only for traded names freezes
+    # the screen's cost term for everyone else. Seeding the candidates without
+    # also keeping them current would have caused exactly the failure that
+    # function's own docstring records, arrived at from the other side.
     asked.clear()
     app.run_daemon_job("ingest-intraday", parsed_run_once(), config)
     assert asked, "the intraday job fetched nothing"
-    assert not ({"CCC", "DDD"} & set(asked[-1])), (
-        "the intraday job is fetching instruments nothing trades"
+    intraday = set(asked[-1])
+    assert {"AAA", "BBB"} <= intraday, "the traded universe was dropped"
+    assert {"CCC", "DDD"} <= intraday, (
+        "the intraday job is not keeping the screen's candidates current; "
+        "the first one selected will fetch its whole history inline, and the "
+        "screen's spread term will read a frozen archive in the meantime"
     )
-
-
 def parsed_run_once():
     """Real arguments from the real parser, as the daemon builds them."""
     from cfdinvest.schedule import app

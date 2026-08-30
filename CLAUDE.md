@@ -91,6 +91,19 @@ These are standing instructions from the project owner, not preferences.
 - **Read-only except for the layer's own writes.** Each layer names exactly
   what it may write in its README.
 - **No config mutation.**
+- **Once a series is being collected, it is not stopped.** Owner's
+  instruction, 2026-08-30. The intraday fetch takes the configured
+  candidates *union everything already on disk*, so removing a name from
+  `universe.candidates` cannot silently stop its collection. A hole cannot
+  be backfilled once the vendor's retention window passes, and minute data
+  has the shortest retention of any resolution served.
+
+  **The one exception is a series that has genuinely ended** — delisted,
+  suspended, or the vendor stopping. Recorded in `metadata/delisted.json`
+  and skipped. Marking is deliberate rather than inferred: a holiday, an
+  outage and a delisting all look like "no new bars today" from here, and
+  guessing would stop collecting a live instrument, which is this rule's
+  own failure arrived at from the other side.
 - **One engine, and it is the production one.** Owner's instruction,
   2026-08-30. Backtesting, research, sweeps, the paper book and anything
   else that decides what a position should be goes through
