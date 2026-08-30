@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from cfdinvest import storage
+from cfdinvest.ingestion import capital_prices
 from cfdinvest.config import AppConfig
 from cfdinvest.schema import (
     MACRO_VALUE,
@@ -477,6 +478,21 @@ class DataRepository:
         combined = pd.concat(frames)
         combined[TICKER] = combined[TICKER].astype("category")
         tidy = combined.set_index(TICKER, append=True)
+        # Capital's feed carries pre-market and after-hours bars; yfinance's
+        # does not. Lookbacks here are counted in bars, so handing the raw
+        # feed to the engine rescales every window by 1.67x -- see
+        # ``capital_prices.SESSION_HOURS``. Filtered once, here, rather than
+        # by each caller remembering to.
+        if capital_prices.is_capital_interval(bar_interval):
+            before = len(tidy)
+            tidy = capital_prices.restrict_to_session(tidy)
+            if before and not len(tidy):
+                logger.warning(
+                    "Every %s bar fell outside the regular session; check the "
+                    "timestamps rather than treating this as no data",
+                    bar_interval,
+                )
+
         return tidy.sort_index()
 
     def load_panel(

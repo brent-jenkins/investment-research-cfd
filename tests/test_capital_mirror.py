@@ -275,3 +275,68 @@ def test_the_intraday_job_fetches_the_history_not_just_the_holdings():
         "history stops the day they leave the list"
     )
     assert "_with_held(" in block
+
+
+# --------------------------------------------------------------------------- #
+# Capital's feed carries hours yfinance's does not
+# --------------------------------------------------------------------------- #
+def test_capital_bars_are_restricted_to_the_session_when_loaded():
+    """M-live: the density trap, closed at the boundary.
+
+    Capital quotes from 04:00 New York, so its raw feed carries pre-market
+    and after-hours bars: 11.5 a day against yfinance's 6.9. Lookbacks in
+    this engine are counted in *bars*, so handing it the raw feed rescales
+    every window at once -- trend averages, volatility windows, the breakout
+    lookback, the time stop. Nothing fails. The strategy simply becomes a
+    different one while every test still passes.
+
+    Filtered once at the repository rather than by each caller, because
+    every research sweep this weekend filtered by hand and the production
+    path did not filter at all.
+    """
+    import pandas as pd
+
+    from cfdinvest.ingestion.capital_prices import restrict_to_session
+
+    index = pd.MultiIndex.from_product(
+        [pd.date_range("2026-06-01 08:00", periods=18, freq="h", tz="UTC"), ["AAA"]],
+        names=["timestamp", "ticker"],
+    )
+    frame = pd.DataFrame({"close": range(len(index))}, index=index)
+
+    kept = restrict_to_session(frame)
+    hours = sorted(
+        set(
+            pd.DatetimeIndex(kept.index.get_level_values("timestamp"))
+            .tz_convert("America/New_York").hour
+        )
+    )
+    assert hours and min(hours) >= 9 and max(hours) <= 15, (
+        f"pre-market or after-hours bars survived: {hours}"
+    )
+    assert len(kept) < len(frame), "nothing was filtered at all"
+
+
+def test_the_session_filter_is_idempotent():
+    """A caller that already filtered loses nothing by being filtered again
+    -- research scripts do it by hand and must keep working."""
+    import pandas as pd
+
+    from cfdinvest.ingestion.capital_prices import restrict_to_session
+
+    index = pd.date_range("2026-06-01 08:00", periods=18, freq="h", tz="UTC")
+    frame = pd.DataFrame({"close": range(len(index))}, index=index)
+    once = restrict_to_session(frame)
+    assert len(restrict_to_session(once)) == len(once)
+
+
+def test_only_capital_intervals_are_filtered():
+    """yfinance bars are already session-only. Filtering them would be
+    harmless but the intent matters: this is a correction for one feed's
+    coverage, not a general rule about what hours to trade."""
+    from cfdinvest.ingestion.capital_prices import is_capital_interval
+
+    assert is_capital_interval("capital_1h")
+    assert is_capital_interval("capital_5m")
+    assert not is_capital_interval("1h")
+    assert not is_capital_interval("1d")

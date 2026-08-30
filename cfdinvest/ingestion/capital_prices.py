@@ -47,7 +47,28 @@ from typing import Any, Iterable, Mapping, Sequence
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["INTERVAL", "DEFAULT_START", "frame_from_rows", "backfill_ticker", "backfill"]
+__all__ = [
+    "INTERVAL", "DEFAULT_START", "SESSION_HOURS", "frame_from_rows",
+    "backfill_ticker", "backfill", "restrict_to_session", "is_capital_interval",
+]
+
+#: New York hours whose bars are the regular session. Capital quotes from
+#: 04:00 local, so its raw feed carries pre-market and after-hours bars that
+#: yfinance's does not.
+#:
+#: **This is load-bearing, not cosmetic.** Measured on the traded universe,
+#: Capital serves 11.5 bars a day against yfinance's 6.9 -- so feeding the
+#: raw Capital feed to an engine whose lookbacks are counted in *bars*
+#: rescales every window by 1.67x at once: the trend averages, the
+#: volatility windows, the breakout lookback, the time stop. Nothing would
+#: fail; the strategy would simply become a different one while every test
+#: still passed.
+#:
+#: Applied at the point of loading rather than by each caller, because
+#: "which callers remembered to filter" is exactly the kind of thing that
+#: drifts -- and did: every research sweep this weekend filtered by hand
+#: while the production path did not filter at all.
+SESSION_HOURS: tuple[int, int] = (9, 15)
 
 #: The lake directory these land in. Distinct from ``1h`` on purpose; see the
 #: module docstring. ``preprocessing`` infers periods-per-year from the bar
@@ -244,3 +265,38 @@ def backfill(
                 report.get("written"), report.get("added"),
             )
     return reports
+
+
+def is_capital_interval(interval) -> bool:
+    """Whether an interval label names one of Capital's own feeds."""
+    return str(interval or "").startswith("capital_")
+
+
+def restrict_to_session(frame, *, hours: tuple[int, int] = SESSION_HOURS):
+    """Drop pre-market and after-hours bars from a Capital frame.
+
+    Idempotent: filtering twice is filtering once, so a caller that already
+    did it loses nothing. Returns the frame unchanged when it carries no
+    usable timestamp index, because silently returning nothing would turn a
+    shape surprise into an empty book.
+    """
+    import pandas as pd
+
+    if frame is None or getattr(frame, "empty", True):
+        return frame
+    index = frame.index
+    stamps = (
+        index.get_level_values("timestamp")
+        if isinstance(index, pd.MultiIndex) and "timestamp" in (index.names or ())
+        else index
+    )
+    try:
+        stamps = pd.DatetimeIndex(stamps)
+    except (TypeError, ValueError):
+        logger.debug("No timestamp index to restrict; frame returned unchanged")
+        return frame
+    if stamps.tz is None:
+        stamps = stamps.tz_localize("UTC")
+    local = stamps.tz_convert("America/New_York").hour
+    low, high = hours
+    return frame[(local >= low) & (local <= high)]
