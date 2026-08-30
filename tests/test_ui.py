@@ -2925,3 +2925,58 @@ def test_the_broker_page_renders_when_the_account_cannot_be_read(monkeypatch):
 
     result = render("views/03_Broker.py")
     assert not result.exception, f"broker page raised: {result.exception}"
+
+
+def test_the_dashboard_reads_the_brokers_own_field_names():
+    """M-live: the landing page rendered a table of blanks.
+
+    ``ui.broker.read_broker`` returns rows already carrying display labels --
+    Instrument, Side, Size, Opened at, Unrealised -- and an account keyed
+    balance / available / profit_loss. The first version of this page invented
+    ticker / direction / open_price / profit / equity, so every metric after
+    Balance showed a dash and every column of the position table came out
+    empty, while the page looked like it had rendered correctly.
+
+    Asserted against the field names rather than by rendering, because the
+    failure was silent: nothing raised, nothing was missing, the values were
+    simply absent.
+    """
+    import inspect
+    from pathlib import Path
+
+    source = Path("cfdinvest/ui/views/00_Dashboard.py").read_text(encoding="utf-8")
+
+    for real in ("profit_loss", "available", "balance"):
+        assert real in source, (
+            f"the dashboard does not read {real!r}, which is what the broker "
+            "reader actually returns"
+        )
+    for invented in ('get("equity")', 'get("profit")', 'get("ticker")',
+                     'get("open_price")'):
+        assert invented not in source, (
+            f"the dashboard reads {invented} -- a field the broker payload "
+            "does not have, which renders blank rather than failing"
+        )
+
+
+def test_the_dashboard_separates_an_unreadable_account_from_an_empty_one():
+    """The house rule, on the page most likely to be glanced at: absence is
+    named. An account that could not be read must not draw as flat."""
+    from pathlib import Path
+
+    source = Path("cfdinvest/ui/views/00_Dashboard.py").read_text(encoding="utf-8")
+    # The BRANCH, not the word. A first version of this asserted only that
+    # "positions_error" appeared somewhere -- and it still did, inside the
+    # warning text, when the guard around it had been replaced by `if False`.
+    # A structural test that matches a string the failure leaves behind is
+    # not a test.
+    assert 'get("positions_error")' in source, (
+        "nothing branches on an unreadable position list, so it draws "
+        "identically to an account that is genuinely flat"
+    )
+    assert "not an empty account" in source
+
+    # And the same for the account itself.
+    assert 'get("error")' in source, (
+        "an unreadable account is not distinguished from an empty one"
+    )

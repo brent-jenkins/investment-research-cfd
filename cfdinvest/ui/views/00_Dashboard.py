@@ -66,24 +66,33 @@ st.subheader("The account")
 
 account = (broker or {}).get("account") or {}
 positions = (broker or {}).get("positions") or []
+currency = account.get("currency") or ""
 
-if not account:
+
+def _money(value) -> str:
+    """Matches the Broker page: absent shows as a dash, never as zero."""
+    return "—" if value is None else f"{currency} {value:,.2f}"
+
+
+if (broker or {}).get("error") or not account:
     # Not render_absent: that takes a Source, and this is a live broker read.
-    # Absence is still named rather than drawn as zero -- an unreadable
-    # account and an empty one are different states.
+    # Absence is named rather than drawn as zero -- an unreadable account and
+    # an empty one are different states, and only one of them is reassuring.
     st.warning(
-        "The demo account could not be read. Nothing is inferred from that: "
-        "an unreadable account and an empty one are different states."
+        "The demo account could not be read"
+        + (f": {broker['error']}" if (broker or {}).get("error") else "")
+        + ". That is an unanswered question, not an empty account."
     )
 else:
+    # Keys are the broker reader's own display labels -- balance, available,
+    # profit_loss -- not invented ones. Guessing them showed a row of blanks
+    # while looking like it worked.
     row = st.columns(4)
-    balance = account.get("balance")
-    equity = account.get("equity")
-    profit = account.get("profit")
-    row[0].metric("Balance", components.money(balance))
-    row[1].metric("Equity", components.money(equity))
+    profit = account.get("profit_loss")
+    row[0].metric("Balance", _money(account.get("balance")))
+    row[1].metric("Available", _money(account.get("available")))
     row[2].metric(
-        "Open P&L", components.money(profit),
+        "Open P&L", _money(profit),
         delta=None if profit is None else f"{profit:+,.2f}",
     )
     row[3].metric("Open positions", len(positions))
@@ -93,24 +102,25 @@ else:
 # --------------------------------------------------------------------------- #
 st.subheader("What it holds")
 
-if not positions:
+if (broker or {}).get("positions_error"):
+    st.warning(
+        f"The position list could not be read: {broker['positions_error']}. "
+        "That is not an empty account, and only one of those means it is "
+        "safe to open more."
+    )
+elif not positions:
     st.caption(
-        "Nothing open. That is a position the system has taken, not a "
-        "failure — it opens when a signal clears the gates and not otherwise."
+        "Nothing open. Read successfully, and empty — the book opens when a "
+        "signal clears the gates and not otherwise."
     )
 else:
-    frame = pd.DataFrame([
-        {
-            "Instrument": p.get("ticker"),
-            "Side": p.get("direction"),
-            "Size": p.get("size"),
-            "Open": p.get("open_price"),
-            "Now": p.get("price"),
-            "P&L": p.get("profit"),
-        }
-        for p in positions
-    ])
-    st.dataframe(frame, width="stretch", hide_index=True)
+    # Rendered as the reader returns them. The rows already carry display
+    # labels, so re-mapping them was how every column came out blank.
+    frame = pd.DataFrame(positions)
+    st.dataframe(
+        frame.drop(columns=[c for c in ("Deal id",) if c in frame.columns]),
+        width="stretch", hide_index=True,
+    )
     st.caption(
         "Summary only. The Broker page carries the full detail, including "
         "what each instrument costs to trade."
