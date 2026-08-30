@@ -104,12 +104,23 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
     Justification(
         path="execution.breakout_lookback",
         value=12,
-        feed="1h",
-        cost_model="flat_5bp",
-        source="config/config.toml comment table; original sweep not retained",
-        figure="79.5/80.5/80.2/80.3% at 6/12/24/48 bars against 73.6% for no "
-               "gate -- contradicted on 2026-08-30 by a Capital sweep giving "
-               "64.7% at 12 against 68.6% at 0, opposite sign",
+        feed=CURRENT_FEED,
+        cost_model=CURRENT_COST_MODEL,
+        source="scratchpad/breakout.py: seven lookbacks through the engine as "
+               "an ExecutionConfig field, screen-gated at target 10, measured "
+               "spreads, entry_size at the signal floor",
+        figure="0 (off) -> 120.6%/-43.0%; 6 -> 127.3%; 12 -> 130.5%/-40.3%; "
+               "24 -> 133.4%; 48 -> 134.6%/-39.9%; 96 -> 129.9%. The gate is "
+               "worth +9.9pp against no gate, above the 8.0pp floor, and it "
+               "lowers drawdown and cost share too. 12 kept: the peak is 48 "
+               "but 12-48 spans 4.1pp and 6-96 all sit within the floor of "
+               "it, so 12 is mid-plateau rather than at an edge. RESOLVES the "
+               "earlier contradiction -- the -3.9pp reading was taken on the "
+               "fixed eight-name book with the size floor still in place, and "
+               "this gate only earns its place once the screen chooses from a "
+               "hundred names and the floor is not already discarding two "
+               "thirds of the signals. Both readings were right for their "
+               "configuration; neither generalised",
     ),
     Justification(
         path="execution.decayed_position_multiplier",
@@ -270,7 +281,6 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
 #: current feed and cost model. The test fails if a path listed here is no
 #: longer stale, so this cannot rot with entries that have been fixed.
 PENDING_REMEASUREMENT: tuple[str, ...] = (
-    "execution.breakout_lookback",
     "execution.decayed_position_multiplier",
     "execution.time_stop_days",
     "execution.rebalance_threshold",

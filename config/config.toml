@@ -687,6 +687,32 @@ decayed_position_multiplier = 0.5
 # One point of spread across an eightfold range, drawdown flat, trades within
 # twelve. Twelve bars is the middle of that plateau, not a peak -- there is
 # no cliff to fall off if the market changes.
+#
+# RE-MEASURED 2026-08-30 through the engine on Capital bars with measured
+# spreads, screen-gated at target 10, entry_size at the signal floor:
+#
+#   lookback     CAGR    maxDD   Calmar   trades   cost/gross
+#          0   120.6%   -43.0%     2.80    4,213        37.3%
+#          6   127.3%   -40.1%     3.17    4,004        35.4%
+#         12   130.5%   -40.3%     3.24    3,968        34.8%
+#         24   133.4%   -40.1%     3.32    3,935        34.1%
+#         48   134.6%   -39.9%     3.37    3,931        33.8%
+#         96   129.9%   -41.4%     3.14    3,905        33.9%
+#
+# The gate is worth +9.9pp against no gate at all, above the 8.0pp floor,
+# and it lowers drawdown and cost share as well. Twelve is kept: the peak is
+# 48, but 12 to 48 spans 4.1pp and everything from 6 to 96 sits within the
+# floor of the peak, so twelve remains mid-plateau rather than at an edge.
+#
+# This RESOLVES a contradiction rather than confirming the old figure. An
+# engine sweep earlier the same day measured the gate at -3.9pp -- the
+# opposite sign -- on the fixed eight-name book with the size floor still in
+# place. Both readings are correct for their configuration and neither
+# generalises: the gate only earns its place once the screen is choosing
+# from a hundred names and entry_size is not already discarding two thirds
+# of the signals. These parameters are not independent, which is why the
+# re-measurement queue has to be run against the configuration that now
+# exists rather than the one each was originally fitted to.
 breakout_lookback = 12
 
 # Charge the spread Capital quoted, not a flat constant.
