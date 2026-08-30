@@ -26,6 +26,7 @@ from typing import Any, Sequence
 import pandas as pd
 
 from cfdinvest.execution import ExecutionConfig, run_backtest
+from cfdinvest.ingestion import capital_prices
 from cfdinvest.preprocessing import (
     PreprocessConfig,
     analysis_frame_from_repository,
@@ -37,7 +38,16 @@ from cfdinvest.backtest.metrics import MetricsConfig
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["BacktestConfig", "PipelineResult", "run_pipeline", "run_from_analysis"]
+#: Where currency pairs are read from when the decision feed does not carry
+#: them. The broker quotes shares, not ``GBPUSD=X``; the pairs are vendor
+#: symbols and live only under vendor intervals. Rates are forward-filled
+#: onto the traded grid anyway, so the grid they arrive on does not matter.
+REFERENCE_FALLBACK_INTERVAL = "1h"
+
+__all__ = [
+    "BacktestConfig", "PipelineResult", "run_pipeline", "run_from_analysis",
+    "REFERENCE_FALLBACK_INTERVAL",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,13 +188,39 @@ def attach_reference_prices(analysis, repository, tickers, *, interval=None):
     if not missing:
         return analysis
 
-    try:
-        market = repository.load_market(
-            tickers=missing, interval=interval or repository.config.market.interval
+    bar_interval = interval or repository.config.market.interval
+
+    def _load(at):
+        try:
+            return repository.load_market(tickers=missing, interval=at)
+        except Exception as error:  # noqa: BLE001 - no rates is not an outage
+            logger.warning(
+                "Could not load reference series %s at %s: %s", missing, at, error
+            )
+            return None
+
+    market = _load(bar_interval)
+
+    # The broker does not quote GBPUSD=X: the currency pairs are vendor
+    # symbols and exist only under the vendor's own intervals. Moving the
+    # decision feed to capital_1h therefore looked for them somewhere they
+    # can never be, and every USD instrument silently converted at a rate of
+    # 1.0 -- which for a GBP account holding US shares is not a relabelling,
+    # it is dropping the currency move entirely.
+    #
+    # Falling back is sound here for the same reason the reindex below is:
+    # a rate is a level that persists between observations, and it is
+    # forward-filled onto the traded grid regardless of the grid it arrived
+    # on. This is the third separate way these pairs have failed to reach
+    # the engine, so it warns loudly rather than substituting in silence.
+    if (market is None or getattr(market, "empty", True)) and capital_prices.\
+            is_capital_interval(bar_interval):
+        logger.warning(
+            "No %s bars for reference series %s -- the broker does not quote "
+            "them; falling back to %s", bar_interval, missing,
+            REFERENCE_FALLBACK_INTERVAL,
         )
-    except Exception as error:  # noqa: BLE001 - no rates is not an outage
-        logger.warning("Could not load reference series %s: %s", missing, error)
-        return analysis
+        market = _load(REFERENCE_FALLBACK_INTERVAL)
 
     if market is None or getattr(market, "empty", True):
         logger.warning(

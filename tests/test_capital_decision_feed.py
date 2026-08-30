@@ -19,6 +19,8 @@ worth 37.7pp of CAGR on the eight-name book.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -226,3 +228,90 @@ def test_the_decision_feed_is_the_venue_that_fills():
         f"intraday decisions are being taken on {interval!r}, which is not "
         "the feed the orders fill against"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Currency pairs are vendor symbols, and the broker does not quote them
+# --------------------------------------------------------------------------- #
+def test_reference_series_fall_back_to_a_vendor_interval():
+    """The third separate way these pairs have failed to reach the engine.
+
+    They were named in the rate map but not fetched, then fetched but not
+    loaded, and then -- when the decision feed moved to capital_1h -- looked
+    for at an interval where they cannot exist, because Capital quotes
+    shares and not GBPUSD=X. Every USD instrument silently converted at a
+    rate of 1.0, which for a GBP account holding US shares drops the
+    currency move rather than relabelling it: measured, 27.0% CAGR at -34.6%
+    became 23.7% at -45.7% once rates applied.
+    """
+    from cfdinvest.backtest import runner
+
+    assert not capital_prices.is_capital_interval(
+        runner.REFERENCE_FALLBACK_INTERVAL
+    ), "the fallback points at an interval the broker does not serve either"
+
+    asked = []
+
+    class Repo:
+        config = type("C", (), {"market": type("M", (), {"interval": "capital_1h"})()})()
+
+        def load_market(self, tickers=None, interval=None, **kwargs):
+            asked.append(interval)
+            if capital_prices.is_capital_interval(interval):
+                return pd.DataFrame()          # the broker has no FX bars
+            index = pd.date_range(
+                "2026-01-05 14:00", periods=4, freq="1h", tz="UTC"
+            )
+            return pd.DataFrame(
+                {"timestamp": index, "ticker": "GBPUSD=X", "close": 1.35},
+            ).set_index(["timestamp", "ticker"])
+
+    index = pd.date_range("2026-01-05 14:00", periods=4, freq="1h", tz="UTC")
+    close = pd.DataFrame({"AMD": 100.0}, index=index)
+
+    # A dataclass, because attach_reference_prices rebuilds the frame with
+    # dataclasses.replace -- it never mutates the one it was handed.
+    @dataclasses.dataclass
+    class Frame:
+        prices: dict
+
+    out = runner.attach_reference_prices(
+        Frame({"close": close}), Repo(), ["GBPUSD=X"], interval="capital_1h"
+    )
+    assert "capital_1h" in asked, "the decision feed was never tried"
+    assert runner.REFERENCE_FALLBACK_INTERVAL in asked, (
+        "no fallback was attempted, so every rate silently stays at its "
+        "configured value"
+    )
+    assert "GBPUSD=X" in out.prices["close"].columns, (
+        "the pair was fetched but never reached the close panel, which is "
+        "where the execution layer reads its rates"
+    )
+    assert float(out.prices["close"]["GBPUSD=X"].iloc[-1]) == pytest.approx(1.35)
+
+
+def test_no_fallback_is_attempted_for_a_vendor_feed():
+    """A yfinance run must not gain a second lookup it never had: the pairs
+    are already there, and a spurious retry would mask a genuine absence."""
+    from cfdinvest.backtest import runner
+
+    asked = []
+
+    class Repo:
+        config = type("C", (), {"market": type("M", (), {"interval": "1h"})()})()
+
+        def load_market(self, tickers=None, interval=None, **kwargs):
+            asked.append(interval)
+            return pd.DataFrame()
+
+    index = pd.date_range("2026-01-05 14:00", periods=3, freq="1h", tz="UTC")
+
+    @dataclasses.dataclass
+    class Frame:
+        prices: dict
+
+    runner.attach_reference_prices(
+        Frame({"close": pd.DataFrame({"AMD": 100.0}, index=index)}),
+        Repo(), ["GBPUSD=X"], interval="1h",
+    )
+    assert asked == ["1h"], f"expected exactly one lookup, got {asked}"

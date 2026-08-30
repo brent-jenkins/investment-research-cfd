@@ -29,6 +29,7 @@ Mutations checked
 from __future__ import annotations
 
 import dataclasses
+import pathlib
 
 import pytest
 
@@ -42,10 +43,25 @@ class _Args:
     start = end = tickers = universe = account = None
 
 
+#: The checked-in configuration, read explicitly rather than ambiently.
+#:
+#: ``load_config()`` honours ``$CFD_CONFIG_FILE`` and the process
+#: environment, so in a full suite run it returns whatever an earlier test
+#: last pointed it at -- this file passed alone and failed in the suite for
+#: exactly that reason. These tests assert what the *deployed* configuration
+#: says, which is a property of the repository and not of ambient state, so
+#: the path is pinned and the environment is emptied.
+CONFIG_FILE = pathlib.Path(__file__).resolve().parent.parent / "config" / "config.toml"
+
+
+def _deployed():
+    return load_config(CONFIG_FILE, env={}, dotenv_path=None)
+
+
 @pytest.fixture(scope="module")
 def config():
     """The production BacktestConfig, as the daemon would build it."""
-    return _backtest_config(_Args(), load_config())
+    return _backtest_config(_Args(), _deployed())
 
 
 def _resolve(config, path):
@@ -142,7 +158,7 @@ def test_the_current_conditions_match_what_is_configured(config):
     # (analysis_frame_from_repository), so the effective feed is the app
     # config's. Asserting the BacktestConfig field alone would compare
     # against None and pass or fail for the wrong reason.
-    effective = config.interval or load_config().market.interval
+    effective = config.interval or _deployed().market.interval
     assert effective == provenance.CURRENT_FEED, (
         f"provenance believes decisions are taken on "
         f"{provenance.CURRENT_FEED!r} but the effective feed is "

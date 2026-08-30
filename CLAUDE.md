@@ -70,6 +70,37 @@ These are standing instructions from the project owner, not preferences.
 - **Read-only except for the layer's own writes.** Each layer names exactly
   what it may write in its README.
 - **No config mutation.**
+- **One engine, and it is the production one.** Owner's instruction,
+  2026-08-30. Backtesting, research, sweeps, the paper book and anything
+  else that decides what a position should be goes through
+  `execution.run_backtest` and expresses its rules as `ExecutionConfig`
+  settings the engine reads. A second implementation of a rule is not
+  allowed to exist, however convenient — not in a scratch harness, not in
+  the shadow book, not in a notebook.
+
+  This is stronger than the older "measure through the engine before
+  shipping", and it replaces it as the binding form. That rule permitted
+  screening an idea on an overlay so long as it was re-measured before
+  adoption, and the permission is what did the damage: three findings in
+  one weekend were measured one way and implemented the other, each
+  reproducing to the decimal, because a correctly-implemented wrong
+  measurement looks exactly like a right one.
+
+  Two known violations, both open as of 2026-08-30. `advisor.papertrade_run`
+  re-implements the time stop, the re-entry cooldown, the earnings blackout
+  and the confidence gate rather than reading the engine's decision — the
+  same duplication that once let the shadow book run a 1-day time stop and
+  a 14-day cooldown against a backtest configured differently. And any
+  research script that computes a position, a fill or a cost itself rather
+  than reading one back from a run.
+
+  The paper book is the sharper case because it is the *forward record*.
+  Its value is being evidence nobody could edit after the outcome; if it
+  runs different code from the engine, a disagreement between book and
+  backtest measures code divergence and simulation error mixed together,
+  and neither can be recovered from the other. Sharing decision logic does
+  not breach "the book neither imports nor knows about" dealing — that
+  constraint is about placing orders, and the engine places none.
 
 Several packages enforce their own isolation structurally — `tests/` parses
 their imports and fails the build on `requests`, `urllib`, `selenium`, the
