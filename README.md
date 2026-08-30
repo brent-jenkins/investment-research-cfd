@@ -21,7 +21,7 @@ Every fifteen minutes while a US market is open, a resident daemon:
 3. **classifies the regime** — volatility, trend, correlation, macro
 4. **produces signals** — direction, size and a confidence per instrument
 5. **simulates fills** with real spread, financing, FX and slippage
-6. **updates the paper book** — eight arms: four confidence bars and four setting variants
+6. **deals on the demo account** — mirroring the engine's own target positions
 7. **emails you** anything it opened or closed
 
 Once a day, at 03:00 and 03:05 UTC, it refreshes the full daily history
@@ -29,9 +29,11 @@ and the macro series, then takes health and risk snapshots and prunes old
 artefacts. There is no daily *pipeline* run: signals come from the intraday
 job above, which is the only thing that produces one.
 
-The risk snapshot describes a real book — the trades you confirmed placing
-if any exist, otherwise the paper book's baseline arm at £1,000 of notional
-per position, and otherwise nothing at all, reported as nothing.
+The risk snapshot describes a real book — the trades confirmed on the
+account if any exist, otherwise what the engine intends to hold, and
+otherwise nothing at all, reported as nothing. Intent and confirmation are
+distinguished: a breach on positions nobody has confirmed is reported as
+advisory rather than raised.
 
 You read the dashboard, take the emails, and place a selection by hand.
 
@@ -62,8 +64,9 @@ size have already dissolved under proper testing.
 twenty returns ~25% a year over the window. Every strategy figure is quoted
 against that benchmark, never alone.
 
-The forward paper book exists because none of the above can be settled by
-more backtesting.
+The demo account exists because none of the above can be settled by more
+backtesting. Its fills are confirmed by a counterparty with no stake in the
+answer, which no simulation of them can be.
 
 ---
 
@@ -79,7 +82,6 @@ cfdinvest-analytics evaluate --walkforward   # adds out-of-sample, takes minutes
 
 cfdinvest-schedule daemon               # everything, on its own cadence
 cfdinvest-schedule run-once --refresh   # one pipeline pass
-cfdinvest-schedule paper-book           # one paper-book pass
 cfdinvest-schedule prune-runs           # bound the artefact store
 
 cfdinvest-helper "long AAPL 0.68 entry=234.8 stop=228" --balance 2000
@@ -132,7 +134,6 @@ beside every headline. A shuffle control that fails says so.
 | Max gross exposure | 3.5× equity (≈70% of the balance as margin) |
 | Max in one instrument | 20% of the gross ceiling |
 | Slippage assumed | 2 bp |
-| Stake, paper book | £1,000 of exposure per trade, notional not margin |
 
 **Why hourly.** A daily bar gave one decision per instrument per session,
 which for a CFD is far too slow. Over two years: daily returned 347 trips a
@@ -188,39 +189,30 @@ long against Trading 212's 25.33%.
 
 ---
 
-## The paper book
+## The forward record
 
-Eight arms run side by side on the same signals and prices, each taking
-£1,000 of exposure:
+The **Capital.com demo account** is the forward record. The daemon reads
+the engine's own persisted run, converts each position to a share of the
+account's balance, and places what survives the bridge's guards. There is
+one decision path: `persist/intent.py` reads what the engine decided and no
+caller restates a strategy rule by name.
 
-- **c35** — the bar the engine actually enters on, and the only arm the
-  Capital bridge mirrors. It must stay first in the list.
-- **c50, c60, c70** — does raising the confidence bar help?
-- **ts14, ts60** — half and double the 0.29-day time stop. The joint sweep
-  found this the dominant parameter by a distance (59.3% mean CAGR at 0.29
-  against 12.2% at one day), and 0.29 was chosen on a backtest of one
-  window. Only forward evidence can say whether that peak is real.
-- **cool0** — no re-entry cooldown, against the configured two hours.
-- **blk0** — no earnings blackout, against the configured one day. The
-  blackout had never once run before 2026-08-28, so its value has no
-  forward record at all.
+**The paper book was removed on 2026-08-30.** It ran eight simulated arms
+at a fixed £1,000 stake, and it was kept for two reasons that did not hold
+up. The arms were to test whether raising the confidence bar helps — a
+question the engine now sweeps directly, and the arms sat at 0.50/0.60/0.70,
+all inside the range since measured as destructive. And its baseline arm was
+meant to hold the same positions as the account, so the gap between them
+would measure how wrong the simulated fills were. It did not hold the same
+positions: the book applied the time stop, cooldown, blackout and confidence
+gate and none of the breakout gate, size hysteresis, decayed trim, leverage
+cap or concentration cap. Measured through the engine, its rules return
+163.7% at −52.8% against the engine's 130.5% at −40.3%. Worse, the account
+mirrored the book, so it traded those rules too.
 
-Arms are nearly free: a pass is arithmetic over signals and prices that
-were computed anyway, and the book stakes a fixed £1,000 rather than a
-share of any balance. So the count is bounded by what can be interpreted,
-not by capital — which is the whole point of separating the simulation
-from the account. **Only the first arm reaches a real account**; the other
-seven touch nothing.
-
-The baseline arm is derived from `strategy.entry_confidence`, not hardcoded.
-It used to be, and the arms sat at 0.50/0.60/0.70 while the engine entered
-at 0.35 — so the forward record was validating a configuration returning 86%
-a year against the shipped 127%.
-
-Each arm keeps its own one-position-per-instrument rule and cooldown, so
-they never block each other. The book writes only `open` and `close` events
-— Trading 212 cannot resize an open CFD position, so neither can the
-simulation.
+What is lost is forward A/B comparison: one account holds one
+configuration. That is accepted — the backtest answers those questions
+faster, and since the cost model was corrected it answers them honestly.
 
 ---
 
@@ -237,10 +229,10 @@ prevents.
 | `analytics/` | Metrics, attribution, sweeps, walk-forward, Monte Carlo, **evaluate** |
 | `universe/` | Which instruments to trade, by rule and point-in-time |
 | `persist/` | Every artefact store. Account-aware. |
-| `schedule/` | Daemon, market calendar, notifications, the paper alert |
+| `schedule/` | Daemon, market calendar, notifications, dealing |
 | `risk/` `monitoring/` | Book-level limits; operational health |
 | `livehelper/` | The T212 safety core: intent, safety, sizing, broker rules |
-| `advisor/` | Suggestions, sentiment, the forward record, the paper book |
+| `advisor/` | Suggestions, sentiment, the live check |
 | `broker/capital/` | Read-only market data and prices; gated dealing; the bridge |
 | `confirm/` `journal/` `insights/` `bias/` | What you did, and what it says |
 | `simulate/` `metastrategy/` | Rehearsal; risk posture |
@@ -258,9 +250,9 @@ labels in `risk.compute_regime_risk`, scheduler status in
 Five pages, deliberately. It carried twenty-three and almost none were
 read.
 
-- **Dashboard** — what the paper book has done: the arms as one
-  comparison, open positions marked against the latest quote with its age
-  stated, and where the money went.
+- **Dashboard** — the demo account in summary: balance, equity, open P&L,
+  what it holds, and whether the scheduled jobs are keeping up. Detail
+  lives on the Broker page rather than being repeated here.
 - **System status** — whether the machine is doing its job. Every daemon job,
   when it last ran, and what is overdue.
 - **Signals** — what the model wants now, highest conviction first, with a
@@ -315,6 +307,9 @@ two minutes. Coverage is 88%.
 - `schedule/app.py` is 73% covered — the daemon dispatch, where several
   defects have hidden.
 
-The root of all of these is the same: the system has never traded. The
-forward paper book is the instrument built to change that, and it needs
-weeks rather than attention.
+The root of all of these is the same: the system has barely traded. The
+Capital.com demo account is the instrument built to change that, and it
+needs weeks rather than attention. Note that it has only been trading the
+engine's own rules since 2026-08-30 -- before that it mirrored a book with
+a different rule set, so anything it recorded earlier describes a strategy
+nobody chose.
