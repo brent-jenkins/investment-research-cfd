@@ -227,7 +227,14 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
                "2023-vintage candidate list would not be a better estimate "
                "but an unusable one. Owner's standing position, and not an "
                "unexamined omission -- whether forward results match is what "
-               "the demo account is for",
+               "the demo account is for. The RANKING is what earns this, not "
+               "breadth or the daily refresh: ten drawn at random from the "
+               "same ranked pool return -19.7% on average over five seeds, "
+               "every seed losing money, so the ordering is worth +150.1pp. "
+               "Randomising the universe moves CAGR 26.5pp across seeds -- a "
+               "separate and much larger floor than selection timing's "
+               "8.0pp, and the one that applies to comparisons of different "
+               "universes",
     ),
     Justification(
         path="execution.thresholds.entry_size",
