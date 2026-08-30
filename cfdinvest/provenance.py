@@ -175,11 +175,40 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
         cost_model=CURRENT_COST_MODEL,
         source="run_parameter_sweep on execution.max_leverage over [3.5, 5.0, "
                "7.0], full Capital history, eight names, measured spreads",
-        figure="3.5 -> 27.0% at -34.6%; 5.0 -> 31.4% at -38.0%; 7.0 -> 34.1% "
-               "at -38.6%. The cap is reached but rarely binding: mean gross "
-               "leverage is 0.708 against it, and the book is flat on 50.6% "
-               "of bars. Capital fixes stock CFDs at 5x, so 3.5 leaves "
-               "headroom unused deliberately rather than by venue limit",
+        figure="INCONCLUSIVE. 3.5 -> 27.0%; 5.0 -> 31.4%; 7.0 -> 34.1%, all "
+               "on the pre-FX-fix baseline. The 4.4pp between 3.5 and 5.0 is "
+               "inside the 8.0pp noise floor, so this does not discriminate "
+               "and the value is a risk choice rather than a finding. What "
+               "the run did establish: the cap is reached but rarely "
+               "binding, mean gross leverage being 0.708 against it with the "
+               "book flat on 50.6% of bars -- the constraint is not the cap. "
+               "Capital fixes stock CFDs at 5x, so 3.5 leaves headroom "
+               "unused deliberately rather than by venue limit",
+    ),
+    Justification(
+        path="universe.size_curve",
+        # String keys: TOML table keys are strings, and the registry
+        # compares against what is configured rather than what a reader
+        # would type.
+        value={"6": 62.5, "8": 76.9, "10": 82.3, "12": 73.8, "16": 50.4,
+               "20": 42.9, "30": -6.3},
+        feed=CURRENT_FEED,
+        cost_model=CURRENT_COST_MODEL,
+        source="scratchpad/screen_walk.py then universe_sweep.py: the screen "
+               "replayed point in time over 917 days and 100 candidates, its "
+               "daily selection expressed as an entry_gate, seven target "
+               "sizes through the engine with measured spreads",
+        figure="6 -> 62.5%/-19.1%; 8 -> 76.9%/-30.4%; 10 -> 82.3%/-41.3%; "
+               "12 -> 73.8%/-49.4%; 16 -> 50.4%; 20 -> 42.9%; 30 -> -6.3% "
+               "with cost at 105.9% of gross. 8/10/12 span 8.5pp and are not "
+               "separable at an 8.0pp floor, so this is a band not a peak; "
+               "resolve_target picks 10 because size_preference is 'largest'. "
+               "Measured on the currently tradeable list, which is the only "
+               "universe there is: a delisted name cannot be traded, so a "
+               "2023-vintage candidate list would not be a better estimate "
+               "but an unusable one. Owner's standing position, and not an "
+               "unexamined omission -- whether forward results match is what "
+               "the demo account is for",
     ),
     Justification(
         path="execution.thresholds.entry_size",

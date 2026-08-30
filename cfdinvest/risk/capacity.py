@@ -175,11 +175,28 @@ def _percentile(values: Sequence[float], pct: float) -> float:
 
 
 #: How much better one size must measure than another before the difference
-#: is treated as real. **Measured, not chosen.** Shifting only the day of
-#: the month the screen runs on -- changing nothing else about the strategy
-#: -- moved CAGR from 62.7% to 77.3% across eight offsets. Anything smaller
-#: than that on this book is a sampling artefact wearing a decimal point.
-NOISE_FLOOR_PP = 14.6
+#: is treated as real. **Measured, not chosen.**
+#:
+#: Re-derived 2026-08-30 under the feed and cost model that now run: Capital
+#: bars for decisions, and the spread charged as the broker quoted it rather
+#: than at a flat 5bp. Both changed, and each changes every number, so the
+#: old figure was not a yardstick any more -- it was measured on yfinance
+#: bars while undercharging the largest cost line by 2.26x.
+#:
+#: The method is unchanged, which is what makes the two comparable: move the
+#: day a screen's selection takes effect, and nothing else. One day is the
+#: honest minimum, since acting within the screen's own day is lookahead;
+#: two through six are equally arbitrary. Across those six offsets CAGR ran
+#: 70.7% to 78.7% at a fixed target of twelve.
+#:
+#: **Superseded: 14.6pp**, from shifting the rebalance start day on yfinance
+#: bars at a flat 5bp (62.7% to 77.3%). Struck rather than deleted, because
+#: the same test will otherwise be run again and the same number believed.
+#:
+#: A weaker perturbation -- trimming the last few bars instead -- gives
+#: 3.2pp. That is a lower bound and deliberately not used here: it moves
+#: only the tail where this one moves every decision.
+NOISE_FLOOR_PP = 8.0
 
 
 def operating_size(

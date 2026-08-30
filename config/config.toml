@@ -913,13 +913,44 @@ BA = "industrial"
 T = "telecom"
 VZ = "telecom"
 
+# How many names to trade, as a measured return curve.
+#
+# Re-measured 2026-08-30 through the engine on Capital bars with Capital's
+# own quoted spreads, replaying the screen forward point in time over 917
+# trading days and 100 candidates. The screen's daily selection is expressed
+# as an entry_gate, which refuses to open what was not selected and never
+# closes an incumbent -- so eligible equals held, and no position is ever
+# force-closed by the universe changing.
+#
+#   size   CAGR    maxDD   trades   cost/gross   flat bars
+#      6   62.5%   19.1%      677        24.0%       64.6%
+#      8   76.9%   30.4%      966        28.3%       57.1%
+#     10   82.3%   41.3%    1,283        33.3%       52.5%
+#     12   73.8%   49.4%    1,632        41.8%       47.3%
+#     16   50.4%   48.9%    2,357        55.3%       41.2%
+#     20   42.9%   53.6%    3,211        65.1%       35.5%
+#     30   -6.3%   81.6%    5,340       105.9%       26.3%
+#
+# Two effects cross here and both are visible. Breadth raises occupancy --
+# flat bars fall from 64.6% to 26.3% -- while turnover raises cost, from 24%
+# of gross to 106% of it. At thirty names the book earns money and pays more
+# than all of it away in spread.
+#
+# SUPERSEDED, and struck rather than deleted so the same test is not run
+# again and believed: 4=52.5, 6=61.7, 8=74.4, 10=86.4, 12=83.7, 16=62.5,
+# 20=40.5, 24=26.0. Those were measured on yfinance bars while charging a
+# flat 5bp against a measured median of 11.32bp, which subsidised exactly
+# the high-turnover sizes this curve has to discriminate between.
+#
+# Read it against the 8.0pp noise floor rather than as a ranking: 8, 10 and
+# 12 span 8.5pp and are not separable, while 6 and 16 clearly are. The
+# operating size is a band, not a peak.
 [universe.size_curve]
-4 = 52.5
-6 = 61.7
-8 = 74.4
-10 = 86.4
-12 = 83.7
-16 = 62.5
-20 = 40.5
-24 = 26.0
+6 = 62.5
+8 = 76.9
+10 = 82.3
+12 = 73.8
+16 = 50.4
+20 = 42.9
+30 = -6.3
 

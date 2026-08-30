@@ -65,13 +65,25 @@ def config():
 
 
 def _resolve(config, path):
-    """Follow a dotted path the way ``analytics.apply_overrides`` does."""
-    node = config
-    for part in path.split("."):
-        if not hasattr(node, part):
-            raise AttributeError(path)
-        node = getattr(node, part)
-    return node
+    """Follow a dotted path, on the BacktestConfig or the app config.
+
+    ``analytics.apply_overrides`` addresses the BacktestConfig, which is
+    where the execution and signal settings live. The universe settings do
+    not: they govern what the screen selects rather than how a position is
+    run, so they sit on the app config and are read by ``resolve_target``.
+    A registry that could only see one of the two would silently have no
+    opinion about half the tuned parameters.
+    """
+    for root in (config, _deployed()):
+        node = root
+        for part in path.split("."):
+            if not hasattr(node, part):
+                node = None
+                break
+            node = getattr(node, part)
+        if node is not None:
+            return node
+    raise AttributeError(path)
 
 
 def test_every_justification_points_at_a_real_setting(config):

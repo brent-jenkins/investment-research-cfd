@@ -129,13 +129,38 @@ CURVE = {4: 52.5, 6: 61.7, 8: 74.4, 10: 86.4, 12: 83.7, 16: 62.5, 20: 40.5, 24: 
 
 
 def test_the_peak_is_not_taken_on_its_own():
-    """8, 10 and 12 all measure within the noise floor of each other. Taking
-    the maximum makes the choice a coin-toss dressed as an optimisation."""
+    """Several sizes usually measure within noise of each other, and taking
+    the maximum makes the choice a coin-toss dressed as an optimisation.
+
+    Which sizes those are depends on the floor, so this asserts the rule
+    rather than its arithmetic: the chosen size is within the floor of the
+    peak, and the default preference takes the smallest such size. It may
+    coincide with the peak when nothing smaller is in the band -- that is
+    the rule working, not bypassing it."""
     from cfdinvest.risk.capacity import operating_size
 
+    from cfdinvest.risk.capacity import NOISE_FLOOR_PP
+
     result = operating_size(CURVE)
-    assert result.slots == 8, "the raw peak was taken without regard to noise"
-    assert "10" in result.note and "86.4" in result.note, (
+    peak_size = max(CURVE, key=CURVE.get)
+    peak = CURVE[peak_size]
+
+    # The property, not the number. Asserting `slots == 8` encoded the
+    # *consequence* of a 14.6pp floor rather than the rule, so re-deriving
+    # the floor to 8.0pp broke a test of behaviour that had not changed.
+    # What must hold at any floor: the chosen size measures within it of the
+    # peak, and the default preference declines the peak when a smaller size
+    # is indistinguishable from it.
+    assert peak - CURVE[result.slots] <= NOISE_FLOOR_PP, (
+        f"chose {result.slots} at {CURVE[result.slots]}%, which is more than "
+        f"{NOISE_FLOOR_PP}pp below the peak of {peak}%"
+    )
+    within = [s for s, v in CURVE.items() if peak - v <= NOISE_FLOOR_PP]
+    assert result.slots == min(within), (
+        "the default preference is risk-first, so it must take the smallest "
+        f"size the evidence permits; candidates were {sorted(within)}"
+    )
+    assert str(peak_size) in result.note and str(peak) in result.note, (
         "the peak it declined to take is not reported, so the choice cannot "
         "be argued with"
     )

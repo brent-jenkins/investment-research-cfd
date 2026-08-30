@@ -325,9 +325,16 @@ def test_the_traded_count_is_computed_from_the_curve_not_asserted():
     """The owner asked for a calculated number, not a chosen one.
 
     Read through the noise floor rather than by taking the curve's maximum:
-    8, 10 and 12 sit within 14.6pp of each other, so the peak at 10 is not
+    several sizes usually sit within it of each other, so the peak is not
     distinguishable from its neighbours and picking it would be a coin-toss
     dressed as an optimisation.
+
+    Which sizes qualify depends on the floor, which is re-derived whenever
+    the feed or the cost model changes -- it went from 14.6pp to 8.0pp on
+    2026-08-30. So this asserts the rule, not its arithmetic. Hard-coding
+    the answers made this test fail when the floor moved and the behaviour
+    had not, which is the "test the property, not the constant" rule
+    catching its own violation.
     """
     from cfdinvest.universe.traded import resolve_target
 
@@ -341,10 +348,26 @@ def test_the_traded_count_is_computed_from_the_curve_not_asserted():
     config = Config(follow=True)
     config.universe = Uni()
 
-    assert resolve_target(config, 8) == 12, "returns-first did not take the band's top"
+    from cfdinvest.risk.capacity import NOISE_FLOOR_PP
+
+    peak = max(Uni.size_curve.values())
+    band = sorted(
+        size for size, value in Uni.size_curve.items()
+        if peak - value <= NOISE_FLOOR_PP
+    )
+    assert len(band) > 1, (
+        "the fixture no longer has several sizes within the floor, so it "
+        "cannot exercise the choice this test exists for"
+    )
+
+    assert resolve_target(config, 8) == max(band), (
+        f"returns-first did not take the band's top; band was {band}"
+    )
 
     Uni.size_preference = "smallest"
-    assert resolve_target(config, 8) == 8, "risk-first did not take the band's bottom"
+    assert resolve_target(config, 8) == min(band), (
+        f"risk-first did not take the band's bottom; band was {band}"
+    )
 
     # An explicit target overrides the computation, and no curve falls back
     # to the traded count rather than inventing one.
