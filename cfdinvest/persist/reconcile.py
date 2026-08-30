@@ -63,7 +63,6 @@ def compare(
     book: Iterable[Mapping[str, Any]] | None = None,
     orders: Iterable[Mapping[str, Any]] | None = None,
     *,
-    cohort: str = "",
     config=None,
     account: str | None = None,
 ) -> dict[str, Any]:
@@ -72,13 +71,15 @@ def compare(
     Both stores are read when not supplied, so a caller with neither gets
     the live picture and a caller with fixtures gets a pure function.
     """
-    from cfdinvest.advisor import papertrade
+    from cfdinvest.persist import intent
     from cfdinvest.persist import orders as order_store
 
     try:
-        rows = list(book) if book is not None else papertrade.load_book(config, account)
+        rows = list(book) if book is not None else intent.intended_positions(
+            config, account
+        )
     except Exception as error:  # noqa: BLE001
-        logger.warning("Shadow book unreadable: %s", error)
+        logger.warning("The engine's intent is unreadable: %s", error)
         rows = []
     try:
         order_rows = (
@@ -89,7 +90,10 @@ def compare(
         logger.warning("Order store unreadable: %s", error)
         order_rows = []
 
-    held = papertrade.open_positions(rows, cohort or None)
+    # What the engine intends, keyed by instrument. Previously the shadow
+    # book's open positions; the book applied a different rule set, so a
+    # reconciliation against it compared orders to a strategy nobody chose.
+    held = {str(r["ticker"]): r for r in rows if r.get("ticker")}
     live = order_store.open_orders(config, account) if orders is None else _replay(order_rows)
     explanations = _last_result_by_ticker(order_rows)
 
@@ -136,7 +140,6 @@ def compare(
             })
 
     return {
-        "cohort": cohort or None,
         "matched": matched,
         "book_only": book_only,
         "account_only": account_only,

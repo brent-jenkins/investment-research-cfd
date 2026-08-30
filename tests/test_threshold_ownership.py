@@ -34,40 +34,47 @@ import inspect
 import pytest
 
 
-def test_the_book_takes_its_thresholds_from_the_configured_strategy():
-    """M398: the divergence itself, asserted at the seam.
+def test_no_second_rule_set_decides_a_position():
+    """The divergence this file was written for, closed at the root.
 
-    Checked on the source rather than by running a pass, because the
-    property is *where the number comes from*. A pass that happened to
-    agree with the config would prove nothing about the next one.
+    It used to assert that the shadow book's own defaults were not the old
+    literals -- 1 day, 14 days, 2 days -- because those would restore the
+    divergence whenever the config was absent. That was treating a symptom.
+    The book implemented the time stop, cooldown, blackout and confidence
+    gate and *none* of the breakout gate, size hysteresis, decayed trim,
+    leverage cap or concentration cap, and the account mirrored it: 163.7%
+    at -52.8% where the engine returns 130.5% at -40.3%.
+
+    So the book was removed on 2026-08-30 and the account now reads the
+    engine's own run. This asserts the second rule set cannot come back.
     """
-    from cfdinvest.advisor import papertrade_run
+    import importlib
 
-    source = inspect.getsource(papertrade_run.run_paper_pass)
-    for name, field in (
-        ("time_stop_days", "time_stop_days"),
-        ("cooldown_days", "reentry_cooldown_days"),
-        ("blackout_days", "earnings_blackout_days"),
-    ):
-        assert f'getattr(strategy, "{field}"' in source, (
-            f"{name} does not come from the strategy config"
-        )
+    for name in ("cfdinvest.advisor.papertrade",
+                 "cfdinvest.advisor.papertrade_run"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(name)
 
 
-def test_no_threshold_is_declared_twice_as_a_literal():
-    """M400: the fallbacks must not be the old literals.
+def test_the_account_reads_the_engines_intent_and_not_a_book():
+    """One owner for "what should be held", and it reads a persisted run."""
+    from cfdinvest.persist import intent
+    from cfdinvest.schedule import app
 
-    A fallback of 1 / 14 / 2 would restore the divergence whenever the
-    config was absent, which is exactly the case that is hardest to notice.
-    """
-    from cfdinvest.advisor import papertrade_run
-
-    signature = inspect.signature(papertrade_run.run_paper_pass)
-    for name in ("time_stop_days", "cooldown_days", "blackout_days"):
-        default = signature.parameters[name].default
-        assert default is None, (
-            f"{name} still carries its own default of {default!r}; the "
-            "config is meant to be the only owner"
+    assert app._engine_rows.__module__ == "cfdinvest.schedule.app"
+    source = inspect.getsource(app._engine_rows)
+    assert "intent.intended_positions" in source, (
+        "the dealing path derives its own view instead of reading the "
+        "single owner"
+    )
+    # And that owner re-expresses no strategy rule by name: every gate and
+    # cap is already inside the units the engine recorded.
+    owner = inspect.getsource(intent.intended_positions)
+    for rule in ("breakout", "time_stop", "cooldown", "blackout",
+                 "max_leverage", "concentration"):
+        assert rule not in owner, (
+            f"persist.intent mentions {rule!r}; a rule it knows by name is a "
+            "rule that can drift from the engine's"
         )
 
 

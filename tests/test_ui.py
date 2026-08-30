@@ -2116,98 +2116,6 @@ def test_position_costs_count_only_the_position_currently_open(tmp_path):
 # --------------------------------------------------------------------------- #
 # The dashboard reports the paper book
 # --------------------------------------------------------------------------- #
-def test_the_dashboard_never_pools_the_arms_into_a_verdict(populated):
-    """M141: three thresholds averaged into one number.
-
-    The arms exist to be compared. A single pooled win rate would answer
-    the question they were built to ask by erasing it -- and it would drift
-    with whichever arm happened to trade most, not with which threshold was
-    right. The headline may pool counts; the comparison must stay per arm.
-    """
-    page = (UI / "views" / "00_Dashboard.py").read_text(encoding="utf-8")
-
-    assert "cohorts" in page
-    # Each arm rendered on its own, not summed into a verdict.
-    assert "for cell, arm in zip" in page or "for arm in cohorts" in page
-    assert "0.50" in page and "0.60" in page and "0.70" in page
-
-
-def test_the_dashboard_withholds_a_win_rate_below_the_floor(populated):
-    """A rate on a handful of trades is a number that gets quoted.
-
-    The figures stay available -- `rate_so_far` is shown, greyed, with how
-    far there is to go -- but the claim is withheld until the sample
-    supports it. That is the same rule the forward record runs on, and the
-    reason for it is that a -5.53% which looked like a finding on fifteen
-    ticker-months inverted to +2.37% on four hundred and fifty-six.
-    """
-    from cfdinvest.advisor import papertrade
-
-    book = []
-    for index in range(3):
-        book.append({"event": "open", "cohort": "c50", "ticker": f"T{index}",
-                     "at": f"2026-08-0{index + 1}"})
-        book.append({"event": "close", "cohort": "c50", "ticker": f"T{index}",
-                     "at": f"2026-08-0{index + 2}", "net_pnl_gbp": 5.0})
-
-    summary = papertrade.summarise(book, "c50")
-    assert summary["closed"] == 3
-    assert summary["win_rate"] is None, "a rate on three trades is not a claim"
-    assert summary["rate_so_far"] == pytest.approx(100.0)
-    assert summary["needed"] == papertrade.MIN_CLOSED_FOR_RATE - 3
-
-    # And above the floor it becomes one.
-    book = []
-    for index in range(papertrade.MIN_CLOSED_FOR_RATE):
-        book.append({"event": "open", "cohort": "c50", "ticker": f"T{index}",
-                     "at": "2026-08-01"})
-        book.append({"event": "close", "cohort": "c50", "ticker": f"T{index}",
-                     "at": "2026-08-02", "net_pnl_gbp": 5.0})
-    assert papertrade.summarise(book, "c50")["win_rate"] == pytest.approx(100.0)
-
-
-def test_the_paper_book_components_sum_to_the_total():
-    """The accounting identity, asserted rather than assumed.
-
-    Gross less financing, spread and the conversion fee equals net. The
-    dashboard shows all five side by side, so if they ever disagreed the
-    page would be presenting two numbers that do not reconcile and calling
-    both facts.
-    """
-    from cfdinvest.advisor import papertrade
-
-    book = [
-        {"event": "open", "cohort": "c60", "ticker": "AAA", "at": "2026-08-01"},
-        {"event": "close", "cohort": "c60", "ticker": "AAA", "at": "2026-08-02",
-         "gross_pnl_gbp": 18.0, "financing_gbp": 5.0, "spread_cost_gbp": 0.4,
-         "fx_fee_gbp": 0.6, "net_pnl_gbp": 12.0, "days_held": 1.0},
-    ]
-    s = papertrade.summarise(book, "c60")
-    residual = (
-        s["gross_gbp"] - s["financing_gbp"] - s["spread_gbp"] - s["fx_fee_gbp"]
-    )
-    assert residual == pytest.approx(s["net_gbp"])
-
-
-def test_an_unpriced_close_is_excluded_rather_than_counted_as_zero():
-    """Absence is named. A trade that could not be valued is not a scratch."""
-    from cfdinvest.advisor import papertrade
-
-    book = [
-        {"event": "open", "cohort": "c50", "ticker": "AAA", "at": "2026-08-01"},
-        {"event": "close", "cohort": "c50", "ticker": "AAA", "at": "2026-08-02",
-         "net_pnl_gbp": None},
-        {"event": "open", "cohort": "c50", "ticker": "BBB", "at": "2026-08-01"},
-        {"event": "close", "cohort": "c50", "ticker": "BBB", "at": "2026-08-02",
-         "net_pnl_gbp": 4.0},
-    ]
-    s = papertrade.summarise(book, "c50")
-    assert s["closed"] == 1, "the unpriced trade must not be counted"
-    assert s["unpriced"] == 1, "and it must not be silently dropped either"
-    assert s["net_gbp"] == pytest.approx(4.0)
-    assert s["losses"] == 0, "unpriced is not a loss"
-
-
 def test_a_frame_too_large_to_style_is_trimmed_rather_than_fatal():
     """M143: a table that grows until it takes the page down.
 
@@ -2433,7 +2341,7 @@ def test_the_snapshots_stay_daily():
 def dashboard_with_a_position(monkeypatch, populated):
     """A paper book holding one open position, so the marking path runs.
 
-    Patched at ``sources.load_paper_book`` rather than at the storage path.
+    Patched at the source rather than at the storage path.
     The first version of this patched ``papertrade._path``, which the cached
     bundle never consulted, so the page found no book, stopped early, and
     the whole open-positions block went unexercised -- the fixture looked
@@ -2464,83 +2372,6 @@ def dashboard_with_a_position(monkeypatch, populated):
         ),
     )
     return book
-
-
-def test_the_dashboard_marks_open_positions_against_the_latest_quote(
-    dashboard_with_a_position, monkeypatch
-):
-    """M156: the open-position block never exercised.
-
-    It was not: the fixture book was always empty, so the page stopped
-    before the block and a NameError sitting in it survived the whole
-    suite. It would have fired on the live dashboard the moment the first
-    trade opened, which is the worst possible time to find an import.
-    """
-    from cfdinvest.ui import sources
-
-    monkeypatch.setattr(
-        sources, "load_live_quotes",
-        lambda config, account=None: sources.Source(
-            value={
-                "quotes": {"AAPL": 204.0},
-                "taken_at": "2026-08-26T17:00:00Z",
-                "age_minutes": 3.0,
-                "limit_minutes": 15.0,
-                "stale": False,
-                "unavailable": [],
-            }
-        ),
-    )
-
-    result = render("views/00_Dashboard.py")
-    assert not result.exception, f"dashboard raised: {result.exception}"
-
-    drawn = " ".join(str(e.value) for e in result.markdown)
-    drawn += " ".join(str(e.value) for e in result.caption)
-    assert "Open positions" in drawn or any(
-        "Open positions" in str(e.value) for e in result.subheader
-    ), "the page stopped before the open-position block -- fixture is not covering it"
-
-    # M157: the age must be stated, not merely the value.
-    #
-    # Asserted on the marks caption specifically. A looser search for
-    # "minutes ago" anywhere on the page passed against a mutation that
-    # removed it entirely, because the sidebar's freshness line says the
-    # same words about something else.
-    captions = [str(e.value) for e in result.caption]
-    dated = [c for c in captions if "Marked at" in c]
-    assert dated, "the marks carry no timestamp of their own"
-    assert any("minutes ago" in c for c in dated), (
-        "the marks are timestamped but not aged -- how far behind the "
-        "market they are is the whole point"
-    )
-
-
-def test_a_position_that_cannot_be_priced_is_still_shown(
-    dashboard_with_a_position, monkeypatch
-):
-    """Absence is named. A position you cannot value is the one to look at."""
-    from cfdinvest.advisor import papertrade
-    from cfdinvest.ui import sources
-
-    monkeypatch.setattr(
-        sources, "load_live_quotes",
-        lambda config, account=None: sources.Source.missing(
-            "no live quote has been polled yet", value={}
-        ),
-    )
-    result = render("views/00_Dashboard.py")
-    assert not result.exception, f"dashboard raised: {result.exception}"
-
-    drawn = " ".join(str(e.value) for e in result.markdown)
-    assert "not live" in drawn, "an unknown quote age was not called out"
-
-    marks = papertrade.mark_open_positions(
-        dashboard_with_a_position, {}, "2026-08-26T17:00:00Z", "c50"
-    )
-    assert len(marks) == 1, "an unpriced position was dropped from the table"
-    assert marks[0]["priced"] is False
-    assert marks[0]["value_gbp"] is None, "an unvalued position must not show a value"
 
 
 def test_the_daily_housekeeping_is_not_judged_against_the_intraday_run():
@@ -2839,39 +2670,6 @@ def test_the_signals_page_marks_what_would_actually_be_traded(populated):
     assert "conf.progress(" not in page
 
 
-def test_the_paper_arms_start_at_the_bar_the_engine_enters_on():
-    """M191: a forward record validating a strategy nobody trades.
-
-    The arms were 0.50/0.60/0.70, chosen as round numbers, while the engine
-    entered at 0.35. Every signal between the two was traded by the
-    backtested strategy and by no arm at all -- so the one measurement that
-    cannot be overfitted was scoring a configuration returning 85.6% a year
-    against the shipped 126.7%.
-    """
-    from cfdinvest.advisor.papertrade_run import cohorts_for
-    from cfdinvest.config import load_config
-
-    config = load_config()
-    arms = cohorts_for(config.strategy)
-
-    assert arms[0].threshold == pytest.approx(config.strategy.entry_confidence), (
-        f"the baseline arm is {arms[0].threshold}, the engine enters at "
-        f"{config.strategy.entry_confidence}"
-    )
-    assert not arms[0].overrides, (
-        "the first arm carries overrides; it is the one the Capital bridge "
-        "mirrors and must run the strategy's own settings"
-    )
-    # The confidence arms still ascend among themselves. The variant arms
-    # sit at the baseline bar and vary something else, so they are excluded
-    # from the ordering rather than breaking it.
-    bars = [a.threshold for a in arms if not a.overrides]
-    assert bars == sorted(bars), "the confidence arms are not in order"
-    assert len(set(bars)) == len(bars), "two arms share a bar"
-    # Raising the bar is the experiment, so there must be arms above it.
-    assert len(bars) >= 2
-
-
 def test_the_entry_band_reaches_the_engine():
     """M192: the third limit found living only in a dataclass default.
 
@@ -2999,37 +2797,6 @@ def test_the_dashboard_does_not_name_a_stale_set_of_arms():
         )
 
 
-def test_the_arms_shown_are_the_arms_that_run():
-    """The arms on the page come from the book, not from a list in the page.
-
-    Every arm the strategy runs must be reachable on the dashboard, or the
-    one being traded could be the one not shown.
-    """
-    from cfdinvest.advisor.papertrade_run import cohorts_for
-    from cfdinvest.config import load_config
-
-    page = (UI / "views" / "00_Dashboard.py").read_text(encoding="utf-8")
-
-    # It renders whatever the summary reports, rather than filtering to names
-    # written here.
-    assert 'value.get("cohorts"' in page
-
-    arms = [arm.name for arm in cohorts_for(load_config().strategy)]
-    assert len(arms) >= 2, "the comparison needs more than one arm"
-    for arm in arms:
-        assert f'"{arm}"' not in page, (
-            f"{arm} is named in the page; the arms must come from the book"
-        )
-
-
-# --------------------------------------------------------------------------- #
-# The broker page, kept apart from the paper book
-#
-# M297 the two books pooled into one figure
-# M298 an unreadable account rendered as an empty one
-# M299 a live page cached long enough to be wrong
-# M300 the page reaching a live account
-# --------------------------------------------------------------------------- #
 def test_the_broker_page_renders(populated):
     """It must render with no credentials configured, which is the norm."""
     result = render("views/03_Broker.py")

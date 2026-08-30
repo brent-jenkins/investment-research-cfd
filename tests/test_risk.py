@@ -968,37 +968,73 @@ def test_a_zero_interval_is_refused():
 # M220 a dollar mark labelled sterling
 # M221 the account balance taken from the run's initial equity
 # --------------------------------------------------------------------------- #
-PAPER_FX = 0.75
+MARK_FX = 0.75
 
 
-def _paper_event(ticker, *, cohort, direction="long", quantity=10.0, price=100.0,
-                 event="open", at="2026-08-26T16:00:00+00:00"):
+def _intended(ticker, *, direction="long", quantity=10.0, price=100.0,
+              event="open", at="2026-08-26T16:00:00+00:00"):
+    """One position the engine intends to hold."""
     return {
-        "at": at, "cohort": cohort, "event": event, "ticker": ticker,
+        "at": at, "event": event, "ticker": ticker,
         "direction": direction, "quantity": quantity, "price": price,
-        "fx_rate": PAPER_FX, "notional_gbp": quantity * price * PAPER_FX,
+        "fx_rate": MARK_FX, "notional_gbp": quantity * price * MARK_FX,
     }
 
 
-def _write_paper_book(config, events):
-    import json
+#: What the engine is pretending to intend, for the duration of one test.
+#:
+#: A one-element holder rather than a list, so the default can be ``None``:
+#: ``intended_positions`` returns ``None`` for "no run could be read" and
+#: ``[]`` for "a run was read and holds nothing", and those are different
+#: statements. A test that declares nothing means the former.
+_ENGINE_STATE: list = [None]
 
-    from cfdinvest.persist.storage import account_root
 
-    path = Path(account_root(config, None)) / "paper" / "book.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8"
+@pytest.fixture(autouse=True)
+def _stub_engine_intent(monkeypatch):
+    """Point ``persist.intent`` at whatever a test last declared.
+
+    These positions used to be written to the shadow book's JSONL and read
+    back. The book was removed on 2026-08-30: it applied a different rule
+    set from the engine -- no breakout gate, no size hysteresis, no decayed
+    trim, no leverage cap, no concentration cap -- so the risk it reported
+    was the risk of a strategy nobody chose. What these tests assert is
+    unchanged; only where the positions come from.
+    """
+    from cfdinvest.persist import intent
+
+    _ENGINE_STATE[0] = None
+    monkeypatch.setattr(
+        intent, "intended_positions",
+        lambda config=None, account=None: (
+            None if _ENGINE_STATE[0] is None else list(_ENGINE_STATE[0])
+        ),
     )
+    yield
+    _ENGINE_STATE[0] = None
 
 
-def _baseline_arm(config):
-    from cfdinvest.advisor.papertrade_run import cohorts_for
+def _engine_holds(config, events):
+    """Declare what the engine intends, as ``persist.intent`` returns it."""
+    rows = []
+    for event in events:
+        if str(event.get("event")) != "open":
+            continue
+        rows.append({
+            "ticker": event["ticker"],
+            "direction": event.get("direction", "long"),
+            "units": abs(float(event.get("quantity") or 0.0)),
+            "equity": 100_000.0,
+            "exposure_per_unit_size": 4.0,
+            "size": None,
+            "confidence": 0.5,
+            "price": event.get("price"),
+            "fx_rate": event.get("fx_rate"),
+            "at": event.get("at"),
+        })
+    _ENGINE_STATE[0] = rows
 
-    return cohorts_for(getattr(config, "strategy", None))[0][0]
-
-
-def test_the_book_is_the_paper_book_not_the_backtests_positions(recorded_lake):
+def test_the_book_is_the_engines_intent_not_the_backtests_positions(recorded_lake):
     """M214: the defect this replaced.
 
     The snapshot read ``positions.parquet`` from the newest run -- a
@@ -1008,15 +1044,14 @@ def test_the_book_is_the_paper_book_not_the_backtests_positions(recorded_lake):
     positions nobody held. A limit breached every day is a limit nobody reads.
     """
     config, _ = recorded_lake
-    arm = _baseline_arm(config)
-    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=4.0)])
+    _engine_holds(config, [_intended("SPY", quantity=4.0)])
 
     result = snapshot_from_disk(config)
     stored = pd.read_parquet(
         Path(config.paths.data_root) / "runs" / result.run_id / "positions.parquet"
     )
 
-    assert result.book == f"paper:{arm}"
+    assert result.book == "engine"
     assert set(result.exposure_metrics["units"]) == {"SPY"}
     # The run really does hold other instruments -- so this is not passing
     # because there was nothing else to read.
@@ -1047,12 +1082,11 @@ def test_a_confirmed_position_wins_over_the_simulation(recorded_lake):
     from cfdinvest.persist.confirm import Confirmation, write_confirmation
 
     config, _ = recorded_lake
-    arm = _baseline_arm(config)
-    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=4.0)])
+    _engine_holds(config, [_intended("SPY", quantity=4.0)])
     write_confirmation(
         Confirmation(
             ticker="TLT", action="open", quantity=3.0, price=100.0,
-            timestamp=pd.Timestamp("2026-08-26 17:00", tz="UTC"), fx_rate=PAPER_FX,
+            timestamp=pd.Timestamp("2026-08-26 17:00", tz="UTC"), fx_rate=MARK_FX,
         ),
         config,
     )
@@ -1089,15 +1123,14 @@ def test_a_confirmed_book_holding_nothing_is_still_the_book(
     from cfdinvest.persist.confirm import Confirmation, write_confirmation
 
     config, _ = recorded_lake
-    arm = _baseline_arm(config)
-    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=4.0)])
+    _engine_holds(config, [_intended("SPY", quantity=4.0)])
     for action, quantity, hour in recorded:
         write_confirmation(
             Confirmation(
                 ticker="TLT", action=action, quantity=quantity,
                 price=None if action == "ignore" else 100.0,
                 timestamp=pd.Timestamp(f"2026-08-26 {hour}:00", tz="UTC"),
-                fx_rate=PAPER_FX,
+                fx_rate=MARK_FX,
             ),
             config,
         )
@@ -1108,25 +1141,6 @@ def test_a_confirmed_book_holding_nothing_is_still_the_book(
     assert "SPY" not in (result.exposure_metrics["units"] or {})
 
 
-def test_only_the_baseline_arm_counts(recorded_lake):
-    """M218: four independent experiments added together.
-
-    The arms are the same signals at four thresholds. Summing them reports
-    the exposure of a book that trades every threshold at once, which is
-    nobody's book and four times too big.
-    """
-    config, _ = recorded_lake
-    arm = _baseline_arm(config)
-    _write_paper_book(config, [
-        _paper_event("SPY", cohort=arm, quantity=4.0),
-        _paper_event("TLT", cohort="c70", quantity=9.0),
-    ])
-
-    result = snapshot_from_disk(config)
-
-    assert set(result.exposure_metrics["units"]) == {"SPY"}
-
-
 def test_a_short_is_carried_short(recorded_lake):
     """M219: the paper book records size unsigned and direction separately.
 
@@ -1135,9 +1149,8 @@ def test_a_short_is_carried_short(recorded_lake):
     one.
     """
     config, _ = recorded_lake
-    arm = _baseline_arm(config)
-    _write_paper_book(config, [
-        _paper_event("SPY", cohort=arm, direction="short", quantity=4.0),
+    _engine_holds(config, [
+        _intended("SPY", direction="short", quantity=4.0),
     ])
 
     result = snapshot_from_disk(config)
@@ -1159,8 +1172,7 @@ def test_the_mark_is_converted_to_sterling(recorded_lake):
     rate is a small error, no rate is a wrong number that looks right.
     """
     config, _ = recorded_lake
-    arm = _baseline_arm(config)
-    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=4.0)])
+    _engine_holds(config, [_intended("SPY", quantity=4.0)])
 
     result = snapshot_from_disk(config)
     analysis_frame = pd.read_parquet(
@@ -1173,7 +1185,7 @@ def test_the_mark_is_converted_to_sterling(recorded_lake):
     close = float(spy.iloc[-1]["value"])
 
     assert result.exposure_metrics["gross_exposure_gbp"] == pytest.approx(
-        4.0 * close * PAPER_FX
+        4.0 * close * MARK_FX
     )
 
 
@@ -1185,8 +1197,7 @@ def test_the_balance_is_the_accounts_not_the_runs(recorded_lake):
     the same mismatch as the positions, moved into the denominator.
     """
     config, _ = recorded_lake
-    arm = _baseline_arm(config)
-    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=4.0)])
+    _engine_holds(config, [_intended("SPY", quantity=4.0)])
 
     result = snapshot_from_disk(config)
     gross = result.exposure_metrics["gross_exposure_gbp"]
@@ -1195,7 +1206,7 @@ def test_the_balance_is_the_accounts_not_the_runs(recorded_lake):
     assert leverage == pytest.approx(gross / RiskLimits().account_balance_gbp)
 
 
-def test_an_arm_that_holds_nothing_is_flat_not_unchecked(recorded_lake):
+def test_holding_nothing_is_flat_not_unchecked(recorded_lake):
     """M226: a book that was read and is empty, reported as unknown.
 
     Caught by running the fixed snapshot against the server rather than
@@ -1209,11 +1220,11 @@ def test_an_arm_that_holds_nothing_is_flat_not_unchecked(recorded_lake):
     teaches you to ignore it.
     """
     config, _ = recorded_lake
-    _write_paper_book(config, [_paper_event("SPY", cohort="c70", quantity=4.0)])
+    _engine_holds(config, [])   # the engine intends nothing this pass
 
     result = snapshot_from_disk(config)
 
-    assert result.book == f"paper:{_baseline_arm(config)}"
+    assert result.book == "engine"
     assert result.exposure_metrics["flat"] is True
     assert "positions" not in result.unavailable
     # Not asserted on the severity: a simulated book also reports the
@@ -1245,14 +1256,13 @@ def test_a_simulated_book_does_not_breach_the_accounts_limits(recorded_lake):
     satisfied teaches you to stop reading the page.
     """
     config, _ = recorded_lake
-    arm = _baseline_arm(config)
-    _write_paper_book(config, [
-        _paper_event(t, cohort=arm, quantity=200.0) for t in ("SPY", "TLT", "GLD")
+    _engine_holds(config, [
+        _intended(t, quantity=200.0) for t in ("SPY", "TLT", "GLD")
     ])
 
     result = snapshot_from_disk(config)
 
-    assert result.book == f"paper:{arm}"
+    assert result.book == "engine"
     assert result.exposure_metrics["gross_exposure_gbp"] > 3_000.0, (
         "the fixture is not over the limit, so this proves nothing"
     )
@@ -1268,16 +1278,15 @@ def test_the_comparison_is_kept_rather_than_dropped(recorded_lake):
     you are carrying, so it is reported apart from what is.
     """
     config, _ = recorded_lake
-    arm = _baseline_arm(config)
-    _write_paper_book(config, [
-        _paper_event(t, cohort=arm, quantity=200.0) for t in ("SPY", "TLT", "GLD")
+    _engine_holds(config, [
+        _intended(t, quantity=200.0) for t in ("SPY", "TLT", "GLD")
     ])
 
     result = snapshot_from_disk(config)
 
     assert result.advisory, "the limit comparison was thrown away"
     assert any("Gross exposure" in note for note in result.advisory)
-    assert "simulated" in result.message.lower()
+    assert "intended" in result.message.lower()
 
 
 def test_an_unconfirmed_account_is_unverified_not_flat(recorded_lake):
@@ -1288,8 +1297,7 @@ def test_an_unconfirmed_account_is_unverified_not_flat(recorded_lake):
     the account itself rather than to one of its artefacts.
     """
     config, _ = recorded_lake
-    arm = _baseline_arm(config)
-    _write_paper_book(config, [_paper_event("SPY", cohort=arm, quantity=1.0)])
+    _engine_holds(config, [_intended("SPY", quantity=1.0)])
 
     result = snapshot_from_disk(config)
 

@@ -28,6 +28,13 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+#: Position sources that describe *intent* rather than a confirmed holding.
+#: A breach from one of these is reported as advisory: it says what would
+#: happen, not what has. Previously this was any book labelled "paper:*";
+#: the shadow book was removed on 2026-08-30 and the engine's own intent
+#: took its place, which earns the same treatment for the same reason.
+INTENDED_SOURCES: frozenset[str] = frozenset({"engine"})
+
 __all__ = [
     "RiskLimits",
     "RiskSnapshot",
@@ -840,13 +847,20 @@ def build_risk_snapshot(
     if not regimes.get("available"):
         unavailable.append("regimes")
 
-    # Only a simulated book is demoted. ``book`` is None when the caller
+    # Only an *intended* book is demoted. ``book`` is None when the caller
     # passed positions directly -- every test in this suite, and the
     # walk-forward -- and those positions are the book that caller means. An
     # unknown provenance is not a reason to stop reporting a breach; being
-    # told the positions are a simulation is.
+    # told the positions are not yet confirmed is.
+    #
+    # This used to key off the "paper:" prefix, when the source was the
+    # shadow book. That book was removed on 2026-08-30 and the source is now
+    # the engine's own intent -- but the property that earns the demotion was
+    # never "it is a simulation", it was "nothing has confirmed this yet".
+    # The engine's intent is exactly that: what the account is about to be
+    # told to hold, not what the broker says it holds.
     advisory: list[str] = []
-    if str(book or "").startswith("paper:"):
+    if str(book or "") in INTENDED_SOURCES:
         advisory, flags = flags, []
         # And the account's exposure is then unverified rather than nil. No
         # confirmation on file is not evidence of a flat account -- it is
@@ -858,7 +872,7 @@ def build_risk_snapshot(
         message = f"{len(flags)} limit{'s' if len(flags) > 1 else ''} breached."
     elif advisory:
         message = (
-            f"Nothing confirmed on the account. The simulated book would be "
+            f"Nothing confirmed on the account. The intended book would be "
             f"over {len(advisory)} limit{'s' if len(advisory) > 1 else ''}."
         )
     elif unavailable:

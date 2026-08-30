@@ -157,12 +157,6 @@ JOBS: tuple[str, ...] = (
     "ingest-intraday",
     "run-intraday",
     "record-spreads",
-    # The book decides, then the account mirrors it. This order is
-    # load-bearing since 2026-08-28: `trade-capital` reads what the shadow
-    # book holds rather than re-deriving it from the signals, so running it
-    # first would mirror the previous pass's book and act one cycle late on
-    # every entry and exit.
-    "paper-book",
     "trade-capital",
     "ingest-daily",
     # After the daily ingest, before the snapshots: the screen's cost term
@@ -261,7 +255,6 @@ def jobs_due(
         # The paper book on the same cadence, and for the same reason: a
         # forward record is only worth having if the decision was written
         # down at a moment it could actually have been acted on.
-        due.append("paper-book")
 
     # The trading cadence: fresh bars, then fresh signals, while a market is
     # open. Ordered so the pipeline reads a lake ingestion has finished
@@ -290,7 +283,6 @@ def jobs_due(
             # Appending it twice is harmless: `jobs_due` returns
             # `[job for job in JOBS if job in due]`, so JOBS decides the
             # order and duplicates collapse.
-            due.append("paper-book")
             # And then the account, last: it mirrors the book that run has
             # just fed, and the reading of what a trade costs is taken
             # before anything is placed rather than after.

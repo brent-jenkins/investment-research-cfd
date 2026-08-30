@@ -363,7 +363,7 @@ def test_quotes_are_owed_every_five_minutes():
     # is only worth having if the decision was written down at a moment it
     # could actually have been acted on.
     assert daemon.jobs_due(at(5), last) == [
-        "poll-live-quotes", "advisor-alert", "paper-book",
+        "poll-live-quotes", "advisor-alert",
     ]
 
 
@@ -1525,39 +1525,3 @@ def test_the_fx_fee_defaults_to_the_basis_trading_212_actually_uses():
     assert FXConfig().fx_conversion_fee_pct == pytest.approx(0.005)
 
 
-def test_the_paper_books_open_positions_are_worth_a_quote(tmp_path, monkeypatch):
-    """M160: the forward record showing as unpriceable on its own page.
-
-    ``instruments_to_price`` covered the confirmed book and anything
-    clearing the confidence bar, but not the paper book -- so with no real
-    position open the poller wrote a quote file containing nothing the
-    dashboard needed, and every paper position marked as unpriced.
-
-    The paper pass does poll its own prices, but in memory and discards
-    them. Asking here keeps one answer to "what is worth a quote" instead
-    of two that can drift apart.
-    """
-    from cfdinvest.advisor import papertrade
-    from cfdinvest.livequotes.poller import instruments_to_price
-
-    config = config_for(tmp_path)
-    monkeypatch.setattr(
-        papertrade, "_path",
-        lambda cfg=None, account=None: tmp_path / "paper" / "book.jsonl",
-    )
-
-    opened = papertrade.open_trade(
-        "NKE", "short", 60.0, "2026-08-26T16:06:00Z",
-        rules=None, fx_rate=0.7355, cohort="c50",
-    )
-    assert opened is not None
-    papertrade.record([opened], config)
-
-    wanted = instruments_to_price(config)
-    assert "NKE" in wanted, "an open paper position was not priced"
-
-    # And once it closes it stops being polled -- this must not accumulate
-    # every instrument the book has ever touched.
-    closed = papertrade.value_trade(opened.as_row(), 59.0, "2026-08-26T18:00:00Z")
-    papertrade.record([closed], config)
-    assert "NKE" not in instruments_to_price(config)

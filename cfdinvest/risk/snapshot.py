@@ -86,30 +86,38 @@ def _confirmed_book(config, account: str | None):
         return None
 
 
-def _paper_book(config, account: str | None):
-    """Signed units per instrument from the paper book's baseline arm.
+def _engine_intent(config, account: str | None):
+    """Signed units per instrument, from the run the engine last decided.
 
-    The baseline arm rather than all four: the arms are independent
-    experiments, and summing them would report four times the exposure of a
-    book anybody would trade.
+    Read from ``persist.intent`` rather than from a book of its own. It used
+    to read the shadow book's baseline arm, which applied a different rule
+    set from the engine -- no breakout gate, no size hysteresis, no decayed
+    trim, no leverage cap, no concentration cap -- so the risk being
+    reported was the risk of a strategy nobody had chosen.
+
+    Units are what the engine recorded, so every cap and gate is already
+    inside them and none is re-expressed here.
     """
     try:
-        from cfdinvest.advisor.papertrade import load_book, open_positions
-        from cfdinvest.advisor.papertrade_run import cohorts_for
+        from cfdinvest.persist import intent
 
-        events = load_book(config, account)
-        if not events:
+        rows = intent.intended_positions(config, account)
+        if rows is None:
+            # No readable run. Unchecked, not flat.
             return None, None
-        arm = cohorts_for(getattr(config, "strategy", None))[0][0]
+        if not rows:
+            # A run that holds nothing is a *fact* about the book, and the
+            # snapshot must report it as flat rather than as unknown.
+            return {}, "engine"
         positions = {}
-        for ticker, row in open_positions(events, cohort=arm).items():
-            quantity = float(row.get("quantity") or 0.0)
+        for row in rows:
+            quantity = float(row.get("units") or 0.0)
             if str(row.get("direction") or "").lower() == "short":
                 quantity = -quantity
-            positions[ticker] = {**row, "quantity": quantity}
-        return positions, f"paper:{arm}"
+            positions[str(row["ticker"])] = {**row, "quantity": quantity}
+        return positions, "engine"
     except Exception as error:  # noqa: BLE001 - a risk page never raises
-        logger.warning("Could not read the paper book: %s", error)
+        logger.warning("Could not read the engine's intent: %s", error)
         return None, None
 
 
@@ -195,7 +203,7 @@ def snapshot_from_disk(
     if confirmed is not None:
         positions, source = confirmed, "confirmed"
     else:
-        positions, source = _paper_book(config, account)
+        positions, source = _engine_intent(config, account)
 
     if chosen is None:
         return build_risk_snapshot(

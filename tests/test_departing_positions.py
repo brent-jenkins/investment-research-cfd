@@ -2,228 +2,137 @@
 
 The traded list went from nineteen names to eight on 2026-08-28. Eleven
 instruments left it while holding open positions, and what happens to those
-positions is a decision rather than a detail.
+positions is a decision rather than a detail. The decision: a departed name
+keeps its signals so it can exit on its own reversal or time stop, and stops
+being eligible to open. Leaving the list stops re-entry and nothing else.
 
-Left alone the answer was liquidation, and quietly. A departed name gets no
-signal row, the paper pass reads its direction as ``flat``, and
-``time_stop_days`` is 0.29 -- one US session -- so ``signal gone`` closes it
-at the next open. Every position in a departing instrument would have been
-closed within a session, attributed to a time stop, and nothing in the book
-would have recorded that a config change was the cause.
+Getting only half of that wrong is expensive and was: nine positions sat on
+the demo account for want of the *pricing* half, refused every pass for "no
+price" while financing accrued on all nine.
 
-The decision (owner, 2026-08-28) is that they run as normal: out on their
-own reversal or their own time stop, the same exit they would have had if
-the universe had never moved. That needs two things, and one without the
-other is worse than neither.
-
-M393 a departed name loses its signal and is liquidated within a session
-M394 a departed name keeps its signal and is re-entered, so the universe
-     never actually changes
-M395 an empty traded list read as "everything permitted" rather than as a
-     broken config
-M396 the traded names losing their place at the front of the universe
-M397 held instruments unreadable, taking the whole run down with them
+Rewritten on 2026-08-30 when the shadow book was removed. The rule is
+unchanged; both halves moved. "What is held" now comes from
+``persist.intent`` -- the engine's own final bar -- rather than from a book
+that applied a different rule set, and opening is bounded by the traded
+universe rather than by the book's own copy of it.
 """
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
 
-from cfdinvest.advisor.papertrade_run import Cohort, _open_universe
-from cfdinvest.schedule.app import _with_held
-
-
-class Market:
-    def __init__(self, tickers):
-        self.tickers = tuple(tickers)
+from cfdinvest.schedule import app
 
 
 class Config:
+    """Just enough app config for the universe helpers."""
+
     def __init__(self, tickers):
-        self.market = Market(tickers)
+        self.market = type("M", (), {"tickers": list(tickers)})()
+        self.strategy = type("S", (), {"exposure_per_unit_size": 4.0})()
+        self.universe = type("U", (), {"follow_screen": False, "target": None,
+                                       "size_curve": {}, "candidates": ()})()
+
+
+def _intent(monkeypatch, tickers):
+    """Make the engine appear to hold exactly ``tickers``."""
+    from cfdinvest.persist import intent
+
+    monkeypatch.setattr(
+        intent, "held_tickers", lambda config=None, account=None: list(tickers)
+    )
+    monkeypatch.setattr(
+        intent, "intended_positions",
+        lambda config=None, account=None: [
+            {"ticker": t, "direction": "long", "units": 1.0,
+             "equity": 100_000.0, "exposure_per_unit_size": 4.0,
+             "size": None, "confidence": 0.5}
+            for t in tickers
+        ],
+    )
 
 
 def test_a_held_name_outside_the_universe_still_gets_signals(monkeypatch):
-    """M393: the liquidation nobody asked for.
+    """The exit decision has to be taken on bars that keep arriving.
 
-    Without this the position has no signal row, reads as flat, and the
-    0.29-day time stop closes it at the next open.
+    A stale signal is confidently wrong where a missing one is merely
+    absent, which is why this is worse than the failure it replaced.
     """
-    monkeypatch.setattr(
-        "cfdinvest.livequotes.poller.held_instruments",
-        lambda config, account=None: ["AAPL", "NKE"],
+    _intent(monkeypatch, ["NKE"])
+    monkeypatch.setattr(app, "_confirmed_instruments", lambda *a, **k: [])
+
+    wanted = app._with_held(["AMD", "TSLA"], Config(["AMD", "TSLA"]))
+    assert "NKE" in wanted, (
+        "a name held by the engine but off the traded list lost its signals, "
+        "so it could never decide to exit"
     )
-    names = _with_held(["AMD", "TSLA"], Config(["AMD", "TSLA"]))
-    assert set(names) == {"AMD", "TSLA", "AAPL", "NKE"}
+    assert {"AMD", "TSLA"} <= set(wanted)
 
 
-def test_a_position_open_only_in_the_paper_book_is_still_signalled(monkeypatch):
-    """M398: the source that is empty in production.
+def test_a_name_held_only_on_the_account_still_gets_signals(monkeypatch):
+    """Held is the broker's fact, not a configuration value."""
+    _intent(monkeypatch, [])
+    monkeypatch.setattr(app, "_confirmed_instruments", lambda *a, **k: ["COST"])
 
-    This shipped reading the confirm layer alone, which records what has
-    been confirmed by hand. Nothing ever has in this deployment: it returns
-    zero rows while the book holds fourteen positions, so the fix was inert
-    and every departing instrument would have been liquidated inside a
-    session. The first version of this test mocked `held_instruments` --
-    the very thing that was empty -- and passed against a broken system.
-    """
-    monkeypatch.setattr(
-        "cfdinvest.livequotes.poller.held_instruments",
-        lambda config, account=None: [],          # as in production
-    )
-    monkeypatch.setattr(
-        "cfdinvest.advisor.papertrade.load_book",
-        lambda config, account=None: [
-            {"cohort": "c35", "event": "open", "ticker": "COST",
-             "direction": "long", "quantity": 1.0},
-        ],
-    )
-    monkeypatch.setattr(
-        "cfdinvest.advisor.papertrade_run.cohorts_for",
-        lambda strategy=None: (Cohort("c35", 0.35, {}),),
-    )
-    names = _with_held(["AMD", "TSLA"], Config(["AMD", "TSLA"]))
-    assert "COST" in names, (
-        "a position held only in the paper book gets no signal, so the time "
-        "stop closes it within a session"
-    )
-
-
-def test_every_arm_is_covered_not_only_the_mirrored_one():
-    """Each cohort is an independent experiment; stranding one strands a test."""
-    import inspect
-
-    from cfdinvest.schedule import app
-
-    source = inspect.getsource(app._book_instruments)
-    assert "cohorts_for(" in source, (
-        "only one cohort is read, so positions in the other arms are stranded"
-    )
-
-
-def test_the_real_deployment_would_cover_its_own_open_positions():
-    """The property against the shipped configuration rather than a fixture.
-
-    Whatever the book currently holds must appear in the signal universe.
-    A mocked source cannot catch the failure this is guarding.
-    """
-    from cfdinvest.advisor import papertrade
-    from cfdinvest.config import load_config
-    from cfdinvest.schedule.app import _book_instruments
-
-    settings = load_config()
-    book = papertrade.load_book(settings, None)
-    if not book:
-        pytest.skip("no paper book in this checkout")
-
-    universe = set(_with_held(list(settings.market.tickers), settings) or ())
-    for ticker in _book_instruments(settings, None):
-        assert ticker in universe, (
-            f"{ticker} is open in the book and would receive no signal"
-        )
+    wanted = app._with_held(["AMD"], Config(["AMD"]))
+    assert "COST" in wanted, "a position open at the broker lost its signals"
 
 
 def test_the_traded_names_keep_their_place(monkeypatch):
-    """M396: order lost, so a truncated universe drops the traded names.
+    """Order matters downstream: the traded list is fetched first so a
+    partial failure degrades the departed names rather than the live ones."""
+    _intent(monkeypatch, ["NKE"])
+    monkeypatch.setattr(app, "_confirmed_instruments", lambda *a, **k: [])
 
-    The traded names are deliberately not in alphabetical order and the
-    held ones deliberately sort before them. A fixture that happens to be
-    sorted already cannot tell "order preserved" from "order rebuilt", and
-    the first version of this test could not -- sorting it passed.
+    wanted = app._with_held(["AMD", "TSLA"], Config(["AMD", "TSLA"]))
+    assert wanted[:2] == ["AMD", "TSLA"]
+
+
+def test_nothing_is_added_twice(monkeypatch):
+    """A name both held and traded is fetched once."""
+    _intent(monkeypatch, ["AMD"])
+    monkeypatch.setattr(app, "_confirmed_instruments", lambda *a, **k: ["AMD"])
+
+    wanted = app._with_held(["AMD", "TSLA"], Config(["AMD", "TSLA"]))
+    assert wanted.count("AMD") == 1
+
+
+def test_an_unreadable_source_does_not_take_the_run_with_it(monkeypatch):
+    """Signals for the traded list still matter when the held set cannot be
+    read. Losing the whole pass would be a worse failure than losing the
+    exits."""
+    from cfdinvest.persist import intent
+
+    def explode(*a, **k):
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(intent, "held_tickers", explode)
+    monkeypatch.setattr(app, "_confirmed_instruments", lambda *a, **k: [])
+
+    wanted = app._with_held(["AMD", "TSLA"], Config(["AMD", "TSLA"]))
+    assert {"AMD", "TSLA"} <= set(wanted)
+
+
+def test_an_empty_traded_list_is_not_silently_everything(monkeypatch):
+    """An empty universe permits nothing to open. Reading it as "no
+    restriction" would open the whole candidate pool."""
+    from cfdinvest.universe.traded import traded_universe
+
+    resolved = traded_universe(Config([]))
+    assert not resolved.names, (
+        "an empty traded list resolved to something tradeable"
+    )
+
+
+def test_the_engine_is_the_source_of_what_is_held(monkeypatch):
+    """Functional, not structural.
+
+    The previous version of this asserted a string appeared in
+    ``papertrade_run``'s source. It passed for four days while the account
+    traded a different strategy, because the string was still there and
+    still wrong.
     """
-    monkeypatch.setattr(
-        "cfdinvest.livequotes.poller.held_instruments",
-        lambda config, account=None: ["AAPL", "TSLA", "ABNB"],
-    )
-    names = _with_held(["TSLA", "NVDA"], Config(["TSLA", "NVDA"]))
-    assert names[:2] == ["TSLA", "NVDA"], "the traded names lost their place"
-    assert names != sorted(names), "the order is merely alphabetical"
-    assert len(names) == len(set(names)), "a held name that is also traded appears twice"
+    _intent(monkeypatch, ["LRCX", "MU"])
+    monkeypatch.setattr(app, "_confirmed_instruments", lambda *a, **k: [])
 
-
-def test_an_unreadable_book_does_not_take_the_run_with_it(monkeypatch):
-    """M397: no confirmations is not a reason to stop trading."""
-    def boom(config, account=None):
-        raise RuntimeError("no confirmations")
-
-    monkeypatch.setattr("cfdinvest.livequotes.poller.held_instruments", boom)
-    assert _with_held(["AMD"], Config(["AMD"])) == ["AMD"]
-
-
-def test_no_universe_stays_no_universe(monkeypatch):
-    """``None`` means "every instrument" downstream and must survive."""
-    monkeypatch.setattr(
-        "cfdinvest.livequotes.poller.held_instruments",
-        lambda config, account=None: ["AAPL"],
-    )
-    assert _with_held(None, Config([])) is None
-
-
-def test_a_departed_name_may_be_marked_but_not_re_entered():
-    """M394: running a position out and taking a new one are different acts.
-
-    If the open side used the signal universe, a departed name would simply
-    be bought back and the universe would have changed on paper only.
-    """
-    universe = _open_universe(Config(["AMD", "TSLA"]))
-    assert "AMD" in universe
-    assert "AAPL" not in universe, "a departed name could be opened again"
-
-
-def test_an_empty_traded_list_permits_nothing():
-    """M395: the reading that turns a broken config into an unrestricted book.
-
-    Absent configuration and empty configuration are different statements.
-    Absent leaves the pass as permissive as it was; empty says so.
-    """
-    assert _open_universe(Config([])) == frozenset()
-
-    class Bare:
-        pass
-
-    assert _open_universe(Bare()) is None, (
-        "no market config should not silently forbid every trade"
-    )
-
-
-def test_the_open_side_actually_consults_the_universe():
-    """The seam. A helper nothing calls is a decision that never happens."""
-    from cfdinvest.advisor import papertrade_run
-
-    source = inspect.getsource(papertrade_run.run_paper_pass)
-    assert "_open_universe(config)" in source, (
-        "the pass never asks which instruments may be opened"
-    )
-    assert "may_open is None or ticker in may_open" in source
-
-
-def test_the_signal_universe_actually_includes_held_names():
-    """The other seam, on the config the run is built from."""
-    from cfdinvest.schedule import app
-
-    source = inspect.getsource(app._backtest_config)
-    assert "_with_held(" in source, (
-        "the backtest universe is still the traded list alone"
-    )
-
-
-def test_the_two_universes_are_not_the_same_object():
-    """The whole design is that opening is narrower than signalling.
-
-    A refactor that unified them would restore the liquidation this exists
-    to prevent, and every other test here would still pass.
-    """
-    from cfdinvest.config import load_config
-
-    settings = load_config()
-    traded = set(settings.market.tickers)
-    opening = _open_universe(settings)
-    assert opening == traded
-
-    # The signal universe is a superset by construction: it is the traded
-    # list plus whatever is held. It may equal it -- nothing held outside
-    # the list -- but it may never be smaller.
-    signalled = _with_held(list(settings.market.tickers), settings)
-    assert traded.issubset(set(signalled))
+    assert set(app._book_instruments(Config(["AMD"]))) == {"LRCX", "MU"}

@@ -281,24 +281,6 @@ def test_the_read_only_client_does_not_import_this():
     assert not any("dealing" in name for name in imported), imported
 
 
-def test_the_paper_book_cannot_reach_a_broker():
-    """The book's worth is being a record nobody could edit afterwards.
-
-    A simulation that sometimes places an order is not that, and CLAUDE.md
-    names it as a hard constraint.
-    """
-    for name in ("papertrade.py", "papertrade_run.py"):
-        imported = _imported_modules(f"cfdinvest/advisor/{name}")
-        assert not any(
-            word in module.lower()
-            for module in imported
-            for word in ("broker.capital", "dealing", "urllib", "requests")
-        ), f"{name} imports {sorted(imported)}"
-
-
-# --------------------------------------------------------------------------- #
-# M287 the broker's tradeable flag used as permission to trade
-# --------------------------------------------------------------------------- #
 def test_the_brokers_tradeable_flag_is_not_a_trading_gate():
     """M287: the venue saying yes is not the same as it being sensible.
 

@@ -22,7 +22,7 @@ SERVICES=(cfdinvest cfdinvest-dashboard)
 # waiting to be noticed.
 #
 # Exactly one. cfdinvest.service is a resident daemon that owns every job
-# there is: quotes, the advisor, the paper book, ingestion, the daily run,
+# there is: quotes, the advisor, dealing, ingestion, the daily run,
 # both snapshots and pruning. The pipeline and monitor timers are superseded
 # by it and their unit files survive only as history, which is why
 # cfdinvest.service declares Conflicts= against them. Adding either one here

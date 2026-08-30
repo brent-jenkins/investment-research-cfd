@@ -174,8 +174,9 @@ def test_the_trading_job_runs_after_the_signals_and_only_in_session():
     # The book decides and the account mirrors it, so the book must have
     # run. Reversed, the account would mirror the previous pass and act one
     # cycle late on every entry and exit.
-    assert due.index("paper-book") < due.index("trade-capital"), (
-        "the account would mirror a stale book"
+    assert "paper-book" not in due, (
+        "the paper book was retired on 2026-08-30; the account now takes its "
+        "positions from the engine's own run rather than from a second book"
     )
 
     shut = daemon.jobs_due(

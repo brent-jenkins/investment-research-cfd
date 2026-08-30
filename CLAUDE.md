@@ -40,22 +40,43 @@ These are standing instructions from the project owner, not preferences.
   Capital.com demo account is the venue; the daemon may open and close
   positions on it unattended. Live requires its own environment variable, in
   different words from the first, so the mistake has to be made twice.
-- **The paper book stays a simulation, and stays running.** It must never
-  become the thing that places orders — its whole value is being a record
-  nobody could have edited after the outcome, and a book that sometimes
-  trades is not that. Dealing lives in a separate path that the book neither
-  imports nor knows about.
+- **The paper book is gone, and the demo account is the forward record.**
+  Owner's decision, 2026-08-30. Removed in full: `advisor/papertrade.py`,
+  `advisor/papertrade_run.py`, the `paper-book` job, the arms, the store and
+  every page that read it.
 
-  It keeps running alongside the demo account rather than being replaced by
-  it, and its stake stays at a fixed £1,000. Two reasons. The four arms
-  answer whether raising the confidence bar helps, and one account can only
-  trade one of them. And the book's `c35` arm holds the same intended
-  positions as the demo account, so the difference between them measures how
-  wrong the simulation's fills and costs are — which nothing else measures.
+  It was kept for two stated reasons and neither survived. The four arms
+  were to answer whether raising the confidence bar helps — a question the
+  engine now sweeps in three minutes, and the arms were set at 0.50/0.60/0.70,
+  all inside the range measured the same day as destructive (0.45 returns
+  82.8%, 0.55 returns 36.1%). And the `c35` arm was meant to hold the same
+  intended positions as the demo account, so the gap between them would
+  measure how wrong the simulation's fills were. It did not hold the same
+  positions: the book applied the time stop, cooldown, blackout and
+  confidence gate and none of the breakout gate, size hysteresis, decayed
+  trim, leverage cap or concentration cap. Measured through the engine, its
+  rule set returns 163.7% at −52.8% against the engine's 130.5% at −40.3%.
+  So the gap measured code divergence and fill error inseparably, and could
+  be read as neither.
+
+  Worse, `trade-capital` mirrored the book, so the **demo account traded
+  those rules too**. Every forward figure it produced described a strategy
+  nobody chose.
+
+  What replaces it is better evidence, not a substitute: real fills, real
+  spreads, real financing, confirmed by a counterparty with no stake in the
+  answer. `persist/intent.py` is the single owner of what should be held —
+  it reads the engine's own persisted run and expresses positions as units,
+  so every gate and cap is already inside them and no caller re-states a
+  rule by name. A rule a caller knows by name is a rule that can drift.
+
+  One capability was genuinely lost: the account trades one configuration,
+  so forward A/B comparison is gone. That is accepted — the backtest does it
+  faster and, since the cost model was corrected, trustworthily.
 - **Position size on a real account comes from the balance, not from a
-  constant.** The £1,000 stake is the *paper book's*, where a fixed stake is
-  the point: the only thing varying between trades should be whether the
-  call was right. An account has a balance, a margin requirement and a limit
+  constant.** The fixed £1,000 stake belonged to the paper book, where it
+  was the point: the only thing varying between trades should be whether the
+  call was right. That book is gone. An account has a balance, a margin requirement and a limit
   on how much of it may be committed, and a book that ignores those is
   unbounded rather than realistic. The dealing path reads the balance from
   the broker and sizes within the risk limits; it refuses rather than

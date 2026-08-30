@@ -19,10 +19,10 @@ import pytest
 from cfdinvest.persist import reconcile
 
 
-def book_row(ticker, quantity=10.0, price=100.0, event="open", cohort="c35", **kw):
+def book_row(ticker, quantity=10.0, price=100.0, event="open", **kw):
     return {
         "event": event, "at": kw.pop("at", "2026-08-28T14:00:00+00:00"),
-        "ticker": ticker, "cohort": cohort, "direction": kw.pop("direction", "long"),
+        "ticker": ticker, "direction": kw.pop("direction", "long"),
         "quantity": quantity, "price": price, "venue": "capital-demo",
         "live_armed": True, **kw,
     }
@@ -38,7 +38,7 @@ def result_row(ticker, ok=True, units=9.0, level=100.4, action="open", **kw):
 
 def test_a_matched_position_carries_both_prices():
     """The point of the join: the fill difference is readable directly."""
-    out = reconcile.compare([book_row("AAPL")], [result_row("AAPL")], cohort="c35")
+    out = reconcile.compare([book_row("AAPL")], [result_row("AAPL")])
 
     assert len(out["matched"]) == 1
     row = out["matched"][0]
@@ -60,7 +60,7 @@ def test_a_book_position_the_account_refused_carries_its_reason():
         result_row("INTC", ok=False, action="refused",
                    reason="below the minimum deal size"),
     ]
-    out = reconcile.compare([book_row("INTC")], orders, cohort="c35")
+    out = reconcile.compare([book_row("INTC")], orders)
 
     assert len(out["book_only"]) == 1
     assert out["book_only"][0]["reason"] == "below the minimum deal size"
@@ -75,7 +75,7 @@ def test_a_book_position_with_no_order_row_at_all_is_named_unexplained():
     A refusal is a decision and is fine. Nothing at all means the account
     never considered the instrument, and that is the case needing a person.
     """
-    out = reconcile.compare([book_row("NKE")], [], cohort="c35")
+    out = reconcile.compare([book_row("NKE")], [])
 
     assert len(out["book_only"]) == 1
     assert out["book_only"][0]["reason"] is None
@@ -85,7 +85,7 @@ def test_a_book_position_with_no_order_row_at_all_is_named_unexplained():
 
 
 def test_a_position_only_the_account_holds_is_reported_not_corrected():
-    out = reconcile.compare([], [result_row("TSLA")], cohort="c35")
+    out = reconcile.compare([], [result_row("TSLA")])
 
     assert [r["ticker"] for r in out["account_only"]] == ["TSLA"]
     assert out["matched"] == [] and out["book_only"] == []
@@ -93,7 +93,7 @@ def test_a_position_only_the_account_holds_is_reported_not_corrected():
 
 def test_a_closed_order_leaves_no_account_position():
     orders = [result_row("AAPL"), result_row("AAPL", action="close")]
-    out = reconcile.compare([book_row("AAPL")], orders, cohort="c35")
+    out = reconcile.compare([book_row("AAPL")], orders)
 
     assert out["matched"] == []
     assert [r["ticker"] for r in out["book_only"]] == ["AAPL"]
@@ -104,19 +104,9 @@ def test_an_unconfirmed_order_is_not_an_account_position():
     out = reconcile.compare(
         [book_row("AAPL")],
         [result_row("AAPL", ok=False, error="PLACED BUT UNCONFIRMED")],
-        cohort="c35",
     )
     assert out["matched"] == []
     assert out["book_only"][0]["reason"] == "PLACED BUT UNCONFIRMED"
-
-
-def test_only_the_named_arm_is_compared():
-    """Four arms run side by side and an account holds one of them."""
-    book = [book_row("AAPL", cohort="c35"), book_row("MSFT", cohort="c55")]
-    out = reconcile.compare(book, [result_row("AAPL")], cohort="c35")
-
-    assert [r["ticker"] for r in out["matched"]] == ["AAPL"]
-    assert out["book_only"] == [], "another arm's position leaked into the join"
 
 
 def test_the_summary_withholds_a_median_it_cannot_compute():
@@ -139,7 +129,6 @@ def test_the_summary_measures_the_fill_difference_in_basis_points():
     out = reconcile.compare(
         [book_row("AAPL", price=100.0), book_row("MSFT", price=200.0)],
         [result_row("AAPL", level=100.1), result_row("MSFT", level=200.6)],
-        cohort="c35",
     )
     summary = reconcile.reconciliation_summary(out)
 
@@ -173,6 +162,6 @@ def test_unreadable_stores_produce_an_empty_view_not_an_exception():
         def __iter__(self):
             raise OSError("no such file")
 
-    out = reconcile.compare(Exploding(), Exploding(), cohort="c35")
+    out = reconcile.compare(Exploding(), Exploding())
     assert out["matched"] == [] and out["book_only"] == []
     assert out["account_only"] == []

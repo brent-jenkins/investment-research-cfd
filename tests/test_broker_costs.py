@@ -1493,7 +1493,6 @@ def test_nothing_trades_on_extended_hours():
     from pathlib import Path
 
     for module in (
-        "cfdinvest/advisor/papertrade_run.py",
         "cfdinvest/schedule/market_calendar.py",
         "cfdinvest/livehelper/safety.py",
         "cfdinvest/execution/engine.py",

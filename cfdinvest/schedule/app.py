@@ -190,15 +190,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     quotes.add_argument("--account", default=None)
 
-    paper = commands.add_parser(
-        "paper-book",
-        help="one pass of the simulated forward-test book",
-    )
-    paper.add_argument(
-        "--account",
-        help="which account's book to write; the shared root when unset",
-    )
-
     daemon_parser = commands.add_parser(
         "daemon",
         help="run every scheduled job in one loop until stopped",
@@ -356,7 +347,7 @@ def _with_held(tickers, config, account=None) -> list[str] | None:
     Keeping it in the signal universe lets it exit on its own terms: a
     reversal, or its own time stop, the same way it would have if the
     universe had never changed. It does not let it be re-entered -- see
-    ``papertrade_run._open_universe``, which restricts *opening* to the
+    the traded-universe rule, which restricts *opening* to the
     configured list. Running a position out and taking a new one are
     different acts and only the first is wanted here.
 
@@ -400,29 +391,16 @@ def _confirmed_instruments(config, account=None) -> list[str]:
 
 
 def _book_instruments(config, account=None) -> list[str]:
-    """Anything open in the simulated book, across every arm.
+    """Anything the engine currently intends to hold.
 
-    Every cohort, not just the one that mirrors the account: each arm is an
-    independent experiment and a position open in any of them still needs a
-    signal to exit on. Scoping this to one cohort would strand the others.
+    Named for the book it used to read; it now reads ``persist.intent``,
+    which is the engine's own final bar. The book applied a different rule
+    set, so "what is held" taken from it named instruments the strategy had
+    not chosen and missed ones it had.
     """
-    from cfdinvest.advisor import papertrade
-    from cfdinvest.advisor.papertrade_run import cohorts_for
+    from cfdinvest.persist import intent
 
-    book = papertrade.load_book(config, account)
-    if not book:
-        return []
-    found: list[str] = []
-    seen: set[str] = set()
-    for arm in cohorts_for(getattr(config, "strategy", None)):
-        name = arm.name
-        rows = [r for r in book if str(r.get("cohort") or "") == name]
-        for ticker in papertrade.open_positions(rows, name):
-            if ticker not in seen:
-                seen.add(ticker)
-                found.append(str(ticker))
-    return found
-
+    return list(intent.held_tickers(config, account) or ())
 
 def _app_config(args):
     """Resolve the AppConfig, applying CLI overrides."""
@@ -927,201 +905,21 @@ def _advisor_inputs(app_config, account):
 
 
 def _engine_rows(app_config, account=None) -> list[dict]:
-    """What the *engine* says to hold, in the shape the bridge decides from.
+    """What the engine says to hold. See ``persist.intent`` for the why.
 
-    Replaces reading the shadow book, and the reason is not tidiness. The
-    book implements the time stop, the cooldown, the blackout and the
-    confidence gate -- and none of the breakout gate, the size hysteresis,
-    the decayed trim, the leverage cap or the concentration cap. The account
-    mirrored the book, so it has been trading a rule set no backtest
-    describes. Measured through the engine on 2026-08-30: the book's rules
-    return 163.7% at -52.8% where the engine's return 130.5% at -40.3%.
-
-    Read, never recomputed. ``run-intraday`` already runs the pipeline and
-    persists it; running it again here would be a second computation to keep
-    in step, which is the whole family of bug this change exists to close.
-
-    The translation is exact. The engine holds ``units`` of an instrument
-    against its own equity; the bridge sizes at ``share x
-    exposure_per_unit_size x balance``. So for the account to hold the same
-    *fraction* of its balance that the engine holds of its equity:
-
-        share = units x price / (equity x exposure_per_unit_size)
-
-    Every cap, gate and trim is already inside ``units``, so none of them
-    has to be re-expressed here -- which is the point. A rule this function
-    knows about is a rule that can drift.
-
-    Returns rows carrying ``units`` and ``equity`` with ``size`` still
-    absent, because the caller needs the instrument list *before* it can
-    price anything -- what may be closed is whatever the broker says is
-    open, which is only known after the rows are read. ``_size_engine_rows``
-    fills the share in once marks exist. Splitting it that way beats reading
-    the run twice or pricing a list nobody has assembled yet.
-
-    Never raises. No readable run means the account opens nothing this pass,
-    which is the safe direction.
+    Kept as a thin name here because the dealing pass reads better for it;
+    the logic has one owner and it is not this module.
     """
-    import pandas as pd
+    from cfdinvest.persist import intent
 
-    from cfdinvest.persist import readers
-
-    exposure = float(
-        getattr(getattr(app_config, "strategy", None),
-                "exposure_per_unit_size", 4.0) or 4.0
-    )
-    try:
-        frames = readers.load_execution_frame(None, app_config, account)
-    except Exception as error:  # noqa: BLE001
-        logger.warning("No readable run to mirror (%s); holding nothing", error)
-        return []
-
-    positions = frames.get("positions")
-    equity = frames.get("equity")
-    if positions is None or getattr(positions, "empty", True):
-        logger.warning("The latest run recorded no positions; holding nothing")
-        return []
-    if equity is None or getattr(equity, "empty", True):
-        logger.warning("The latest run recorded no equity; cannot size, holding nothing")
-        return []
-
-    last = positions.iloc[-1]
-    equity_value = float(
-        equity["equity"].iloc[-1] if "equity" in getattr(equity, "columns", [])
-        else equity.iloc[-1]
-    )
-    if not equity_value or equity_value <= 0:
-        logger.warning("The run's final equity is %r; cannot size", equity_value)
-        return []
-
-    confidence = _engine_confidence(app_config, account)
-
-    rows = []
-    for ticker, units in last.items():
-        name = str(ticker)
-        try:
-            held = float(units)
-        except (TypeError, ValueError):
-            continue
-        if not held or "=X" in name:      # reference pairs are not traded
-            continue
-        rows.append({
-            "ticker": name,
-            "direction": "long" if held > 0 else "short",
-            "size": None,                 # filled by _size_engine_rows
-            "confidence": confidence.get(name),
-            "units": abs(held),
-            "equity": equity_value,
-            "exposure_per_unit_size": exposure,
-        })
-    logger.info(
-        "Engine says hold %d instrument(s) on equity %.2f: %s",
-        len(rows), equity_value,
-        ", ".join(f"{r['ticker']} {r['direction']}" for r in rows) or "nothing",
-    )
-    return rows
+    return intent.intended_positions(app_config, account)
 
 
 def _size_engine_rows(rows, prices) -> list[dict]:
-    """Fill in each row's share of the balance, once marks are known.
+    """Fill each row's share of the balance, once marks are known."""
+    from cfdinvest.persist import intent
 
-        share = units x price / (equity x exposure_per_unit_size)
-
-    An instrument that cannot be priced keeps ``size`` absent rather than
-    being given a guess: the bridge already refuses an unsized row by name,
-    and "not priced" and "priced at nothing" are different statements.
-    """
-    marks = {str(k): v for k, v in (prices or {}).items()}
-    for row in rows or ():
-        price = marks.get(str(row.get("ticker")))
-        equity = float(row.get("equity") or 0.0)
-        exposure = float(row.get("exposure_per_unit_size") or 0.0)
-        if not price or equity <= 0 or exposure <= 0:
-            logger.debug("%s has no usable mark; left unsized", row.get("ticker"))
-            continue
-        row["size"] = float(row["units"]) * float(price) / (equity * exposure)
-    return rows
-
-
-def _engine_confidence(app_config, account=None) -> dict[str, float]:
-    """The latest bar's confidence per instrument, or an empty map.
-
-    Passed through so the bridge's own entry gate agrees with the one the
-    engine already applied, rather than second-guessing it on a default.
-    """
-    import pandas as pd
-
-    from cfdinvest.persist import readers
-
-    try:
-        frame = readers.load_frame("signals", None, app_config, account)
-    except Exception as error:  # noqa: BLE001
-        logger.debug("No signals to read confidence from: %s", error)
-        return {}
-    if frame is None or getattr(frame, "empty", True):
-        return {}
-    working = frame.reset_index()
-    if "timestamp" not in working.columns or "confidence" not in working.columns:
-        return {}
-    working["timestamp"] = pd.to_datetime(
-        working["timestamp"], utc=True, errors="coerce"
-    )
-    working = working[working["timestamp"] == working["timestamp"].max()]
-    return {
-        str(row.get("ticker")): row.get("confidence")
-        for _, row in working.iterrows()
-        if row.get("ticker")
-    }
-
-
-def _mirror_rows(app_config, account=None, cohort: str = "") -> list[dict]:
-    """What the shadow book holds, in the shape the bridge decides from.
-
-    The account mirrors the book rather than deriving its own view of the
-    signals. Both used to read the same signal frame and each work out what
-    to hold, which is two decision paths that can disagree -- and the whole
-    value of running them side by side is that a difference between them
-    means the *simulation* was wrong, not that they decided differently.
-
-    Membership and direction come from the book. Size does not: the book
-    gives every position the same £1,000 because a fixed stake is the point
-    of it, while the account sizes on the engine's own expression against a
-    real balance. So the two hold the same instruments, deliberately at
-    different weights, and the row carries the engine's size for the bridge
-    to scale.
-
-    One arm only. Four confidence thresholds run side by side and an account
-    can only hold one of them.
-
-    Never raises: an unreadable book means the account opens nothing this
-    pass, which is the safe direction.
-    """
-    from cfdinvest.advisor import papertrade
-
-    try:
-        book = papertrade.load_book(app_config, account)
-    except Exception as error:  # noqa: BLE001
-        logger.warning("Shadow book unreadable (%s); mirroring nothing", error)
-        return []
-
-    rows = []
-    for ticker, position in papertrade.open_positions(book, cohort or None).items():
-        size = position.get("signal_size")
-        if size is None:
-            # A position opened before the book recorded the engine's size.
-            # Refusing to mirror it would leave the account holding
-            # something the book no longer backs; sizing it at zero would
-            # close it. Neither is a decision this function should take, so
-            # it is passed through with the size absent and the bridge
-            # refuses it by name.
-            logger.debug("%s has no recorded signal size to mirror", ticker)
-        rows.append({
-            "ticker": ticker,
-            "direction": position.get("direction"),
-            "size": size,
-            "confidence": position.get("confidence"),
-        })
-    return rows
+    return intent.apply_prices(rows, prices)
 
 
 def _dealing_tickers(tickers, book_rows, held_positions) -> list[str]:
@@ -1804,140 +1602,6 @@ def _live_armed() -> bool | None:
         return None
 
 
-def _command_paper_book(args, app_config, smtp=None, transport=None) -> int:
-    """One pass of the simulated book, and an email if it did anything.
-
-    The email exists so a selection can be placed by hand on the virtual
-    account and compared against the simulated fills. It is built from the
-    book's own events rather than from the advisor's separate suggestion
-    logic: an email describing a different decision from the one the book
-    recorded would compare two things that were never the same.
-
-    Silence when nothing happened, which is most passes. Every cost is the
-    real one, from the recorded Trading 212 table.
-    """
-    from cfdinvest.advisor.papertrade_run import cohorts_for, run_all_cohorts
-    from cfdinvest.livequotes.poller import poll_live_quotes
-    from cfdinvest.persist import readers
-
-    account = getattr(args, "account", None)
-    strategy = app_config.strategy
-
-    try:
-        run_id = readers.load_latest_run(app_config, account=account)
-        frame = (
-            None if run_id is None
-            else readers.load_frame("signals", run_id, app_config, account)
-        )
-    except Exception as error:  # noqa: BLE001
-        logger.warning("Paper book: no signals to read (%s)", error)
-        return EXIT_OK
-
-    latest = []
-    if frame is not None and not getattr(frame, "empty", True):
-        working = frame.reset_index() if hasattr(frame, "reset_index") else frame
-        if "timestamp" in working.columns:
-            stamps = pd.to_datetime(working["timestamp"], utc=True, errors="coerce")
-            working = working[stamps == stamps.max()]
-        latest = working.to_dict("records")
-
-    wanted = [str(row.get("ticker") or "") for row in latest if row.get("ticker")]
-    # Anything already open needs a mark even if it no longer signals.
-    from cfdinvest.advisor import papertrade
-
-    wanted += list(papertrade.open_positions(papertrade.load_book(app_config, account)))
-    # And the currency pairs, always. The £1,000 stake is exposure in
-    # sterling, so a dollar-priced instrument needs the rate to size at all
-    # -- without it the position is wrong by the rate itself.
-    wanted += ["GBPUSD=X", "EURGBP=X", "USDJPY=X", "USDCAD=X", "USDCHF=X"]
-    prices = {
-        ticker: value
-        for ticker, value in poll_live_quotes(sorted(set(wanted))).items()
-        if value is not None
-    }
-
-    # Price the book on Capital's quotes, or open nothing.
-    #
-    # The book and the demo account are meant to hold the same intended
-    # positions, so the gap between them measures how wrong the simulation
-    # is. That only works if they are charged the same, which means one
-    # venue and no substitutes: a pass that quietly priced on another
-    # broker's table would put a row in the record that the account could
-    # never have produced.
-    #
-    # When Capital cannot be reached the table comes back empty, every entry
-    # absent, and `open_trade` declines. Positions already open are still
-    # marked and closed -- their terms were written on the row when they
-    # were struck and do not need fetching again. So an outage costs new
-    # entries, never the management of what is already held.
-    from cfdinvest.advisor.capital_venue import UNKNOWN_VENUE, rules_from_quotes, venue_name
-
-    venue = UNKNOWN_VENUE
-    capital_marks = _capital_marks(sorted({t for t in wanted if "=X" not in t}))
-    try:
-        rules = rules_from_quotes(capital_marks)
-        venue = venue_name(_capital_environment())
-        prices.update({
-            ticker: quote["mid"] for ticker, quote in capital_marks.items()
-            if quote.get("mid")
-        })
-    except Exception as error:  # noqa: BLE001 - a pass is worth more than a table
-        logger.warning(
-            "Capital terms unavailable (%s); the book will mark and close "
-            "what it holds and open nothing this pass", error,
-        )
-        rules = rules_from_quotes({}, terms={})
-    if not capital_marks:
-        logger.warning(
-            "No Capital quotes this pass; opening nothing. Open positions "
-            "are still marked on the terms recorded when they were struck."
-        )
-
-    live_armed = _live_armed()
-
-    before = len(papertrade.load_book(app_config, account))
-    summaries = run_all_cohorts(
-        latest, prices, config=app_config, account=account,
-        rules=rules, venue=venue, live_armed=live_armed,
-        rebalance_threshold=strategy.rebalance_threshold,
-        open_delay_minutes=strategy.open_delay_minutes,
-        max_opens_per_pass=strategy.max_opens_per_pass,
-    )
-
-    # The events this pass appended, read back from the book rather than
-    # returned by the pass: the book is what was actually recorded, and an
-    # alert about something that failed to persist would be a lie about the
-    # experiment.
-    if not getattr(args, "no_email", False):
-        fresh = papertrade.load_book(app_config, account)[before:]
-
-        # One arm only. The book runs four thresholds side by side, and the
-        # mail was carrying every event from all of them tagged by arm -- so
-        # a single signal on ADBE arrived as four lines and read as the same
-        # stock over and over. Sixteen mails in an afternoon, describing a
-        # book nobody could trade: you can only hold one of four parallel
-        # simulations.
-        #
-        # The baseline arm, read from the strategy's own entry bar rather
-        # than named here. Hardcoding it is exactly how the arms drifted
-        # from the engine once already.
-        arm = cohorts_for(app_config.strategy)[0][0]
-        fresh = [row for row in fresh if str(row.get("cohort") or "") == arm]
-
-        if fresh:
-            from cfdinvest.schedule.paper_alert import send_paper_alert
-
-            if getattr(smtp, "send_paper_signals", True):
-                send_paper_alert(fresh, config=smtp, transport=transport)
-
-    for summary in summaries:
-        print(
-            f"Paper book [{summary['cohort']}]: opened {summary['opened']}, "
-            f"closed {summary['closed']}, {summary['still_open']} open."
-        )
-    return EXIT_OK
-
-
 def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
     """Run one daemon job by name.
 
@@ -2044,10 +1708,6 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
     elif name == "advisor-alert":
         _command_advisor_alert(
             _job_args(args, "advisor-alert"), app_config, smtp, transport
-        )
-    elif name == "paper-book":
-        _command_paper_book(
-            _job_args(args, "poll-live-quotes"), app_config, smtp, transport
         )
     elif name == "prune-runs":
         _command_prune_runs(_job_args(args, "prune-runs"), app_config)
@@ -2493,8 +2153,6 @@ def main(argv: list[str] | None = None) -> int:
             return _command_prune_runs(args, app_config)
         if args.command == "poll-live-quotes":
             return _command_poll_live_quotes(args, app_config)
-        if args.command == "paper-book":
-            return _command_paper_book(args, app_config, smtp, transport)
         if args.command == "daemon":
             return _command_daemon(args, app_config, smtp, transport)
     except KeyboardInterrupt:

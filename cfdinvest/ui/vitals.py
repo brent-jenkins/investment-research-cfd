@@ -58,7 +58,6 @@ SCHEDULES: tuple[tuple[str, str, str], ...] = (
     ("run-intraday", "session", "Fresh signals every quarter hour while open"),
     ("record-spreads", "session", "What a trade costs right now, appended"),
     ("trade-capital", "session", "Place, resize and close on the demo account"),
-    ("paper-book", "cadence", "Open and close the three forward arms"),
     ("ingest-daily", "daily", "Top up the lake from the vendors"),
     ("record-candidate-spreads", "daily",
      "What the screen's candidates cost to trade, once a day"),

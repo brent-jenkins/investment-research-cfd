@@ -956,7 +956,11 @@ def test_the_daemon_owns_every_scheduled_job():
     from cfdinvest.schedule import daemon
 
     assert "prune-runs" in daemon.JOBS, "nothing would bound the artefact store"
-    assert "paper-book" in daemon.JOBS, "the forward record would stop"
+    assert "trade-capital" in daemon.JOBS, "nothing would reach the account"
+    assert "paper-book" not in daemon.JOBS, (
+        "the paper book was removed on 2026-08-30 -- it ran a different rule "
+        "set from the engine, so its record measured a strategy nobody chose"
+    )
     assert "ingest-daily" in daemon.JOBS, "the daily lake would go stale"
     # The only job that produces a run. ``run-daily`` was retired on
     # 2026-08-27: a US-only universe is closed at 03:05 UTC, so it skipped
@@ -1049,8 +1053,6 @@ def test_the_readme_matches_the_shipped_configuration():
     Asserted against the config rather than restated, so the table cannot
     drift silently.
     """
-    from cfdinvest.advisor import papertrade
-    from cfdinvest.advisor.papertrade_run import cohorts_for
     from cfdinvest.config import load_config
 
     readme = Path("README.md").read_text(encoding="utf-8")
@@ -1062,11 +1064,6 @@ def test_the_readme_matches_the_shipped_configuration():
     assert f"{strategy.time_stop_days} days" in readme
     assert f"{strategy.max_leverage}\u00d7 equity" in readme
     assert f"{strategy.slippage_bps:.0f} bp" in readme
-    assert f"\u00a3{papertrade.STAKE_GBP:,.0f} of exposure" in readme
-
-    # The paper arms, named as the code names them.
-    for name, _bar, _overrides in cohorts_for(strategy):
-        assert name in readme, f"the README does not mention the {name} arm"
 
     # And the dashboard page count, in whichever way English spells it.
     #

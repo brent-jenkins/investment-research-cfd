@@ -113,12 +113,11 @@ def instruments_to_price(
     # and thrown away. Asked for here so there is one answer to "what is
     # worth a quote" rather than two that can disagree.
     try:
-        from cfdinvest.advisor import papertrade
+        from cfdinvest.persist import intent
 
-        book = papertrade.load_book(config, account)
-        wanted.extend(papertrade.open_positions(book))
-    except Exception as error:  # noqa: BLE001 - no paper book is not a failure
-        logger.warning("Could not read the paper book for pricing: %s", error)
+        wanted.extend(intent.held_tickers(config, account))
+    except Exception as error:  # noqa: BLE001 - no run is not a failure
+        logger.warning("Could not read the engine's positions for pricing: %s", error)
 
     return list(dict.fromkeys(wanted))
 

@@ -121,7 +121,7 @@ def test_a_job_that_raises_does_not_stop_the_loop(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         daemon, "jobs_due",
-        lambda now, last, market_open=None: ["poll-live-quotes", "paper-book"],
+        lambda now, last, market_open=None: ["poll-live-quotes", "advisor-alert"],
     )
 
     args = Args()
@@ -129,7 +129,7 @@ def test_a_job_that_raises_does_not_stop_the_loop(tmp_path, monkeypatch):
     result = app._command_daemon(args, config_for(tmp_path), None, None)
 
     assert result == app.EXIT_OK, "a failing job returned a failing daemon"
-    assert calls == ["poll-live-quotes", "paper-book"], (
+    assert calls == ["poll-live-quotes", "advisor-alert"], (
         "the loop stopped after the failure instead of carrying on"
     )
 
@@ -165,7 +165,7 @@ def test_the_loop_honours_max_ticks(tmp_path, monkeypatch):
     from cfdinvest.schedule import daemon
 
     monkeypatch.setattr(
-        daemon, "jobs_due", lambda now, last, market_open=None: ["paper-book"]
+        daemon, "jobs_due", lambda now, last, market_open=None: ["advisor-alert"]
     )
 
     args = Args()
@@ -209,55 +209,6 @@ def test_the_market_calendar_failing_means_closed_not_open(tmp_path, monkeypatch
 # --------------------------------------------------------------------------- #
 # The paper book command
 # --------------------------------------------------------------------------- #
-def test_the_paper_book_emails_only_what_it_actually_recorded(tmp_path, monkeypatch):
-    """M204: an alert describing something that failed to persist.
-
-    The events are read back out of the book after the pass rather than
-    taken from its return value. A trade the daemon believed it made but
-    could not write is a trade the email must not describe -- the whole
-    point of these emails is that a selection gets placed by hand against
-    what the book actually holds.
-    """
-    from cfdinvest.advisor import papertrade
-
-    sent: list[list[dict]] = []
-    book: list[dict] = []
-
-    monkeypatch.setattr(papertrade, "load_book", lambda *a, **k: list(book))
-    monkeypatch.setattr(
-        app, "run_all_cohorts", lambda *a, **k: [], raising=False
-    )
-
-    import cfdinvest.schedule.paper_alert as alert
-
-    monkeypatch.setattr(
-        alert, "send_paper_alert",
-        lambda events, config=None, transport=None: sent.append(list(events)) or True,
-    )
-
-    import inspect
-
-    source = inspect.getsource(app._command_paper_book)
-    assert "load_book" in source, "the alert is not built from the recorded book"
-    assert "[before:]" in source, (
-        "the alert does not read back only what this pass appended"
-    )
-    assert "suggested_trades" not in source
-
-
-def test_nothing_is_emailed_when_email_is_off(tmp_path, monkeypatch):
-    """--no-email must reach every sender, not most of them."""
-    import inspect
-
-    source = inspect.getsource(app._command_paper_book)
-    assert 'getattr(args, "no_email", False)' in source, (
-        "the paper book ignores --no-email"
-    )
-
-
-# --------------------------------------------------------------------------- #
-# The command line
-# --------------------------------------------------------------------------- #
 def test_every_subcommand_maps_to_a_handler():
     """M205: a command the parser accepts and main cannot run.
 
@@ -289,9 +240,9 @@ def test_the_job_arguments_carry_the_account_through(tmp_path):
     """
     args = Args()
     args.account = "virtual"
-    passed = app._job_args(args, "paper-book")
+    passed = app._job_args(args, "advisor-alert")
     assert getattr(passed, "account", None) == "virtual"
-    assert getattr(passed, "command", None) == "paper-book"
+    assert getattr(passed, "command", None) == "advisor-alert"
 
 
 def test_job_arguments_do_not_leak_between_jobs(tmp_path):
@@ -386,55 +337,6 @@ def test_polling_writes_what_it_priced_and_names_what_it_could_not(
     assert written.get("AAPL") == pytest.approx(231.4)
     assert written.get("XXX") is None, "an unreadable price was dropped or zeroed"
     assert "1 of 2" in capsys.readouterr().out
-
-
-def test_the_paper_book_runs_every_arm_and_says_what_each_did(
-    tmp_path, monkeypatch, capsys
-):
-    """M209: a pass that runs one arm and reports four.
-
-    The arms only mean anything next to each other. A pass that silently
-    ran fewer than it printed would make the comparison a fiction.
-    """
-    from cfdinvest.advisor import papertrade
-    import cfdinvest.schedule.app as module
-
-    monkeypatch.setattr(papertrade, "load_book", lambda *a, **k: [])
-    monkeypatch.setattr(
-        module, "run_all_cohorts",
-        lambda latest, prices, **kw: [
-            {"cohort": name, "opened": 0, "closed": 0, "still_open": 0,
-             "written": 0, "skipped": {}}
-            for name in ("c35", "c50", "c60", "c70")
-        ],
-        raising=False,
-    )
-    monkeypatch.setattr(module, "poll_live_quotes", lambda w: {}, raising=False)
-
-    from cfdinvest.persist import readers
-
-    monkeypatch.setattr(readers, "load_latest_run", lambda *a, **k: None)
-
-    assert app._command_paper_book(
-        parsed("paper-book"), config_for(tmp_path)
-    ) == app.EXIT_OK
-    printed = capsys.readouterr().out
-    for name in ("c35", "c50", "c60", "c70"):
-        assert name in printed, f"the {name} arm was not reported"
-
-
-def test_a_missing_signals_frame_is_not_a_failed_pass(tmp_path, monkeypatch):
-    """The book has nothing to do before the first pipeline run, which is a
-    state rather than a fault."""
-    from cfdinvest.persist import readers
-
-    def refuse(*a, **k):
-        raise RuntimeError("no runs yet")
-
-    monkeypatch.setattr(readers, "load_latest_run", refuse)
-    assert app._command_paper_book(
-        parsed("paper-book"), config_for(tmp_path)
-    ) == app.EXIT_OK
 
 
 def test_main_dispatches_and_returns_the_commands_code(tmp_path, monkeypatch):
@@ -700,99 +602,3 @@ def test_a_faded_signal_and_a_reversed_one_are_told_apart():
 # M257 the mail carrying every arm's events
 # M258 the arm named in the mail rather than read from the entry bar
 # --------------------------------------------------------------------------- #
-def test_only_the_baseline_arm_is_emailed(tmp_path, monkeypatch):
-    """M257: four simulations arriving as one instruction list.
-
-    The book runs four thresholds side by side. The mail carried every event
-    from all of them tagged by arm, so one signal on ADBE arrived as four
-    lines and read as the same stock over and over -- sixteen mails in an
-    afternoon describing a book nobody could trade, because you can hold one
-    of four parallel simulations and not all four.
-
-    The book itself is untouched: it still records every arm, because the
-    arms are the experiment. It is the mail that has an audience.
-    """
-    import json
-
-    from cfdinvest.advisor import papertrade
-    from cfdinvest.advisor import papertrade_run as run_module
-    from cfdinvest.advisor.papertrade_run import cohorts_for
-    from cfdinvest.config import load_config
-    from cfdinvest.livequotes import poller as poller_module
-    from cfdinvest.schedule import app
-    import cfdinvest.schedule.paper_alert as alert_module
-
-    book = tmp_path / "book.jsonl"
-    monkeypatch.setattr(
-        papertrade, "_path", lambda config=None, account=None: book
-    )
-    monkeypatch.setattr(poller_module, "poll_live_quotes", lambda names: {})
-
-    sent: list[list[dict]] = []
-    monkeypatch.setattr(
-        alert_module, "send_paper_alert",
-        lambda events, config=None, transport=None: sent.append(list(events)),
-    )
-
-    config = load_config()
-    baseline = cohorts_for(config.strategy)[0][0]
-
-    # The pass appends, exactly as the real one does -- so ``before`` and
-    # ``fresh`` are computed the way they are in production rather than
-    # faked, and the test cannot pass by getting the bookkeeping wrong.
-    def append_every_arm(*args, **kwargs):
-        rows = [
-            {"at": "2026-08-27T14:00:00+00:00", "cohort": arm, "event": "open",
-             "ticker": "ADBE", "direction": "long", "quantity": 4.0,
-             "price": 285.0, "confidence": 0.9, "fx_rate": 0.7358,
-             "notional_gbp": 1000.0}
-            for arm in (baseline, "c50", "c60", "c70")
-        ]
-        book.write_text(
-            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
-        )
-        return []
-
-    monkeypatch.setattr(run_module, "run_all_cohorts", append_every_arm)
-
-    class Args:
-        no_email = False
-        account = None
-
-    class Smtp:
-        send_paper_signals = True
-
-    app._command_paper_book(Args(), config, Smtp(), None)
-
-    assert len(papertrade.load_book()) == 4, "the book must still record every arm"
-    assert sent, "nothing was emailed at all"
-    arms = {str(row.get("cohort")) for row in sent[0]}
-    assert arms == {baseline}, f"the mail carried {sorted(arms)}"
-    assert len(sent[0]) == 1, "one signal produced more than one line"
-
-
-def test_the_emailed_arm_follows_the_entry_bar(monkeypatch):
-    """M258: the arm named in the mail rather than derived.
-
-    Hardcoding an arm is exactly how the book drifted from the engine once
-    before -- the arms sat at 0.50/0.60/0.70 while the strategy entered at
-    0.35, so the forward record scored a configuration nobody traded. The
-    mail must follow the same one owner.
-    """
-    import dataclasses
-    from pathlib import Path
-
-    from cfdinvest.advisor.papertrade_run import cohorts_for
-    from cfdinvest.config import load_config
-
-    source = Path("cfdinvest/schedule/app.py").read_text(encoding="utf-8")
-    body = source[source.index("def _command_paper_book("):]
-    body = body[: body.index("\ndef ")]
-    assert "cohorts_for" in body, "the mail's arm is not read from the entry bar"
-    assert '"c35"' not in body, "an arm is hardcoded in the mail path"
-
-    # And it moves when the bar moves.
-    config = load_config()
-    raised = dataclasses.replace(config.strategy, entry_confidence=0.60)
-    assert cohorts_for(raised)[0][0] == "c60"
-    assert cohorts_for(config.strategy)[0][0] != "c60"
