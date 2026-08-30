@@ -54,6 +54,71 @@ except Exception as error:  # noqa: BLE001
     screens = []
     st.warning(f"The selection store could not be read: {error}")
 
+# --- how many, and why ------------------------------------------------------ #
+#
+# The count used to be however many names somebody had typed into
+# `market.tickers`. It is computed now, and a computed number that nobody
+# can see is worse than a typed one -- so this says what it is, what it was
+# derived from, and what it declined to take.
+st.subheader("How many it holds")
+try:
+    from cfdinvest.risk.capacity import NOISE_FLOOR_PP, operating_size
+    from cfdinvest.universe.traded import resolve_target
+
+    curve = {int(k): float(v)
+             for k, v in (getattr(settings.universe, "size_curve", {}) or {}).items()}
+    computed = resolve_target(settings, len(traded))
+    explicit = getattr(settings.universe, "target", None)
+    preference = str(getattr(settings.universe, "size_preference", "largest"))
+
+    row = st.columns(3)
+    row[0].metric("Instruments held", computed)
+    row[1].metric("Chosen by", "a person" if explicit else f"the curve ({preference})")
+    row[2].metric("Noise floor", f"{NOISE_FLOOR_PP:g}pp")
+
+    if explicit:
+        st.caption(
+            f"Pinned to {explicit} by `universe.target`. Unset it to let the "
+            "measurement decide."
+        )
+    elif curve:
+        answer = operating_size(curve, prefer=preference)
+        peak = max(curve, key=lambda k: curve[k])
+        st.caption(
+            f"Derived from a measured curve of return against size, read "
+            f"through a noise floor of {NOISE_FLOOR_PP:g}pp rather than by "
+            f"taking its best point. {answer.note}. The peak is {peak} at "
+            f"{curve[peak]:.1f}%, and it is **not** taken on its own: "
+            f"changing only the day of the month a screen runs on moves the "
+            f"same strategy by {NOISE_FLOOR_PP:g}pp, so sizes within that of "
+            f"each other are indistinguishable and `{preference}` decides "
+            f"between them."
+        )
+        st.caption(
+            "This is also the open-position cap, deliberately the same "
+            "number: every name eligible but unheld is a candidate to rotate "
+            "into, and each rotation pays a round trip."
+        )
+        import pandas as _pd
+
+        frame = _pd.DataFrame(
+            {"universe size": list(curve), "measured CAGR %": list(curve.values())}
+        ).set_index("universe size")
+        frame["within the floor of the best"] = [
+            "yes" if max(curve.values()) - v <= NOISE_FLOOR_PP else ""
+            for v in curve.values()
+        ]
+        frame["chosen"] = ["<-" if k == computed else "" for k in curve]
+        st.dataframe(frame, width="stretch")
+    else:
+        st.warning(
+            f"No size curve is configured, so the count falls back to the "
+            f"traded list ({len(traded)}). That is a fallback, not a "
+            "measurement -- run the size sweep and record it."
+        )
+except Exception as error:  # noqa: BLE001 - a view must not break the page
+    st.warning(f"The traded count could not be explained: {error}")
+
 # --- what is traded now ---------------------------------------------------- #
 st.subheader("Traded")
 st.caption(

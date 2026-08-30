@@ -306,6 +306,43 @@ def _traded(app_config, account=None) -> list[str]:
     return list(resolved.names)
 
 
+def _ever_selected(config, account=None) -> list[str]:
+    """Every instrument any recorded screen has ever selected.
+
+    Data collection outlives membership. A name that leaves the traded list
+    is not a name we stop caring about: it may return next month, its
+    history is what the screen ranks it on, and a gap in the middle of that
+    history is not recoverable later -- the vendor serves what it serves
+    today, and a bar not fetched while it existed is gone.
+
+    The selections record is the right source because it is append-only and
+    already holds every decision the screen has made. Order is preserved so
+    the current list stays at the front of any fetch.
+
+    A genuinely delisted instrument simply stops returning data. Ingestion
+    reports that per-symbol without taking the rest of the fetch down, which
+    is the correct behaviour here -- marking it as delisted, rather than
+    merely absent, is a separate question and deliberately not answered by
+    this function.
+    """
+    try:
+        from cfdinvest.universe.screen import load_screens
+
+        rows = load_screens(config, account)
+    except Exception as error:  # noqa: BLE001 - collection is best-effort
+        logger.debug("Selection history unreadable (%s); not extending", error)
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for row in rows or ():
+        for ticker in (row or {}).get("selected") or ():
+            name = str(ticker)
+            if name and name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
+
+
 def _with_held(tickers, config, account=None) -> list[str] | None:
     """The traded list plus anything still open that has left it.
 
@@ -1793,15 +1830,19 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         # not it is currently selectable. A name that has genuinely stopped
         # trading is a different case -- ingestion reports it per-symbol and
         # the rest of the fetch is unaffected.
+        account = getattr(args, "account", None)
+        wanted = _with_held(backtest.tickers, app_config, account) or list(
+            backtest.tickers
+        )
+        # Everything ever selected, not merely everything held. A departed
+        # name keeps accruing history so it can be ranked on return, and so
+        # a position reopened in it later is not decided on a series with a
+        # hole in the middle.
+        for name in _ever_selected(app_config, account):
+            if name not in wanted:
+                wanted.append(name)
         runner_module._refresh(
-            DataRepository(app_config),
-            _with_fx_support(
-                _with_held(
-                    backtest.tickers, app_config, getattr(args, "account", None)
-                )
-                or backtest.tickers
-            ),
-            backtest,
+            DataRepository(app_config), _with_fx_support(wanted), backtest
         )
     elif name == "run-intraday":
         _command_run_once(

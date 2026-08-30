@@ -219,3 +219,59 @@ def test_intraday_ingestion_covers_what_is_still_held():
         "the intraday top-up fetches only the traded list, so a held name "
         "that left it stops receiving bars and exits on stale data"
     )
+
+
+def test_data_collection_outlives_universe_membership(tmp_path, monkeypatch):
+    """A name that leaves the list keeps accruing history.
+
+    The vendor serves what it serves today: a bar not fetched while the
+    instrument was interesting is not recoverable later. So the intraday
+    top-up covers everything ever selected, not merely what is held now --
+    otherwise a name dropped in March and reselected in June is ranked on,
+    and traded from, a series with a hole in the middle.
+    """
+    from cfdinvest.schedule import app as schedule_app
+    from cfdinvest.universe import screen as screen_module
+
+    rows = [
+        {"as_of": "2026-03-01T00:00:00Z", "selected": ["OLD1", "OLD2", "MU"]},
+        {"as_of": "2026-04-01T00:00:00Z", "selected": ["MU", "AMD"]},
+    ]
+    monkeypatch.setattr(screen_module, "load_screens",
+                        lambda config=None, account=None: rows)
+
+    ever = schedule_app._ever_selected(None, None)
+
+    assert set(ever) == {"OLD1", "OLD2", "MU", "AMD"}
+    assert ever[:3] == ["OLD1", "OLD2", "MU"], "recorded order was not preserved"
+    assert len(ever) == len(set(ever)), "duplicates would be fetched twice"
+
+
+def test_an_unreadable_history_does_not_stop_ingestion(monkeypatch):
+    """Best-effort: collection is an enhancement, and losing it must not
+    take the fetch of the current universe down with it."""
+    from cfdinvest.schedule import app as schedule_app
+    from cfdinvest.universe import screen as screen_module
+
+    def explode(config=None, account=None):
+        raise OSError("store gone")
+
+    monkeypatch.setattr(screen_module, "load_screens", explode)
+    assert schedule_app._ever_selected(None, None) == []
+
+
+def test_the_intraday_job_fetches_the_history_not_just_the_holdings():
+    """Structural: the realistic regression is someone simplifying this
+    back to the traded list while tidying."""
+    import inspect
+
+    from cfdinvest.schedule import app as schedule_app
+
+    source = inspect.getsource(schedule_app.run_daemon_job)
+    block = source[source.index('elif name == "ingest-intraday"'):]
+    block = block[:block.index('elif name == "run-intraday"')]
+    assert "_ever_selected(" in block, (
+        "the intraday top-up no longer covers departed names, so their "
+        "history stops the day they leave the list"
+    )
+    assert "_with_held(" in block
