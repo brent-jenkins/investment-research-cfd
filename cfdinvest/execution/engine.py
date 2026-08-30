@@ -828,7 +828,11 @@ def _trim_decayed(target_units, units, confidence, config):
     multiplier = getattr(config, "decayed_position_multiplier", None)
     if multiplier is None:
         return target_units
-    bar = float(getattr(config.thresholds, "entry_confidence", 0.0) or 0.0)
+    override = getattr(config, "decayed_threshold", None)
+    bar = float(
+        override if override is not None
+        else (getattr(config.thresholds, "entry_confidence", 0.0) or 0.0)
+    )
     if bar <= 0:
         return target_units
     decayed = (units != 0) & (target_units != 0) & (

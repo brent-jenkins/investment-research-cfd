@@ -226,6 +226,35 @@ treated as safe.
 
 Tests are the deliverable, not a formality.
 
+**Measure through the engine before shipping, never through a research
+overlay.** A scratch harness that edits the signal frame -- multiplying
+``size``, replacing ``direction``, masking entries -- is not measuring the
+code that runs. The engine applies its rules *after* ``shift_for_execution``,
+*after* the hysteresis band, and with access to ``units``, which the signal
+frame does not have. Three findings in one weekend were measured one way and
+implemented the other:
+
+* the breakout gate: harness required confirmation where a signal *started*,
+  the engine required it on every entry. 78.1% against 63.0%.
+* the decayed-position trim: harness halved the signal, which can push it
+  under ``entry_size`` and suppress an entry; the engine halves target units
+  for positions already held and never affects entry. 77.4% against 73.6%.
+* the confidence-sizing family: normalised over signal bars, 18% of which
+  can never open a position, so the arm ran more real exposure than the
+  baseline it was compared against.
+
+Every one of them reproduced to the decimal across separate harness runs,
+which is what a correctly-implemented wrong measurement looks like.
+Reproducibility says nothing about whether the right thing was measured.
+
+So overlays are for *screening* an idea cheaply, and nothing may be adopted
+on one. Before a finding is shipped it is re-measured with the rule
+expressed as ``ExecutionConfig`` settings and applied by the engine -- which
+usually means building the engine support first and testing second, the
+reverse of the tempting order. Where a parameter cannot be swept that way,
+add the field so it can be (see ``decayed_threshold``) rather than reaching
+for the signal frame.
+
 **A figure from an invalidated test is retracted everywhere, not just in the
 next sentence.** When a measurement turns out to have been wrong -- the arm
 was inert, the harness measured a different rule than the code implements,

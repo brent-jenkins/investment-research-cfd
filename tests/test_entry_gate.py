@@ -233,3 +233,42 @@ def test_a_continuing_signal_is_not_re_gated():
     assert permitted_while_active < active, (
         "every start was permitted -- the gate requires confirmation nowhere"
     )
+
+
+def test_the_trim_threshold_can_be_swept_without_moving_the_entry_bar():
+    """Sweeping a rule must not require editing the signal frame.
+
+    The first threshold for this rule was chosen in a research harness that
+    multiplied signal size before the engine saw it -- which can push a
+    signal under ``entry_size`` and suppress an entry outright, something
+    the engine rule never does. The harness measured 77.4%; the shipped rule
+    measures 73.6%. Same name, different rule, for the third time in a
+    weekend.
+
+    This field exists so the sweep can run through ExecutionConfig against
+    the code that ships.
+    """
+    class Swept(_Config):
+        decayed_threshold = 0.60
+
+    # A position at 0.45 clears the 0.35 entry bar but not a swept 0.60.
+    assert _trim_decayed(
+        np.array([10.0]), np.array([10.0]), np.array([0.45]), _Config()
+    )[0] == 10.0
+    assert _trim_decayed(
+        np.array([10.0]), np.array([10.0]), np.array([0.45]), Swept()
+    )[0] == 5.0
+
+    # And the entry bar itself is untouched by the sweep.
+    assert Swept.thresholds.entry_confidence == 0.35
+
+
+def test_absent_the_override_the_entry_bar_still_governs():
+    """The shipped behaviour, and what the rule means."""
+    class Raised(_Config):
+        thresholds = type("T", (), {"entry_confidence": 0.60})()
+        decayed_threshold = None
+
+    assert _trim_decayed(
+        np.array([10.0]), np.array([10.0]), np.array([0.45]), Raised()
+    )[0] == 5.0

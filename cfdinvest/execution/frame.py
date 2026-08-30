@@ -237,6 +237,18 @@ class ExecutionConfig:
     #: halve a position you would no longer open. One owner, and it follows
     #: any change to the entry bar.
     decayed_position_multiplier: float | None = None
+
+    #: The confidence below which a held position is trimmed. ``None`` means
+    #: ``thresholds.entry_confidence``, which is the shipped behaviour and
+    #: what the rule means -- halve a position you would no longer open.
+    #:
+    #: It exists as a separate field only so the threshold can be *swept*
+    #: through this config rather than by editing the signal frame. Sweeping
+    #: ``entry_confidence`` itself would move the entry bar at the same
+    #: time, changing two things at once; sweeping it in a harness measures
+    #: a rule the engine does not implement, which is how the first
+    #: threshold was chosen and why it has to be re-derived.
+    decayed_threshold: float | None = None
     #: Cap on gross notional divided by equity.
     max_leverage: float = 5.0
     #: The largest share of the *gross ceiling* any one instrument may take.
