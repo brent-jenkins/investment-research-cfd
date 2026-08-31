@@ -273,18 +273,43 @@ def _check_scheduler(
         )
 
     hours = (now - last).total_seconds() / 3600.0
-    stale = hours > thresholds.scheduler_stale_hours
+
+    # Judged in TRADING hours, using the same ruler the alerting path uses.
+    #
+    # This check used to compare wall-clock hours against a 4-hour
+    # threshold, which made every Monday morning a critical banner: the
+    # intraday jobs only run while a market is open, so a Friday-evening
+    # run is ~63 wall-clock hours old by Monday breakfast and nothing is
+    # wrong. ``risk.scheduler_status`` already judged it correctly and this
+    # page judged it again, differently -- two owners for one verdict, so
+    # the banner read critical while the alert read fine. The banner is the
+    # one a person sees, and a warning that fires every week on schedule is
+    # a warning nobody reads.
+    #
+    # Wall-clock is still what is *shown*, because "when did it last run"
+    # means wall-clock to a reader; only the verdict uses trading time, and
+    # both numbers appear so the gap between them is legible rather than
+    # mysterious.
+    try:
+        from cfdinvest.schedule.market_calendar import trading_hours_between
+
+        trading = trading_hours_between(last, now)
+    except Exception:  # noqa: BLE001 - a calendar fault is not an outage
+        trading = hours
+
+    stale = trading > thresholds.scheduler_stale_hours
     return Check(
         key="scheduler_recent",
         title="Scheduler activity",
         triggered=stale,
         detail=(
-            f"last completed run was {hours:.1f} h ago "
+            f"last completed run was {hours:.1f} h ago, {trading:.1f} of "
+            f"them with a market open "
             f"(threshold {thresholds.scheduler_stale_hours:.0f} h)"
         ),
         remedy="The scheduler keeps no heartbeat, so this only measures "
         "completed runs. Check the scheduler process and its logs.",
-        value=hours,
+        value=trading,
     )
 
 

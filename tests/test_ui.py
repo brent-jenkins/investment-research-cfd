@@ -3008,3 +3008,110 @@ def test_the_dashboard_separates_an_unreadable_account_from_an_empty_one():
     assert 'get("error")' in source, (
         "an unreadable account is not distinguished from an empty one"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The scheduler banner, judged in trading time
+# --------------------------------------------------------------------------- #
+# M-live: "Critical system warning -- results may be unreliable. Scheduler
+# activity: last completed run was 63.2 h ago (threshold 4 h)", shown on a
+# Monday morning when the last run was Friday's close and nothing was wrong.
+#
+# risk.scheduler_status already judged this correctly, in trading hours, and
+# carried a comment explaining the Monday problem. This page judged it again
+# in wall-clock hours -- two owners for one verdict, disagreeing, with the
+# banner being the half a person actually sees.
+
+FRIDAY_CLOSE = pd.Timestamp("2026-08-28 19:45", tz="UTC")
+MONDAY_AM = pd.Timestamp("2026-08-31 10:55", tz="UTC")
+
+
+def _scheduler_check(last, now):
+    return health._check_scheduler(
+        sources.Source(value={"last_run": last}), health.HealthThresholds(), now
+    )
+
+
+def test_a_weekend_is_not_a_stale_scheduler():
+    """The reported case, to the hour.
+
+    Friday's close read on Monday breakfast is 63.2 wall-clock hours old
+    every single week. A threshold that fires on that is not a warning
+    about anything -- it is an alarm clock, and one that trains the reader
+    to ignore the banner that would tell them about a real failure.
+    """
+    check = _scheduler_check(FRIDAY_CLOSE, MONDAY_AM)
+
+    assert not check.triggered, check.detail
+    # Both numbers are shown. The wall-clock figure is what "when did it
+    # last run" means to a reader; hiding it would trade one confusion for
+    # another.
+    assert "63.2 h ago" in check.detail
+    assert "with a market open" in check.detail
+
+
+def test_a_stall_during_a_session_still_trips():
+    """The half that must survive the fix.
+
+    Making the weekend quiet is worthless if it also silences a genuine
+    weekday failure. Measured inside one Tuesday session, where trading
+    time and wall-clock time run at the same rate.
+    """
+    opened = pd.Timestamp("2026-09-01 14:00", tz="UTC")
+    later = pd.Timestamp("2026-09-01 19:30", tz="UTC")
+
+    check = _scheduler_check(opened, later)
+
+    assert check.triggered, check.detail
+    assert check.value > health.HealthThresholds().scheduler_stale_hours
+
+
+@pytest.mark.parametrize("last,now", [
+    (FRIDAY_CLOSE, MONDAY_AM),                                    # the weekend
+    (pd.Timestamp("2026-09-01 14:00", tz="UTC"),
+     pd.Timestamp("2026-09-01 19:30", tz="UTC")),                 # a real stall
+    (pd.Timestamp("2026-09-01 14:00", tz="UTC"),
+     pd.Timestamp("2026-09-01 15:00", tz="UTC")),                 # healthy
+    (pd.Timestamp("2026-08-28 19:45", tz="UTC"),
+     pd.Timestamp("2026-09-03 12:00", tz="UTC")),                 # genuinely dead
+])
+def test_the_banner_and_the_alert_reach_the_same_verdict(last, now):
+    """The requirement, not the edit.
+
+    One owner per threshold. Whatever the rule is, the page a person reads
+    and the alert that emails them must not disagree about it -- and they
+    did, which is how a banner said critical while the alerting path said
+    fine. Asserted across a weekend, a real stall, a healthy gap and a
+    genuine multi-day outage, so it cannot be satisfied by both sides
+    happening to be quiet.
+    """
+    from cfdinvest.risk.scheduler_status import compute_scheduler_status
+
+    page = _scheduler_check(last, now)
+    alert = compute_scheduler_status(
+        {"last_success": last, "last_run": last, "runs": 1, "failures": 0},
+        now=now,
+    )
+
+    assert page.triggered == alert["stale"], (
+        f"the banner says {page.triggered} and the alert says {alert['stale']} "
+        f"for the same {(now - last).total_seconds() / 3600:.1f} h gap"
+    )
+
+
+def test_the_session_length_has_one_owner():
+    """M: a second copy of 6.5 drifts from the first.
+
+    Two callers turn session-days into session-hours. The constant is named
+    once and imported, rather than written twice in different files, which
+    is the shape of the bug this whole block exists to close.
+    """
+    from cfdinvest.schedule import market_calendar
+
+    assert market_calendar.SESSION_HOURS == 6.5
+    # A full session is exactly one session's worth of trading hours.
+    inside = market_calendar.trading_hours_between(
+        pd.Timestamp("2026-09-01 13:30", tz="UTC"),
+        pd.Timestamp("2026-09-01 20:00", tz="UTC"),
+    )
+    assert inside == pytest.approx(market_calendar.SESSION_HOURS, abs=0.1)

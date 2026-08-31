@@ -500,6 +500,26 @@ def describe(
     return pd.DataFrame(rows).set_index("asset") if rows else pd.DataFrame()
 
 
+#: Hours in a regular US equity session, 09:30 to 16:00 Eastern.
+#:
+#: Named once because two callers need to turn session-days into session-
+#: hours and a second copy of 6.5 is a second thing to get wrong. The
+#: dashboard and the alerting path disagreeing about how stale a run is, is
+#: exactly the failure "one owner per threshold" exists to stop -- and it
+#: happened: the banner said critical while the alert said fine.
+SESSION_HOURS = 6.5
+
+
+def trading_hours_between(start, end, asset: str = "AAPL", mapping=None) -> float:
+    """Trading time elapsed between two moments, in session-hours.
+
+    The same measurement as :func:`trading_days_between` in the unit a
+    staleness threshold is usually written in. Everything that function's
+    docstring says about why calendar time is the wrong ruler applies here.
+    """
+    return trading_days_between(start, end, asset, mapping) * SESSION_HOURS
+
+
 def trading_days_between(start, end, asset: str = "AAPL", mapping=None) -> float:
     """Trading time elapsed between two moments, in session-days.
 

@@ -124,10 +124,9 @@ def compute_scheduler_status(
     trading_age = age
     if reference is not None:
         try:
-            from cfdinvest.schedule.market_calendar import trading_days_between
+            from cfdinvest.schedule.market_calendar import trading_hours_between
 
-            # A session is 6.5 hours; convert session-days to trading hours.
-            trading_age = trading_days_between(reference, moment) * 6.5
+            trading_age = trading_hours_between(reference, moment)
         except Exception:  # noqa: BLE001 - a calendar fault is not an outage
             trading_age = age
     stale = bool(
