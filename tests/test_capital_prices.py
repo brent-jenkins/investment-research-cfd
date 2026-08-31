@@ -414,3 +414,187 @@ def _config():
     return CapitalConfig(
         api_key="k", identifier="i", password="p", environment="demo"
     )
+
+
+# --------------------------------------------------------------------------- #
+# M-live: the lake could not describe the feed it trades on
+# --------------------------------------------------------------------------- #
+# The Capital path wrote bars and never wrote a manifest. repository.coverage
+# reads that manifest, coverage_span derives freshness from it, and the
+# Status page and health checks read both -- so the decision feed was the one
+# series the lake had no account of.
+#
+# It stayed invisible until it did harm. A routing bug sent every intraday
+# fetch to yfinance, which has never heard of "capital_1h", and the yfinance
+# ingestor recorded all 109 instruments as empty with zero rows. The routing
+# was fixed within the hour. The manifest was not, because nothing on the
+# Capital path could rewrite it, and the dashboard showed a critical banner
+# over a healthy lake. A banner that is always red hides the next real fault.
+
+
+def _manifest(tmp_path, reports, interval="capital_1h"):
+    import json
+
+    from cfdinvest.config import AppConfig, PathConfig
+    from cfdinvest.ingestion import capital_prices
+
+    config = AppConfig(paths=PathConfig(data_root=tmp_path))
+    path = capital_prices.write_manifest(reports, interval, config)
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def test_a_successful_backfill_records_what_it_holds(tmp_path):
+    """The gap: bars on disk and nothing saying so."""
+    written = _manifest(tmp_path, [
+        {"ticker": "AAPL", "written": 6401, "added": 5, "ok": True, "error": "",
+         "first": "2023-01-03 14:00:00+00:00", "last": "2026-08-31 18:00:00+00:00"},
+    ])
+
+    assert written["AAPL"]["status"] == "ok"
+    assert written["AAPL"]["rows_total"] == 6401
+    assert written["AAPL"]["last_timestamp"].startswith("2026-08-31")
+    assert written["AAPL"]["params"]["vendor"] == "capital"
+
+
+def test_the_manifest_is_readable_as_coverage(tmp_path):
+    """Functional, and the point of the whole exercise.
+
+    Writing *a* file is not the requirement. The requirement is that
+    ``repository.coverage`` -- which the health checks and the Status page
+    read -- can see it, in the shape the yfinance manifests use.
+    """
+    from cfdinvest.config import AppConfig, MarketDataConfig, PathConfig
+    from cfdinvest.ingestion import capital_prices
+    from cfdinvest.repository import DataRepository
+
+    config = AppConfig(
+        paths=PathConfig(data_root=tmp_path),
+        market=MarketDataConfig(interval="capital_1h"),
+    )
+    capital_prices.write_manifest([
+        {"ticker": "AAPL", "written": 6401, "ok": True, "error": "",
+         "first": "2023-01-03 14:00:00+00:00", "last": "2026-08-31 18:00:00+00:00"},
+        {"ticker": "AMD", "written": 6407, "ok": True, "error": "",
+         "first": "2023-01-03 14:00:00+00:00", "last": "2026-08-31 18:00:00+00:00"},
+    ], "capital_1h", config)
+
+    coverage = DataRepository(config).coverage("capital_1h")
+
+    assert not coverage.empty, "the lake still cannot describe the decision feed"
+    assert sorted(coverage.index) == ["AAPL", "AMD"]
+    assert set(coverage["status"]) == {"ok"}
+
+
+def test_a_stale_empty_entry_is_overwritten_by_a_good_one(tmp_path):
+    """The exact recovery that was impossible.
+
+    109 entries reading `empty / 0 rows`, written by a vendor that could not
+    serve the interval. A later good pass must replace them, or the banner
+    never clears and the fix is invisible.
+    """
+    first = _manifest(tmp_path, [
+        {"ticker": "AAPL", "written": 0, "ok": False,
+         "error": "vendor returned no rows"},
+    ])
+    assert first["AAPL"]["status"] == "failed"
+
+    second = _manifest(tmp_path, [
+        {"ticker": "AAPL", "written": 6401, "ok": True, "error": "",
+         "first": "2023-01-03 14:00:00+00:00", "last": "2026-08-31 18:00:00+00:00"},
+    ])
+    assert second["AAPL"]["status"] == "ok"
+    assert second["AAPL"]["rows_total"] == 6401
+    assert second["AAPL"]["error"] == ""
+
+
+def test_a_failure_and_an_empty_read_stay_distinguishable(tmp_path):
+    """M: a broken fetch recorded as an instrument with no history.
+
+    Both leave zero rows and they mean opposite things -- one is a vendor
+    problem to chase, the other a series that simply has nothing yet.
+    Collapsing them is how a fault gets filed as a fact about the market.
+    """
+    written = _manifest(tmp_path, [
+        {"ticker": "BAD", "written": 0, "ok": False, "error": "HTTP 500"},
+        {"ticker": "NEW", "written": 0, "ok": True, "error": ""},
+    ])
+
+    assert written["BAD"]["status"] == "failed"
+    assert written["BAD"]["error"] == "HTTP 500"
+    assert written["NEW"]["status"] == "empty"
+
+
+def test_writing_the_manifest_never_takes_down_a_backfill(tmp_path):
+    """The bars are already on disk by this point.
+
+    A lake that cannot describe itself is worth a warning, not a lost
+    ingest, and raising here would discard a completed fetch.
+    """
+    from cfdinvest.ingestion import capital_prices
+
+    assert _manifest(tmp_path, []) == {}
+    assert _manifest(tmp_path, [{"ticker": "", "written": 1, "ok": True}]) == {}
+    assert capital_prices.write_manifest(None, "capital_1h",
+                                         _app_config(tmp_path)) is not None
+
+
+def _app_config(tmp_path):
+    from cfdinvest.config import AppConfig, PathConfig
+
+    return AppConfig(paths=PathConfig(data_root=tmp_path))
+
+
+def test_a_backfill_writes_the_manifest_without_being_asked(tmp_path):
+    """The wiring, not the helper -- which is where the bug actually was.
+
+    write_manifest was never the problem; nothing called it. Every test
+    above exercises the helper directly and every one of them would have
+    passed while the lake stayed undescribed, so this drives a real backfill
+    and asserts the manifest exists afterwards.
+
+    That gap is the failure this project names repeatedly: a check written
+    by whoever made the change tests the change rather than the requirement.
+    Caught here by a mutation removing the call, which the helper tests did
+    not notice.
+    """
+    import json
+
+    from cfdinvest.config import AppConfig, MarketDataConfig, PathConfig
+    from cfdinvest.ingestion import capital_prices
+
+    config = AppConfig(
+        paths=PathConfig(data_root=tmp_path),
+        market=MarketDataConfig(interval="capital_1h"),
+    )
+
+    class _Session:
+        ok = True
+        error = ""
+
+    rows = [
+        {"timestamp": "2026-08-31T17:00:00Z", "open": 1.0, "high": 1.1,
+         "low": 0.9, "close": 1.05, "volume": 10, "spread_bp": 4.0},
+        {"timestamp": "2026-08-31T18:00:00Z", "open": 1.05, "high": 1.2,
+         "low": 1.0, "close": 1.15, "volume": 12, "spread_bp": 4.0},
+    ]
+
+    reports = capital_prices.backfill(
+        ["AAPL"], config=object(), app_config=config,
+        interval="capital_1h", resolution="1h",
+        open_session=lambda *a, **k: _Session(),
+        fetch=lambda *a, **k: rows,
+    )
+
+    assert reports and reports[0]["ok"], reports
+
+    from cfdinvest import storage
+    path = storage.metadata_path(config.paths, "market_capital_1h_manifest")
+    with open(path, encoding="utf-8") as handle:
+        manifest = json.load(handle)
+
+    assert "AAPL" in manifest, (
+        "a completed backfill left the lake unable to describe itself"
+    )
+    assert manifest["AAPL"]["status"] == "ok"
+    assert manifest["AAPL"]["rows_total"] == 2

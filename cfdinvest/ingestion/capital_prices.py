@@ -48,6 +48,7 @@ from typing import Any, Iterable, Mapping, Sequence
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "write_manifest",
     "INTERVAL", "DEFAULT_START", "SESSION_HOURS", "frame_from_rows",
     "backfill_ticker", "backfill", "restrict_to_session", "is_capital_interval",
 ]
@@ -211,6 +212,77 @@ def backfill_ticker(
     }
 
 
+def write_manifest(reports, interval: str, app_config=None) -> str:
+    """Record what this feed holds, in the shape ``repository.coverage`` reads.
+
+    The Capital path wrote bars and never wrote a manifest, and the manifest
+    is the lake's own account of itself: ``coverage()`` reads it,
+    ``coverage_span()`` derives freshness from it, and the Status page and
+    the health checks read both. So the decision feed -- the one the orders
+    are placed on -- was the one series the lake could not describe.
+
+    That stayed invisible until it did damage. On 2026-08-31 a routing bug
+    sent every intraday fetch to yfinance, which has never heard of
+    "capital_1h", and the yfinance ingestor dutifully recorded all 109
+    instruments as ``status: empty, rows_total: 0``. The routing was fixed
+    within the hour; the manifest was not, because nothing on the Capital
+    path could rewrite it. The dashboard would have shown a critical banner
+    over a healthy lake indefinitely -- and a banner that is always red is a
+    banner that hides the next real fault.
+
+    Rewritten rather than appended, like the other manifests: this says what
+    the lake holds *now*, which is the documented exception to observations
+    being append-only.
+
+    Never raises. A lake that cannot describe itself is worth a warning, not
+    a failed ingest -- the bars are already on disk by this point.
+    """
+    from cfdinvest import storage
+    from cfdinvest.config import load_config
+
+    paths = (app_config or load_config()).paths
+    manifest_path = storage.metadata_path(paths, f"market_{interval}_manifest")
+    existing = storage.read_json(manifest_path, default={}) or {}
+
+    stamp = _pd().Timestamp.now(tz="UTC").isoformat()
+    for report in reports or ():
+        ticker = str((report or {}).get("ticker") or "")
+        if not ticker:
+            continue
+        rows = int(report.get("written") or 0)
+        # Three outcomes, kept distinct. "failed" is a vendor or write
+        # error; "empty" is a clean read that found nothing; "ok" has bars.
+        # Collapsing the first two would report a broken fetch as an
+        # instrument that simply has no history.
+        if report.get("ok"):
+            status = "ok" if rows else "empty"
+        else:
+            status = "empty" if not rows and not report.get("error") else "failed"
+        first, last = report.get("first"), report.get("last")
+        existing[ticker] = {
+            "status": status,
+            "rows_total": rows,
+            "first_timestamp": None if first is None else str(first),
+            "last_timestamp": None if last is None else str(last),
+            "updated_at": stamp,
+            "params": {"interval": interval, "vendor": "capital"},
+            "anomalies": {},
+            "error": str(report.get("error") or ""),
+        }
+
+    try:
+        storage.write_json(existing, manifest_path)
+    except Exception as error:  # noqa: BLE001 - the bars are already written
+        logger.warning("Could not write the %s manifest: %s", interval, error)
+    return str(manifest_path)
+
+
+def _pd():
+    import pandas as pd
+
+    return pd
+
+
 def backfill(
     tickers: Iterable[str],
     config=None,
@@ -264,6 +336,9 @@ def backfill(
                 ticker, index, len(wanted),
                 report.get("written"), report.get("added"),
             )
+
+    # The lake has to be able to describe the feed it trades on.
+    write_manifest(reports, interval, app_config)
     return reports
 
 
