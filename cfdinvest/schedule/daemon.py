@@ -35,8 +35,6 @@ __all__ = [
     "SCREEN_AT_UTC",
     "CANDIDATE_SPREAD_AT_UTC",
     "MINUTE_INGEST_AT_UTC",
-    "HEADLINE_AT_UTC",
-    "HEADLINE_SECOND_AT_UTC",
     "JOBS",
     "jobs_due",
 ]
@@ -120,21 +118,6 @@ CANDIDATE_SPREAD_AT_UTC = (16, 0)
 #: it.
 MINUTE_INGEST_AT_UTC = (23, 0)
 
-#: When headlines are collected.
-#:
-#: Twice a day rather than once, because the vendor serves a rolling window
-#: of about ten stories over three days: a busy name can push a morning
-#: story out of the window before an evening poll sees it.
-#:
-#: Collected purely to accumulate. Sentiment is the only input here that has
-#: never been tested rather than tested and found wanting, and it could not
-#: join the model that ruled out price, volume, macro and events because
-#: there was no history to fit against. That model was abandoned on
-#: 2026-08-30; this outlived it because it is the only part with a time
-#: cost, and the alternative is the same empty archive in three months.
-HEADLINE_AT_UTC = (13, 30)
-HEADLINE_SECOND_AT_UTC = (21, 30)
-
 #: How often the lake and the signals are refreshed while a market is open.
 #:
 #: A daily pipeline on daily bars gave one decision per instrument per
@@ -166,7 +149,6 @@ JOBS: tuple[str, ...] = (
     # month.
     "record-candidate-spreads",
     "ingest-minute",
-    "record-headlines",
     "monitoring-snapshot",
     "risk-snapshot",
     "prune-runs",
@@ -319,14 +301,6 @@ def jobs_due(
     # an open market would mean it never ran at all.
     if _due_daily(moment, history.get("ingest-minute"), MINUTE_INGEST_AT_UTC):
         due.append("ingest-minute")
-
-    # Twice daily, and deliberately not gated on the market being open: news
-    # does not stop when the exchange does, and a weekend story is exactly
-    # the kind that moves a Monday open.
-    for appointment in (HEADLINE_AT_UTC, HEADLINE_SECOND_AT_UTC):
-        if _due_daily(moment, history.get("record-headlines"), appointment):
-            due.append("record-headlines")
-            break
 
     if _due_daily(moment, history.get("monitoring-snapshot"), SNAPSHOT_AT_UTC):
         due.append("monitoring-snapshot")

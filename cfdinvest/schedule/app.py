@@ -1858,8 +1858,6 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         )
     elif name == "ingest-minute":
         _command_ingest_minute(args, app_config)
-    elif name == "record-headlines":
-        _command_record_headlines(args, app_config)
     elif name == "screen-universe":
         # Records what the rule says and nothing else. It cannot change the
         # traded universe -- the CLI it calls has no path that writes the
@@ -1921,102 +1919,6 @@ def _command_ingest_minute(args, app_config) -> int:
         "Minute bars: %d instrument(s), %d row(s) written%s",
         len(reports or ()), written,
         f"; no data for {', '.join(failed)}" if failed else "",
-    )
-    return EXIT_OK
-
-
-def _command_record_headlines(args, app_config) -> int:
-    """Archive what the news feed is showing, and nothing else.
-
-    No scoring and no inference: the title is the observation, and scoring
-    it is an interpretation that should be recomputed from the record rather
-    than frozen into it. See ``persist.headlines``.
-
-    Collected because the vendor keeps no archive. Every headline this
-    project has scored so far has been discarded, which is why sentiment is
-    the one input that has never been tested.
-
-    The same coverage as the minute ingest -- traded, plus held, plus every
-    name any screen has ever selected -- because a departed name's news is
-    exactly what would explain a position still open in it.
-    """
-    from cfdinvest.advisor import sentiment
-    from cfdinvest.persist import headlines as store
-
-    account = getattr(args, "account", None)
-    wanted = _with_held(_traded(app_config, account), app_config, account) or []
-    for extra in _ever_selected(app_config, account):
-        if extra not in wanted:
-            wanted.append(extra)
-    # And every candidate the screen may rank. Sentiment is a plausible
-    # *selection* input as well as a position one, and a feed with no
-    # archive cannot be backfilled: a name whose headlines were never
-    # collected can never be tested, however interesting it later looks.
-    # Same argument that seeding the price history won -- collect it before
-    # you need it, because afterwards is too late.
-    for extra in _screen_candidates(app_config):
-        if extra not in wanted:
-            wanted.append(extra)
-    if not wanted:
-        return EXIT_OK
-
-    # RSS rather than yfinance. Measured 2026-08-31: yfinance returns ten
-    # items covering about two days per instrument and ignores any count
-    # asked of it, so an archive built on it can only ever accumulate
-    # forward. The RSS feed honours a dated window and serves a hundred
-    # items per query, which is what makes six months of history possible
-    # at all -- and history is the whole point, since sentiment cannot be
-    # tested against trades that predate the archive.
-    from cfdinvest.ingestion import news_rss
-
-    rows = []
-    for ticker in wanted:
-        stories = news_rss.fetch_window(ticker, config=app_config) or []
-        if not stories:
-            # Fall back to the vendor feed rather than losing the
-            # instrument entirely: two days of headlines beats none, and a
-            # single unreachable feed is not a reason to collect nothing.
-            try:
-                stories = sentiment.fetch_headlines(ticker) or []
-            except Exception as error:  # noqa: BLE001 - one feed, not an outage
-                logger.debug("No headlines for %s: %s", ticker, error)
-                continue
-        for story in stories or ():
-            title = str(story.get("title") or "").strip()
-            if not title:
-                continue
-            rows.append({
-                "ticker": str(ticker),
-                "title": title,
-                "published": str(story.get("published") or ""),
-                "publisher": str(story.get("publisher") or ""),
-                # Recorded so a bad search is visible as a bad search rather
-                # than as unexplained noise in whatever later reads this.
-                "query": str(story.get("query") or ""),
-                "source": str(story.get("source") or "yfinance"),
-                # Why this might be noise, if it is. Recorded rather than
-                # acted on: the rules are a first attempt and a headline
-                # dropped at collection cannot be recovered once it leaves
-                # the feed's six-month window.
-                "noise": list(story.get("noise") or []),
-                # A property of the headline, not a view about it: six of
-                # sixteen Lululemon stories over a fortnight were reports of
-                # the price move itself.
-                "price_report": bool(sentiment.is_price_report(title)),
-            })
-
-    written = store.record_headlines(rows, app_config, account)
-    # Rolling window: six months is what the feed serves and what a model at
-    # this horizon can use. Beyond that the rows are cost without value.
-    pruned = store.prune_headlines(app_config, account)
-    have = store.coverage(app_config, account)
-    if pruned.get("dropped"):
-        logger.info("Headlines pruned: dropped %d beyond the window",
-                    pruned["dropped"])
-    logger.info(
-        "Headlines: %d new of %d fetched across %d instruments; archive now "
-        "%d stories over %d days",
-        written, len(rows), len(wanted), have["stories"], have["days"],
     )
     return EXIT_OK
 

@@ -544,6 +544,52 @@ quartiles well (rho +0.22 and +0.19) and says nothing in the middle two
 (+0.003 and −0.038) — which is precisely where a second opinion would earn
 its keep, and precisely where news was measured and found empty.
 
+**And the one surviving positive turned out to be subsumed.** News was
+found to predict *magnitude* on 104 of 104 instruments, which was the last
+argument for keeping the archive: the engine forecasts magnitude too, from
+realised volatility, and that forecast is live — it is what the 0.50
+volatility multiplier prices. Two independent estimates of one quantity are
+only worth having if they disagree and the second is right when they do.
+
+Adjudicated on 65,906 observations across 882 bars, both estimates ranked
+cross-sectionally at each bar against the realised move over the next four:
+
+    against the realised move   all obs   disagree    agree
+    engine volatility rank      +0.2742    +0.2618   +0.2914
+    news count rank             +0.0985    −0.1318   +0.2824
+    the two against each other  +0.2266
+
+News is not a second opinion, it is an echo. The two agree far more than
+they disagree, and news's apparent skill lives entirely in the agreement
+zone, where it scores +0.282 against volatility's +0.291 — a noisy proxy for
+a quantity already measured directly. Both disagreement directions favour
+the engine: engine-loud / news-quiet realised rank 0.614, news-loud /
+engine-quiet 0.439, with the engine closer on 55.9% of disagreements. The
+mechanism is not mysterious — volatile names generate headlines.
+
+**The apparent inversion on that subset was mine, not the market's**, and it
+is recorded because it nearly became a finding. News reads −0.132 there,
+which invites reading the disagreement itself as a contrarian magnitude
+signal. It is not one: the subset is *defined* by volatility being low on
+one side, and low volatility already predicts a small move at +0.26, so the
+negative reading is volatility arriving through the selection. Held still
+inside volatility deciles, news does not fall toward zero — it changes sign,
+positive in all ten, pooling to +0.032 against an unconditional +0.099.
+Regressing volatility out gives +0.042. This is the same shape as the
+2026-08-30 contamination that read +0.433 and collapsed to +0.04:
+**correlate against what remains, not against the total.**
+
+No significance figure is quoted on that residual. 65,906 observations look
+decisive until you notice the four-bar forward windows overlap across 882
+bars, leaving nearer 200 independent time points; the naive standard error
+is not the right one and the honest statement is that the residual is small
+and its error bar unknown.
+
+So the magnitude result stands as a fact about news and is worthless as an
+input: two-thirds of it is volatility in disguise and the remainder is ~0.03
+beside a direct estimate of +0.274, feeding a consumer that does not exist.
+It was the last thing keeping the archive.
+
 **Two related ideas were not built, deliberately.** Detecting genuinely
 serious headlines — the aircraft-accident, tariff-announcement, price-rise
 class — and separating reported fact from rumour are both the same bet with
@@ -553,9 +599,23 @@ is *attenuated*. Six formulations returning nothing, including one aimed at
 confidence's blind spot, says the signal is *absent*. No amount of filtering
 recovers what is not there.
 
-What continues: collection runs, off-hours and cheap, and the archive is what
-made these six answers possible rather than arguable. Sentiment appears on
-the Signals page as a display-only indicator, wired to nothing.
+**The branch is removed in full.** Owner's decision, 2026-08-31, on the
+standing instruction to keep the system light and free of functionality
+nothing consumes. Deleted: `ingestion/news_rss.py`, `persist/headlines.py`,
+the twice-daily `record-headlines` job and its schedule constants, its row
+in `ui/vitals.py`, `tests/test_headlines.py`, and the 16MB archive on the
+deployment. No display indicator was shipped: a reading wired to nothing,
+placed beside the one score that does predict, on the page where trades are
+sized by hand, is an invitation to act on measured noise.
+
+`advisor/sentiment.py` stays. It predates this work, the manual-trading
+helper reads it on demand from yfinance, and it decides nothing.
+
+The archive is rebuildable rather than lost — the six months were backfilled
+through monthly RSS windows, not accumulated, so if a use ever appears the
+data comes back for the cost of one run. What does not come back cheaply is
+the reasoning above, which is why it is written here at length for a
+component that no longer exists.
 
 ### What changed on 2026-08-30
 
