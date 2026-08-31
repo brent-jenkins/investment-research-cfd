@@ -152,7 +152,16 @@ class CapitalAccount:
     currency: str = ""
     balance: float | None = None
     available: float | None = None
+    #: **Unrealised** P&L on currently open positions, as the broker reports
+    #: it. Not profit since the account opened, and it was displayed as that
+    #: for a while: with a 5,000 account down to 4,890 the page read
+    #: "+26.12 since the account opened" while the account was 110 down.
     profit_loss: float | None = None
+    #: Cash: the opening deposit plus everything realised since. Carried so
+    #: the identity `deposit + profit_loss == balance` can be shown rather
+    #: than asserted, which is what makes the two P&L figures legible as
+    #: different quantities.
+    deposit: float | None = None
     error: str = ""
 
     @property
@@ -370,6 +379,7 @@ def fetch_account(
         balance=_number(balance.get("balance")),
         available=_number(balance.get("available")),
         profit_loss=_number(balance.get("profitLoss")),
+        deposit=_number(balance.get("deposit")),
     )
 
 

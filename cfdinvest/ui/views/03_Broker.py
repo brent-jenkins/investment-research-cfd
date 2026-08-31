@@ -1,13 +1,14 @@
-"""Capital.com — the demo account, kept apart from the paper book.
+"""Capital.com — the demo account, which is the forward record.
 
-Two books run side by side and they must never be read as one. The paper
-book is a simulation at a fixed £1,000 a position, four arms, its fills
-modelled. This account holds real orders confirmed by somebody with no stake
-in the answer, sized from the balance.
+This account holds real orders confirmed by a counterparty with no stake in
+the answer, sized from the balance rather than from a constant. That is the
+whole of the forward evidence now: the simulated parallel book this page
+used to be contrasted against was removed on 2026-08-30, because it ran a
+different rule set from the engine and a disagreement between the two
+measured code divergence and fill error inseparably.
 
-The point of showing them separately is that the *difference* between them
-is a measurement — how wrong the simulation's fills and costs are — and a
-page that pooled them would destroy the only thing they jointly measure.
+So there is nothing to hold this apart *from* any more, and the docstring
+that said otherwise outlived the thing it described.
 
 Everything here is read live from the broker at page load. That is
 deliberate: a position is a fact about now, and a cached one is a claim
@@ -38,16 +39,15 @@ data = components.page_setup(
     "Broker",
     icon="🏦",
     subtitle="The Capital.com demo account: what it holds, what it is worth, "
-    "and what a trade costs there. Separate from the paper book, and "
-    "deliberately so.",
+    "and what a trade costs there. This is the forward record.",
 )
 
 components.render_note(
     st,
     "This is a **demo** account. Nothing here is real money, and the app "
-    "refuses to reach a live one without a second explicit setting. The "
-    "paper book runs alongside it and is not the same thing — the gap "
-    "between them is what says how good the simulation is.",
+    "refuses to reach a live one without a second explicit setting. What it "
+    "shows is confirmed by the broker rather than simulated, which is why it "
+    "replaced the parallel paper book rather than sitting beside it.",
 )
 
 
@@ -99,17 +99,46 @@ committed = None
 if account.get("balance") is not None and account.get("available") is not None:
     committed = account["balance"] - account["available"]
 
+# The broker reports two different things and only one of them was shown.
+#
+# `profitLoss` is UNREALISED P&L on currently open positions. It was
+# labelled "since the account opened", which is a different quantity and
+# usually a different sign: on 2026-08-31 a 5,000 account stood at 4,890 --
+# down 110 -- while this tile read "+26.12 since the account opened". A
+# label that inverts a loss into a profit is worse than no tile.
+#
+# `deposit` is cash: the opening deposit plus everything realised since.
+# Shown beside it so the identity is visible rather than asserted --
+# cash plus unrealised equals balance -- which is what makes the two
+# figures legible as different quantities instead of a contradiction.
+#
+# Profit since the account opened is NOT shown, because the broker does not
+# report the opening deposit and nothing here records it. Inferring it from
+# `deposit` would be wrong by exactly the realised P&L. "Not available" and
+# "zero" are different statements, and this project does not guess between
+# them.
 components.render_tiles(st, [
     ("Balance", _money(account.get("balance")),
-     "what sizing is a fraction of", "pass"),
+     "cash plus unrealised; what sizing is a fraction of", "pass"),
     ("Available", _money(account.get("available")),
      "after committed margin", "pass"),
     ("Margin in use", _money(committed),
      "across every open position", "pass"),
-    ("Profit and loss", _money(account.get("profit_loss")),
-     "since the account opened",
+    ("Cash", _money(account.get("deposit")),
+     "deposits plus everything realised", "pass"),
+    ("Unrealised P&L", _money(account.get("profit_loss")),
+     "on open positions only, not since opening",
      "pass" if (account.get("profit_loss") or 0) >= 0 else "warning"),
 ])
+
+components.render_note(
+    st,
+    "**Profit since the account opened is not shown.** The broker reports "
+    "cash and unrealised P&L but not the opening deposit, and nothing here "
+    "records it, so the figure cannot be computed. It is left absent rather "
+    "than approximated: this tile previously showed unrealised P&L under "
+    "that heading, which read as a profit while the account was down.",
+)
 
 # --------------------------------------------------------------------------- #
 # Positions

@@ -71,6 +71,7 @@ def read_broker(config=None) -> dict[str, Any]:
             "balance": account.balance,
             "available": account.available,
             "profit_loss": account.profit_loss,
+            "deposit": account.deposit,
         }
 
         found, error = dealing.list_positions(session, settings)

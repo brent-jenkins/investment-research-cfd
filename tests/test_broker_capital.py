@@ -399,3 +399,79 @@ def test_the_password_never_reaches_the_error_text():
 
     assert "p" not in session.error.replace("error.too-many.requests", "")
     assert "k" not in session.error.replace("error.too-many.requests", "")
+
+
+# --------------------------------------------------------------------------- #
+# M-live: unrealised P&L displayed as profit since the account opened
+# --------------------------------------------------------------------------- #
+# The broker reports two different quantities and the dashboard showed one
+# under the other's name. With a 5,000 account standing at 4,890 -- down 110
+# -- the Broker page read "Profit and loss  GBP 26.12  since the account
+# opened". 26.12 was the unrealised P&L on open positions.
+#
+# A label that turns a loss into a profit is worse than no tile, and this is
+# the page a person reads before deciding whether the thing is working.
+
+
+def _account_payload():
+    """The shape Capital actually returns, taken from the demo account."""
+    return {
+        "accounts": [{
+            "accountId": "328418483926475806",
+            "accountName": "Account",
+            "currency": "GBP",
+            "preferred": True,
+            "balance": {
+                "balance": 4890.35,
+                "deposit": 4863.92,
+                "profitLoss": 26.43,
+                "available": 1933.53,
+            },
+        }]
+    }
+
+
+def test_cash_and_unrealised_are_read_as_separate_quantities():
+    """Both are needed, and only one was being carried.
+
+    Without `deposit` there is no way to show that the P&L figure is
+    unrealised rather than lifetime -- the page has one number and no way to
+    place it.
+    """
+    session = capital.CapitalSession(
+        host="https://x", cst="a", security_token="b",
+        account_id="328418483926475806",
+    )
+    account = capital.fetch_account(
+        session, _config(), opener=lambda *a, **k: (_account_payload(), {})
+    )
+
+    assert account.ok, account.error
+    assert account.balance == pytest.approx(4890.35)
+    assert account.deposit == pytest.approx(4863.92)
+    assert account.profit_loss == pytest.approx(26.43)
+    assert account.available == pytest.approx(1933.53)
+
+
+def test_the_two_figures_reconcile_to_the_balance():
+    """The identity that makes them legible: cash + unrealised = balance.
+
+    Asserted rather than described, because it is the thing that shows the
+    P&L figure covers open positions only. If it were profit since opening
+    it would not reconcile this way, and a reader has no other way to tell
+    the two apart from a single number on a tile.
+    """
+    session = capital.CapitalSession(
+        host="https://x", cst="a", security_token="b",
+        account_id="328418483926475806",
+    )
+    account = capital.fetch_account(
+        session, _config(), opener=lambda *a, **k: (_account_payload(), {})
+    )
+
+    assert account.deposit + account.profit_loss == pytest.approx(account.balance)
+    # And on this payload the account is DOWN against a 5,000 opening
+    # deposit while the unrealised figure is positive -- which is the case
+    # the old label got backwards.
+    assert account.balance < 5_000.0 < account.balance + 200
+    assert account.profit_loss > 0

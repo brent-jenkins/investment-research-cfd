@@ -3115,3 +3115,40 @@ def test_the_session_length_has_one_owner():
         pd.Timestamp("2026-09-01 20:00", tz="UTC"),
     )
     assert inside == pytest.approx(market_calendar.SESSION_HOURS, abs=0.1)
+
+
+def test_the_broker_page_never_calls_unrealised_pnl_lifetime_profit():
+    """M-live: "Profit and loss ... since the account opened", showing the
+    unrealised figure.
+
+    Structural, and unusually justified for it: the claim being guarded is a
+    string a person reads, and there is no functional route to a Streamlit
+    page's rendered labels. The assertion is on the pairing rather than on
+    either phrase alone, so it cannot be satisfied by renaming one of them.
+    """
+    source = (Path(__file__).resolve().parents[1] / "cfdinvest" / "ui" /
+              "views" / "03_Broker.py").read_text(encoding="utf-8")
+
+    start = source.index("components.render_tiles(st, [")
+    tiles = source[start:source.index("])", start)]
+    assert "since the account opened" not in tiles, (
+        "the broker page still labels a tile 'since the account opened'; the "
+        "broker reports no opening deposit, so no tile can honestly say it"
+    )
+    # The unrealised figure must say what it is, wherever it sits.
+    assert "profit_loss" in tiles and "Unrealised" in tiles
+    assert "on open positions only" in tiles
+
+
+def test_the_broker_page_says_lifetime_profit_is_absent_rather_than_omitting_it():
+    """Absence named, not inferred.
+
+    Quietly dropping the tile would leave a reader assuming the figure was
+    somewhere else on the page. The rule here is that a number which cannot
+    be computed is reported as not computed.
+    """
+    source = (Path(__file__).resolve().parents[1] / "cfdinvest" / "ui" /
+              "views" / "03_Broker.py").read_text(encoding="utf-8")
+
+    assert "Profit since the account opened is not shown" in source
+    assert "not the opening deposit" in source
