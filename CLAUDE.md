@@ -617,6 +617,59 @@ data comes back for the cost of one run. What does not come back cheaply is
 the reasoning above, which is why it is written here at length for a
 component that no longer exists.
 
+**The five parameters that predated the corrected cost model are
+re-measured.** Every figure justifying them came from yfinance bars at a
+flat 5bp; decisions now come from `capital_1h` and spread is charged per bar
+at roughly 2.3x that. All five swept as `ExecutionConfig` settings applied
+by the engine, screen-gated at target 10, one parameter varying at a time.
+The baseline reproduced the recorded 254.9%/−41.4% to the decimal, which is
+what licenses reading the rest.
+
+    time_stop_days        none −58.6%/97.5% · 0.29 254.9% · 1.0 96.1% · 2.0 17.6%
+    earnings_blackout     0 days 215.9%/52.5% · 1 day 254.9%/41.4% · 2 250.8% · 3 252.8%
+    stops.enabled         off 254.9%/41.4% · 4 ATR 241.4% · 3 ATR 175.5% · 2 ATR 106.6%
+    decayed_multiplier    1.0 263.5% · 0.75 262.4% · 0.5 254.9% · 0.25 250.8%
+    rebalance_threshold   3.0 254.9%/41.4% · 1.0 276.8%/45.5% · 0.5 178.9% · 0.25 152.3%
+
+**Four are confirmed and one is left alone on weaker grounds than before.**
+The time stop is the most load-bearing parameter in the book: removing it
+does not cost return, it destroys the account, with cost running to eleven
+times gross profit because nothing closes a position any more. The earnings
+blackout is now load-bearing on *both* counts — switching it off costs 39pp
+of return and 11.1pp of drawdown — which it could not have been before,
+because until 2026-08-28 it had never once executed. Stops remain
+monotonically harmful, tighter strictly worse, exactly as measured under the
+old cost model. The decayed-position multiplier is the flat one: every
+adjacent step sits inside the 8pp floor and the whole range spans 12.7pp, so
+it is close to inert on return and stays at 0.5 because nothing says to move
+it, which is a weaker justification than it used to have.
+
+**`rebalance_threshold = 1.0` is measured better and not adopted.** It beats
+the configured 3.0 by 21.8pp, clears the noise floor, and wins in both
+halves (+24.2pp and +18.9pp), so it is not a period artefact. It is still
+refused: the entire gain is handed back in drawdown, 41.4% to 45.5%, and
+Calmar goes 6.17 to 6.08. Raising exposure requires every requirement clear
+at once and this one is not. There is also a concrete second reason —
+`review_drawdown_fraction` is 0.45, so 45.5% would sit above the level at
+which the book asks to be reviewed, and adopting it would mean loosening a
+risk limit to fit a change with no risk-adjusted gain.
+
+The old note that drift rebalancing at 0.5 "beat it in 9 of 10 out-of-sample
+windows" is now **refuted rather than superseded**: at measured spreads 0.5
+returns 178.9% against 254.9%. Drift rebalancing buys precision with
+turnover, and turnover is precisely what got dearer.
+
+**A harness error worth recording, because it looked like a result.** The
+first version of this sweep passed the raw hundred-name candidate list as
+the traded universe with no `entry_gate`. It returned −75.9% at −99.5% on
+294,530 trades, and every parameter below it would have read as a rounding
+error. That is the pool-100 configuration this file already records as
+destructive at −78.7%; the screen's daily selection *is* the strategy, and a
+sweep that omits it measures a different system. Caught by the trade count
+being two orders of magnitude out, which is the "treat a surprising number
+as a bug" rule doing its job. The corrected harness asserts its baseline
+reproduces a recorded figure before any arm is read.
+
 ### What changed on 2026-08-30
 
 Twelve measurements, ten of them negative, and the negatives are the more
