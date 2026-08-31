@@ -578,6 +578,22 @@ def _with_paths(summary: RunSummary, paths: dict[str, str]) -> RunSummary:
     return replace(summary, output_paths=paths)
 
 
+def _reference_pairs(config) -> tuple[str, ...]:
+    """The currency pairs that exist to convert, not to be traded.
+
+    Read from the one place that names them rather than pattern-matched on
+    "=X", so a pair added to the conversion map is covered here without a
+    second list drifting behind it.
+    """
+    try:
+        from cfdinvest.schedule.app import fx_support_tickers
+
+        return tuple(str(t) for t in fx_support_tickers() or ())
+    except Exception as error:  # noqa: BLE001 - a missing map is not an outage
+        logger.warning("Could not read the reference pairs: %s", error)
+        return ()
+
+
 def _refresh(repository: DataRepository, tickers, backtest_config) -> None:
     """Top the lake up from the vendors before running.
 
@@ -635,11 +651,41 @@ def _refresh(repository: DataRepository, tickers, backtest_config) -> None:
                 f"{interval} bars are the decision feed but no Capital "
                 "credentials are configured, so the lake cannot be topped up"
             )
+        # The broker does not quote the currency pairs, and never will.
+        #
+        # They ride along in the ticker list because the engine needs them to
+        # price a dollar instrument in sterling, and ``backtest.runner``
+        # already falls back to the vendor interval for them. But they were
+        # still being *asked* of Capital on every pass, which did two things:
+        # recorded five permanent "failed" entries in the lake manifest, so
+        # the dashboard showed a critical banner that could never clear; and
+        # left nobody fetching them at all once the decision feed moved off
+        # yfinance. Their 1h bars were two days stale and getting staler,
+        # which is how every USD instrument ends up converting at 1.0 -- a
+        # regression this project has already paid 11 points of drawdown for.
+        #
+        # So the list is split by what each vendor can actually serve. This
+        # is not a fallback firing after a failure; it is not asking the
+        # wrong vendor in the first place.
+        reference = set(_reference_pairs(config))
+        served = [t for t in (tickers or ()) if str(t) not in reference]
+        pairs = [t for t in (tickers or ()) if str(t) in reference]
+
         capital_prices.backfill(
-            list(tickers) or None, settings, config,
+            served or None, settings, config,
             interval=interval,
             resolution=capital_prices.resolution_for(interval),
         )
+        if pairs:
+            from cfdinvest.backtest.runner import REFERENCE_FALLBACK_INTERVAL
+
+            logger.info(
+                "Refreshing %d reference pair(s) at %s -- the broker does not "
+                "quote them", len(pairs), REFERENCE_FALLBACK_INTERVAL,
+            )
+            MarketDataIngestor(config).ingest(
+                pairs, interval=REFERENCE_FALLBACK_INTERVAL
+            )
     else:
         MarketDataIngestor(config).ingest(list(tickers) or None, interval=interval)
 
