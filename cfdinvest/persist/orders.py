@@ -131,6 +131,47 @@ def load_orders(config=None, account: str | None = None) -> list[dict]:
     return rows
 
 
+def _confirmed(row: Mapping[str, Any]) -> bool:
+    """Did the broker confirm this row did what it was asked to do?
+
+    Read from the *observed* facts the row carries -- the broker's own
+    ``status`` and the error text -- rather than from the stored ``ok``
+    boolean beside them.
+
+    ``ok`` is derived, and a derived field persisted next to the facts it
+    came from is a hostage to the version of the code that wrote it. That is
+    not hypothetical. On 2026-08-31 ``DealResult.ok`` read ``status ==
+    "OPEN" and level is not None``, which is correct for an open and false
+    for every successful close, so eight closes were written with
+    ``ok: false`` beside ``status: "CLOSED"`` and an empty error. This
+    function skipped them, the record went on believing eight closed
+    positions were still held, reconciliation found them missing from the
+    account, and the bridge halted and stopped opening anything.
+
+    So the bug's worst consequence was not the wrong mail it sent. It was
+    that the record it poisoned is the gate on all future dealing, and
+    fixing ``ok`` could not unpoison rows already on disk. Deriving from the
+    observation at read time is what makes an old record survive a change in
+    the code that wrote it.
+
+    ``ok`` is still honoured for a row carrying no status at all, which is
+    the only case where the observation is genuinely absent rather than
+    merely disagreeing.
+    """
+    if row.get("error"):
+        return False
+    status = str(row.get("status") or "").upper()
+    if not status:
+        return bool(row.get("ok"))
+    if str(row.get("action") or "") == "close":
+        return status == "CLOSED"
+    # An open needs a fill price. A deal reference the broker never turned
+    # into a position is not a holding, and recording it as one puts the
+    # record ahead of the account -- which is the failure this whole module
+    # is shaped around.
+    return status == "OPEN" and row.get("level") is not None
+
+
 def open_orders(config=None, account: str | None = None) -> dict[str, dict[str, Any]]:
     """What this app believes it holds, keyed by epic. Never raises.
 
@@ -141,7 +182,7 @@ def open_orders(config=None, account: str | None = None) -> dict[str, dict[str, 
     """
     live: dict[str, dict[str, Any]] = {}
     for row in load_orders(config, account):
-        if row.get("kind") != "result" or not row.get("ok"):
+        if row.get("kind") != "result" or not _confirmed(row):
             continue
         epic = str(row.get("epic") or "")
         if not epic:

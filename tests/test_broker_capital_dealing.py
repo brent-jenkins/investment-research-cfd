@@ -444,3 +444,111 @@ def test_the_two_actions_normalise_success_to_different_words():
     # Neither normaliser may claim the other's word.
     assert '"CLOSED"' not in opening.split("status=")[-1].split("\n")[0]
     assert '"OPEN"' not in closing.split("status=")[-1].split("\n")[0]
+
+
+# --------------------------------------------------------------------------- #
+# M-live: a derived field, persisted, outlived the code that derived it
+# --------------------------------------------------------------------------- #
+# The DealResult.ok bug above did something worse than send a wrong mail. It
+# wrote eight close records with `ok: false` beside `status: "CLOSED"` and an
+# empty error. open_orders skipped anything not `ok`, so the record went on
+# believing eight closed positions were held; reconcile found them missing
+# from the account; the bridge halted and stopped opening anything. Four
+# positions the engine wanted went untaken while the market was open.
+#
+# Correcting DealResult.ok could not fix that, because the rows were already
+# on disk. The record has to survive a change in the code that wrote it.
+
+
+def test_a_close_recorded_by_the_buggy_version_still_reads_as_closed():
+    """The exact rows found on the deployment, byte for byte."""
+    from cfdinvest.persist.orders import _confirmed
+
+    poisoned = {"kind": "result", "action": "close", "epic": "NKE",
+                "ok": False, "status": "CLOSED", "error": ""}
+    assert _confirmed(poisoned), (
+        "a close the broker confirmed is still read as not having happened, "
+        "so the record keeps a closed position alive and halts the bridge"
+    )
+
+
+def test_a_close_that_failed_is_not_resurrected_as_a_success():
+    """The dangerous direction, and the one that must not loosen.
+
+    Reconciliation exists to stop trading when the account and the record
+    disagree. Reading the observation must not turn a close that did not
+    happen into one that did -- that would hide a real divergence.
+    """
+    from cfdinvest.persist.orders import _confirmed
+
+    assert not _confirmed({"action": "close", "ok": False, "status": "CLOSED",
+                           "error": "POSITION STILL OPEN -- HTTP 403 closing x"})
+    assert not _confirmed({"action": "close", "ok": True, "status": "REJECTED",
+                           "error": ""})
+
+
+def test_an_open_still_needs_a_fill_price_in_the_record_too():
+    """A deal reference is not a position, on the read side as well.
+
+    Recording an unfilled reference as a holding puts the record ahead of
+    the account, which makes reconciliation report the account as missing
+    something that was never there.
+    """
+    from cfdinvest.persist.orders import _confirmed
+
+    assert _confirmed({"action": "open", "status": "OPEN", "level": 155.79,
+                       "error": "", "ok": True})
+    assert not _confirmed({"action": "open", "status": "OPEN", "level": None,
+                           "error": "", "ok": True})
+
+
+def test_a_row_with_no_status_falls_back_to_the_stored_flag():
+    """Absence named, not inferred.
+
+    A row carrying no observation at all is the one case where the stored
+    boolean is the only evidence there is. Distinct from a row whose
+    observation merely disagrees with it.
+    """
+    from cfdinvest.persist.orders import _confirmed
+
+    assert _confirmed({"action": "open", "ok": True})
+    assert not _confirmed({"action": "open", "ok": False})
+
+
+def test_eight_closes_clear_their_opens_end_to_end(tmp_path, monkeypatch):
+    """The property, through open_orders rather than the helper.
+
+    Eleven opens, eight of them later closed by the buggy version. What the
+    app believes it holds must be the remaining three -- which is what the
+    account actually held.
+    """
+    from cfdinvest.persist import orders as store
+
+    path = tmp_path / "orders" / "orders.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(store, "_path", lambda config=None, account=None: path)
+
+    held = ["AAPL", "ADBE", "AMD", "CAT", "COST", "GOOGL", "META", "MSFT",
+            "NKE", "ORCL", "XOM"]
+    closed = ["AAPL", "ADBE", "COST", "GOOGL", "META", "NKE", "ORCL", "XOM"]
+    lines = [
+        {"kind": "result", "action": "open", "epic": epic, "ok": True,
+         "status": "OPEN", "level": 100.0, "error": "", "units": 1.0,
+         "direction": "SELL"}
+        for epic in held
+    ] + [
+        # As the buggy version wrote them: confirmed CLOSED, flagged not ok.
+        {"kind": "result", "action": "close", "epic": epic, "ok": False,
+         "status": "CLOSED", "error": ""}
+        for epic in closed
+    ]
+    with path.open("w", encoding="utf-8") as handle:
+        for line in lines:
+            handle.write(json.dumps(line) + "\n")
+
+    live = store.open_orders()
+
+    assert sorted(live) == ["AMD", "CAT", "MSFT"], (
+        f"the record believes it holds {sorted(live)}; the account held "
+        "AMD, CAT and MSFT, and the difference halts the bridge"
+    )
