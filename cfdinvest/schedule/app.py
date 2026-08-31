@@ -1037,6 +1037,58 @@ def _size_engine_rows(rows, prices) -> list[dict]:
     return intent.apply_prices(rows, prices)
 
 
+def _with_exits(rows, held_positions) -> list[dict]:
+    """The engine's positions, plus a flat row for anything it has exited.
+
+    ``intended_positions`` reports what is *held*, so an instrument the
+    engine has closed is simply absent from it -- and ``plan_orders``
+    iterates the rows it is given, so an absent instrument gets no intent,
+    no close order, and stays open on the account forever while financing
+    accrues.
+
+    Measured rather than assumed. With the broker holding AAPL and the
+    engine's rows empty the bridge planned *nothing at all*; the same case
+    with an explicit flat row planned ``close``. The bridge was never
+    wrong -- it was never told.
+
+    **This is not a force-close, and the distinction is the whole point.**
+    The engine keeps signalling anything it holds (``_with_held``), so a
+    name that has left the traded list still exits on its own reversal or
+    its own time stop, exactly as it would have had the universe never
+    changed. What crosses to the broker here is that decision, after the
+    engine has taken it. Closing a position the engine still wants is a
+    different act entirely, and it is what ``max_open_positions`` was
+    stopped from doing on 2026-08-29.
+
+    ``rows`` must be a read, never ``None``. An unreadable run would
+    otherwise synthesise a flat row for every open position and liquidate
+    the book on a missing artefact, so the caller checks first and this
+    refuses to guess.
+    """
+    if rows is None:
+        raise ValueError("cannot derive exits from an unreadable run")
+
+    intended = {str((row or {}).get("ticker") or "") for row in rows}
+    exited = []
+    for position in held_positions or ():
+        epic = str(getattr(position, "epic", "") or "")
+        if epic and epic not in intended:
+            exited.append(epic)
+            # Flat rather than sized: the bridge reads direction and share
+            # and plans the close itself, so no rule is re-stated here.
+            rows.append({
+                "ticker": epic, "direction": "flat", "size": 0.0,
+                "units": 0.0, "confidence": None,
+            })
+    if exited:
+        logger.info(
+            "Capital: %d position(s) the engine has exited and the account "
+            "still holds; closing on the engine's own decision: %s",
+            len(exited), ", ".join(sorted(exited)),
+        )
+    return rows
+
+
 def _dealing_tickers(tickers, book_rows, held_positions) -> list[str]:
     """The traded list, plus everything actually held.
 
@@ -1146,8 +1198,23 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     # this reads its final bar, so there is still exactly one place where a
     # position is decided.
     latest = _engine_rows(app_config, account_name)
+
+    # None and [] mean different things here and collapsing them liquidates
+    # the account. ``intended_positions`` returns None when no run could be
+    # read and [] when a run was read and holds nothing -- "unchecked"
+    # against "flat", the project's oldest distinction, at the one call site
+    # where getting it wrong places orders. An unreadable run must leave the
+    # book exactly as it is.
+    if latest is None:
+        logger.warning(
+            "Capital: no readable run to mirror; leaving the book untouched"
+        )
+        return EXIT_OK
     if not latest:
         logger.info("Capital: the engine holds nothing; nothing to mirror")
+
+    # An exit the engine has already taken has to reach the broker.
+    latest = _with_exits(latest, held)
 
     # Price the traded list *and* everything actually held. These are not
     # the same set, and treating them as one stranded nine positions on a

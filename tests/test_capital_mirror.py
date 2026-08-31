@@ -306,3 +306,161 @@ def test_only_capital_intervals_are_filtered():
     assert is_capital_interval("capital_5m")
     assert not is_capital_interval("1h")
     assert not is_capital_interval("1d")
+
+
+# --------------------------------------------------------------------------- #
+# The engine's exits have to reach the broker
+# --------------------------------------------------------------------------- #
+# M-live: a position the engine had closed stayed open on the account
+# forever. ``intended_positions`` reports what is HELD, so an exited
+# instrument is absent from it, and ``plan_orders`` iterates the rows it is
+# given -- no row, no intent, no close order, financing accruing daily.
+#
+# These are functional: they run the real bridge and assert on the orders it
+# plans. The version of this that would have passed through the bug was a
+# structural one, and this file already carries the scar of a structural
+# assertion that held for four days while the account traded a different
+# strategy.
+
+
+def _market(ticker="AAPL", **kw):
+    from cfdinvest.broker.capital.client import CapitalMarket
+
+    return CapitalMarket(
+        epic=ticker, ticker=ticker, name=ticker, bid=99.5, offer=100.5,
+        currency="USD", min_deal_size=0.1, tradable=True, **kw
+    )
+
+
+def _plan(rows, positions, ticker="AAPL"):
+    from cfdinvest.broker.capital import bridge
+    from cfdinvest.risk import RiskLimits
+
+    return bridge.plan_orders(
+        rows, {ticker: _market(ticker)}, positions,
+        balance=10_000.0,
+        limits=RiskLimits.for_balance(10_000.0, max_leverage=5.0,
+                                      concentration=0.20),
+        exposure_per_unit_size=4.0, rebalance_threshold=0.5,
+        session_open={ticker: True}, placed={}, fx_rate=1.0, recheck=False,
+        open_allowed={ticker: True},
+    )
+
+
+class _Held:
+    def __init__(self, epic, size=10.0, direction="BUY"):
+        self.epic, self.size, self.direction = epic, size, direction
+        self.deal_id = f"D-{epic}"
+
+
+def test_an_exited_position_reaches_the_broker_as_a_close():
+    """The bug, end to end: engine holds nothing, account holds AAPL.
+
+    Without the flat row the bridge plans nothing whatsoever -- not a
+    refusal, which would at least be visible in the report, but no intent at
+    all. Asserted both ways round so the test fails if the synthesis stops
+    happening AND if the bridge stops acting on it.
+    """
+    held = [_Held("AAPL")]
+    positions = {"AAPL": {"size": 10.0, "direction": "BUY", "deal_id": "D-AAPL"}}
+
+    # The shape of the bug, kept as the control. This is what the account did.
+    bare = _plan([], positions)
+    assert not [i for i in bare.intents if i.action == "close"], (
+        "the control is wrong: the bridge closed without being told to"
+    )
+
+    fixed = _plan(app._with_exits([], held), positions)
+    closes = [i for i in fixed.intents if i.action == "close"]
+    assert [i.ticker for i in closes] == ["AAPL"]
+    assert closes[0].target_units == 0.0
+    assert closes[0].held_units == 10.0
+
+
+def test_a_position_the_engine_still_wants_is_not_closed():
+    """The other half, and the one that matters to the owner.
+
+    Nothing is force-closed. A position the engine still holds must survive
+    this untouched -- it exits on its own reversal or its own time stop, the
+    way it would have if the universe had never changed.
+    """
+    held = [_Held("AAPL")]
+    positions = {"AAPL": {"size": 10.0, "direction": "BUY", "deal_id": "D-AAPL"}}
+    rows = [{"ticker": "AAPL", "direction": "long", "size": 0.05}]
+
+    planned = _plan(app._with_exits(rows, held), positions)
+
+    assert not [i for i in planned.intents if i.action == "close"], (
+        "a position the engine still wants was closed"
+    )
+    assert [i.action for i in planned.intents] == ["resize"]
+
+
+def test_a_departed_name_still_held_by_the_engine_is_left_alone():
+    """The run-out rule, which this must not undo.
+
+    A name dropped from the traded list keeps its signals so it can exit on
+    its own terms. While the engine still holds it, it is intended -- so no
+    flat row is synthesised for it and no close is planned, even though it
+    is no longer selectable.
+    """
+    held = [_Held("GOOGL")]
+    rows = [{"ticker": "GOOGL", "direction": "long", "size": 0.05}]
+
+    out = app._with_exits(list(rows), held)
+
+    assert out == rows, "a name the engine still holds was marked for exit"
+
+
+def test_only_positions_the_broker_actually_holds_are_exited():
+    """M: every instrument ever traded got a flat row.
+
+    What may be *closed* is whatever the broker says is open -- the
+    broker's fact, not a configuration value and not a history.
+    """
+    out = app._with_exits([], [_Held("AAPL"), _Held("XOM")])
+
+    assert sorted(r["ticker"] for r in out) == ["AAPL", "XOM"]
+    assert all(r["direction"] == "flat" and r["size"] == 0.0 for r in out)
+    # No positions at all is not an instruction to close anything.
+    assert app._with_exits([], []) == []
+    assert app._with_exits([], None) == []
+
+
+def test_an_unreadable_run_cannot_synthesise_exits():
+    """M366, in its sharpest form: this is how you liquidate a book.
+
+    ``intended_positions`` returns None for an unreadable run and [] for a
+    run that holds nothing. Collapsing them here would give every open
+    position a flat row and close the entire account because an artefact was
+    missing. It refuses rather than guessing, and the caller returns before
+    reaching it.
+    """
+    with pytest.raises(ValueError):
+        app._with_exits(None, [_Held("AAPL")])
+
+    # And the caller checks. Functional: the flat-row synthesis must sit
+    # behind an explicit `latest is None` return, not merely be reachable.
+    import inspect
+
+    source = inspect.getsource(app._command_trade_capital)
+    guard = source.index("latest is None")
+    call = source.index("_with_exits(")
+    assert guard < call, "exits are synthesised before the unreadable-run guard"
+
+
+def test_an_unreadable_run_leaves_the_book_untouched():
+    """None and [] are different, at the one call site that places orders.
+
+    ``if not latest`` is true for both, which is the collapse ``intent``
+    exists to prevent. An unreadable run must return before anything is
+    planned.
+    """
+    import inspect
+
+    source = inspect.getsource(app._command_trade_capital)
+    block = source[source.index("latest is None"):]
+    block = block[:block.index("if not latest")]
+    assert "return EXIT_OK" in block, (
+        "an unreadable run does not return early, so it can still trade"
+    )
