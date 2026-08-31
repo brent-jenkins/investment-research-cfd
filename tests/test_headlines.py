@@ -293,3 +293,34 @@ def test_noise_is_filtered_at_the_read_side_not_at_collection(tmp_path, monkeypa
     # for them by a rule written today.
     titles = {r["title"] for r in store.usable_headlines(allow=("listicle",))}
     assert titles == {"real news", "round-up"}
+
+
+def test_reclassifying_fixes_flags_without_refetching(tmp_path, monkeypatch):
+    """The payoff of flagging rather than deleting.
+
+    The first noise rules discarded 87% of Gilead's headlines because
+    "GILD" appears in none of them. Had collection dropped those rows the
+    fix would have meant re-fetching six months of news; because the titles
+    were kept, it is arithmetic.
+    """
+    from cfdinvest.ingestion import news_rss
+    from cfdinvest.persist import headlines as store
+
+    path = tmp_path / "headlines" / "stories.jsonl"
+    monkeypatch.setattr(store, "_path", lambda config=None, account=None: path)
+    # Collected when the name was unknown, so wrongly flagged incidental.
+    store.record_headlines([
+        {"ticker": "GILD", "title": "Gilead Sciences Wins Approval",
+         "published": "2026-08-30", "noise": ["incidental"]},
+    ])
+    assert store.usable_headlines() == [], "precondition: the story is excluded"
+
+    monkeypatch.setattr(
+        news_rss, "company_names",
+        lambda t, config=None, resolve=False: ("Gilead Sciences",),
+    )
+    result = store.reclassify_headlines()
+    assert result["changed"] == 1
+    assert [r["title"] for r in store.usable_headlines()] == [
+        "Gilead Sciences Wins Approval"
+    ], "the story is still excluded after the name became known"

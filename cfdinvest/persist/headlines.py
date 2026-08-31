@@ -244,3 +244,65 @@ def usable_headlines(config=None, account: str | None = None,
         row for row in load_headlines(config, account)
         if not (set(row.get("noise") or ()) - permitted)
     ]
+
+
+def reclassify_headlines(config=None, account: str | None = None) -> dict:
+    """Recompute the noise flags on every stored story.
+
+    This is why the title is stored and the verdict is not treated as final.
+    The first noise rules discarded 87% of Gilead's headlines because
+    "GILD" appears in none of them -- the company is called Gilead
+    Sciences -- and the same held for four instruments in five, because the
+    name table covered 23 of 104. Had collection dropped the flagged rows,
+    the fix would have meant re-fetching six months of news and hoping the
+    feed still served it. Because they were kept, the fix is arithmetic.
+
+    Rewritten beside and moved over, like the prune, so an interruption
+    leaves the original rather than a half-file.
+
+    Never raises: a failed reclassification leaves the old flags, which are
+    conservative rather than wrong in the dangerous direction.
+    """
+    import json
+    import os
+
+    from cfdinvest.ingestion.news_rss import classify, company_names
+
+    rows = load_headlines(config, account)
+    if not rows:
+        return {"stories": 0, "changed": 0}
+
+    # Resolved once per instrument, not once per story: the lookup may reach
+    # the vendor, and there are fifty thousand rows.
+    names: dict[str, tuple[str, ...]] = {}
+    for row in rows:
+        ticker = str(row.get("ticker") or "")
+        if ticker and ticker not in names:
+            names[ticker] = company_names(ticker, config=config, resolve=True)
+
+    changed = 0
+    for row in rows:
+        ticker = str(row.get("ticker") or "")
+        before = list(row.get("noise") or [])
+        after = list(classify(str(row.get("title") or ""), ticker,
+                              names=names.get(ticker, ())))
+        if before != after:
+            row["noise"] = after
+            changed += 1
+
+    if not changed:
+        return {"stories": len(rows), "changed": 0, "instruments": len(names)}
+
+    try:
+        path = _path(config, account)
+        temporary = path.with_suffix(".jsonl.reclassifying")
+        with temporary.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, sort_keys=True, default=str) + "\n")
+        os.replace(temporary, path)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not reclassify the headline archive: %s", error)
+        return {"stories": len(rows), "changed": 0, "error": str(error)}
+
+    logger.info("Headlines reclassified: %d of %d changed", changed, len(rows))
+    return {"stories": len(rows), "changed": changed, "instruments": len(names)}

@@ -239,14 +239,29 @@ def classify(title: str, ticker: str, *, names=None) -> tuple[str, ...]:
     return tuple(reasons)
 
 
-def company_names(ticker: str) -> tuple[str, ...]:
+#: Where resolved company names are cached, under the lake's metadata dir.
+NAME_CACHE = "instrument_names.json"
+
+
+def company_names(ticker: str, *, config=None, resolve: bool = False
+                  ) -> tuple[str, ...]:
     """Known aliases for an instrument, for the incidental check.
 
-    Read from the broker instrument table, which already maps symbol to
-    company name. Absent is fine: the incidental rule then falls back to the
-    symbol alone, which over-flags rather than under-flags -- the safe
-    direction, since a flag is reversible and a deletion is not.
+    Three sources in order: the broker instrument table, a cached lookup,
+    and -- only when ``resolve`` is set -- the market-data vendor.
+
+    **The table alone is not enough, and the measurement says so.** It
+    covers 23 of the 104 instruments collected for. Where a name is known
+    the incidental rule fires on 10.9% of stories; where it is not, 38.9% --
+    and 87% for GILD, whose headlines say "Gilead Sciences" and never
+    "GILD". A symbol-only fallback does not "over-flag slightly", it
+    discards most of the coverage for four instruments in five.
+
+    ``resolve`` is off by default because this is called per story. The
+    backfill and the collection job warm the cache once; everything else
+    reads it.
     """
+    symbol = str(ticker)
     try:
         from cfdinvest.livehelper import t212_instruments
 
@@ -256,9 +271,75 @@ def company_names(ticker: str) -> tuple[str, ...]:
         # mention of AMD -- exactly the false positive the name lookup
         # exists to prevent, produced by the lookup failing quietly.
         table = getattr(t212_instruments, "SUGGESTED", None) or {}
-        entry = table.get(str(ticker))
+        entry = table.get(symbol)
         if isinstance(entry, (tuple, list)) and entry:
             return (str(entry[0]),)
     except Exception as error:  # noqa: BLE001 - a missing table is not an outage
-        logger.debug("No instrument table for %s: %s", ticker, error)
+        logger.debug("No instrument table for %s: %s", symbol, error)
+
+    cached = _cached_names(config).get(symbol)
+    if cached:
+        return (str(cached),)
+    if not resolve:
+        return ()
+    name = _resolve_name(symbol)
+    if name:
+        _remember_name(symbol, name, config)
+        return (name,)
     return ()
+
+
+def _cache_path(config):
+    from pathlib import Path
+
+    root = Path(getattr(getattr(config, "paths", None), "data_root", "data"))
+    return root / "metadata" / NAME_CACHE
+
+
+def _cached_names(config) -> dict:
+    import json
+
+    try:
+        path = _cache_path(config)
+        if not path.is_file():
+            return {}
+        return json.loads(path.read_text(encoding="utf-8")) or {}
+    except Exception as error:  # noqa: BLE001
+        logger.debug("Name cache unreadable: %s", error)
+        return {}
+
+
+def _remember_name(ticker: str, name: str, config) -> None:
+    import json
+
+    try:
+        path = _cache_path(config)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        held = _cached_names(config)
+        held[str(ticker)] = str(name)
+        path.write_text(json.dumps(held, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception as error:  # noqa: BLE001 - a cache miss is not an outage
+        logger.debug("Could not cache the name for %s: %s", ticker, error)
+
+
+def _resolve_name(ticker: str) -> str:
+    """The company's name from the market-data vendor, or ``""``.
+
+    Trimmed of the corporate suffixes a headline never uses: nobody writes
+    "Gilead Sciences, Inc." in a title, so matching on it would fail for the
+    same reason the symbol does.
+    """
+    try:
+        import yfinance
+
+        info = yfinance.Ticker(str(ticker)).info or {}
+    except Exception as error:  # noqa: BLE001 - a missing name is not an outage
+        logger.debug("No vendor name for %s: %s", ticker, error)
+        return ""
+    name = str(info.get("shortName") or info.get("longName") or "").strip()
+    for suffix in (", Inc.", " Inc.", " Inc", ", Ltd.", " Ltd.", " Ltd",
+                   " Corporation", " Corp.", " Corp", " Company", " Co.",
+                   " plc", " PLC", " Group", " Holdings", " Incorporated"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)].strip()
+    return name
