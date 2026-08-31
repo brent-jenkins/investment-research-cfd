@@ -589,8 +589,31 @@ def _refresh(repository: DataRepository, tickers, backtest_config) -> None:
     from cfdinvest.ingestion import capital_prices
 
     config = repository.config
-    interval = backtest_config.interval
-    logger.info("Refreshing market data for %d ticker(s)", len(tickers) or 0)
+
+    # RESOLVED, never compared raw. ``backtest_config.interval`` is None
+    # whenever nothing overrode it on the command line -- which is always,
+    # in the daemon -- and None means "whatever the config says", not
+    # "daily".
+    #
+    # Comparing it raw sent every intraday top-up down the yfinance branch,
+    # where ``MarketDataIngestor`` resolved the same None against the config,
+    # got "capital_1h", and asked yfinance for an interval it has never
+    # heard of. The vendor rejected all hundred names on every pass and the
+    # decision feed silently stopped advancing: on 2026-08-31 the book
+    # opened positions at 15:06 UTC on bars that ended the previous Friday
+    # at 19:00.
+    #
+    # The routing decision and the fetch were reading the same field at
+    # different levels of resolution, which is why the logs said
+    # "Downloading capital_1h" from the module that cannot download it.
+    # ``_command_ingest_daily`` already resolves before comparing, and says
+    # so in a comment; this, twelve lines away, did not.
+    interval = backtest_config.interval or getattr(
+        getattr(config, "market", None), "interval", None
+    )
+    logger.info(
+        "Refreshing market data for %d ticker(s) at %s", len(tickers) or 0, interval
+    )
 
     # Intraday bars come from the venue that fills the orders. yfinance is
     # still the source for daily bars, volume and the screening series --
