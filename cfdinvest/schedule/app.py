@@ -1960,13 +1960,27 @@ def _command_record_headlines(args, app_config) -> int:
     if not wanted:
         return EXIT_OK
 
+    # RSS rather than yfinance. Measured 2026-08-31: yfinance returns ten
+    # items covering about two days per instrument and ignores any count
+    # asked of it, so an archive built on it can only ever accumulate
+    # forward. The RSS feed honours a dated window and serves a hundred
+    # items per query, which is what makes six months of history possible
+    # at all -- and history is the whole point, since sentiment cannot be
+    # tested against trades that predate the archive.
+    from cfdinvest.ingestion import news_rss
+
     rows = []
     for ticker in wanted:
-        try:
-            stories = sentiment.fetch_headlines(ticker)
-        except Exception as error:  # noqa: BLE001 - one feed, not an outage
-            logger.debug("No headlines for %s: %s", ticker, error)
-            continue
+        stories = news_rss.fetch_window(ticker) or []
+        if not stories:
+            # Fall back to the vendor feed rather than losing the
+            # instrument entirely: two days of headlines beats none, and a
+            # single unreachable feed is not a reason to collect nothing.
+            try:
+                stories = sentiment.fetch_headlines(ticker) or []
+            except Exception as error:  # noqa: BLE001 - one feed, not an outage
+                logger.debug("No headlines for %s: %s", ticker, error)
+                continue
         for story in stories or ():
             title = str(story.get("title") or "").strip()
             if not title:
@@ -1976,6 +1990,15 @@ def _command_record_headlines(args, app_config) -> int:
                 "title": title,
                 "published": str(story.get("published") or ""),
                 "publisher": str(story.get("publisher") or ""),
+                # Recorded so a bad search is visible as a bad search rather
+                # than as unexplained noise in whatever later reads this.
+                "query": str(story.get("query") or ""),
+                "source": str(story.get("source") or "yfinance"),
+                # Why this might be noise, if it is. Recorded rather than
+                # acted on: the rules are a first attempt and a headline
+                # dropped at collection cannot be recovered once it leaves
+                # the feed's six-month window.
+                "noise": list(story.get("noise") or []),
                 # A property of the headline, not a view about it: six of
                 # sixteen Lululemon stories over a fortnight were reports of
                 # the price move itself.
@@ -1983,7 +2006,13 @@ def _command_record_headlines(args, app_config) -> int:
             })
 
     written = store.record_headlines(rows, app_config, account)
+    # Rolling window: six months is what the feed serves and what a model at
+    # this horizon can use. Beyond that the rows are cost without value.
+    pruned = store.prune_headlines(app_config, account)
     have = store.coverage(app_config, account)
+    if pruned.get("dropped"):
+        logger.info("Headlines pruned: dropped %d beyond the window",
+                    pruned["dropped"])
     logger.info(
         "Headlines: %d new of %d fetched across %d instruments; archive now "
         "%d stories over %d days",

@@ -144,3 +144,103 @@ def coverage(config=None, account: str | None = None) -> dict:
         "last": stamps[-1] if stamps else None,
         "days": days,
     }
+
+
+def prune_headlines(config=None, account: str | None = None,
+                    *, days: int | None = None, now=None) -> dict:
+    """Drop stories older than the retention window. Returns what it did.
+
+    The archive is append-only in the sense that matters -- no story is ever
+    edited, and what a headline said at the time is never rewritten -- but a
+    store that only grows is a store that eventually has to be dealt with in
+    a hurry. Six months is what the feed will serve and what a model at this
+    horizon can use, so beyond that the rows are cost without value.
+
+    Rewritten wholly rather than trimmed in place: a partial write that
+    failed halfway would leave a file that parses and is missing an
+    arbitrary middle, which is worse than either keeping everything or
+    losing everything. Written beside and moved over, so an interrupted
+    prune leaves the original intact.
+
+    Never raises. Failing to prune is untidy; failing to *collect* is
+    unrecoverable, and only one of those is worth risking.
+    """
+    import datetime as dt
+    import json
+    import os
+
+    from cfdinvest.ingestion.news_rss import RETENTION_DAYS
+
+    horizon = int(RETENTION_DAYS if days is None else days)
+    moment = now or dt.datetime.now(dt.timezone.utc)
+    if isinstance(moment, str):
+        moment = dt.datetime.fromisoformat(moment)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=dt.timezone.utc)
+    cutoff = moment - dt.timedelta(days=horizon)
+
+    rows = load_headlines(config, account)
+    if not rows:
+        return {"kept": 0, "dropped": 0, "cutoff": cutoff.isoformat()}
+
+    kept = []
+    dropped = 0
+    for row in rows:
+        published = str(row.get("published") or "")
+        try:
+            stamp = dt.datetime.fromisoformat(published.replace("Z", "+00:00"))
+        except ValueError:
+            # Undated rows are KEPT. "I cannot read this date" is not
+            # evidence the story is old, and discarding on a parse failure
+            # would quietly delete whatever a future format change touches.
+            kept.append(row)
+            continue
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=dt.timezone.utc)
+        if stamp >= cutoff:
+            kept.append(row)
+        else:
+            dropped += 1
+
+    if not dropped:
+        return {"kept": len(kept), "dropped": 0, "cutoff": cutoff.isoformat()}
+
+    try:
+        path = _path(config, account)
+        temporary = path.with_suffix(".jsonl.pruning")
+        with temporary.open("w", encoding="utf-8") as handle:
+            for row in kept:
+                handle.write(json.dumps(row, sort_keys=True, default=str) + "\n")
+        os.replace(temporary, path)
+    except Exception as error:  # noqa: BLE001 - tidiness is not worth a failure
+        logger.warning("Could not prune the headline archive: %s", error)
+        return {"kept": len(rows), "dropped": 0, "cutoff": cutoff.isoformat(),
+                "error": str(error)}
+
+    logger.info(
+        "Headlines pruned: kept %d, dropped %d older than %s",
+        len(kept), dropped, cutoff.date(),
+    )
+    return {"kept": len(kept), "dropped": dropped, "cutoff": cutoff.isoformat()}
+
+
+def usable_headlines(config=None, account: str | None = None,
+                     *, allow: tuple[str, ...] = ()) -> list[dict]:
+    """Stories with nothing flagged against them.
+
+    The filter lives at the *read* side deliberately. Collection keeps
+    everything the feed said, because the noise rules are a first attempt
+    calibrated on one sample and a headline discarded at collection cannot
+    be recovered once it leaves the feed's six-month window. Whoever is
+    modelling decides what to exclude, and can change their mind without
+    losing data.
+
+    ``allow`` re-admits named reasons, so a later study can ask "does the
+    listicle actually hurt?" rather than having that answered for it by a
+    rule written today.
+    """
+    permitted = {str(reason) for reason in allow}
+    return [
+        row for row in load_headlines(config, account)
+        if not (set(row.get("noise") or ()) - permitted)
+    ]
