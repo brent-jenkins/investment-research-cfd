@@ -480,6 +480,83 @@ uses the shared root, exactly as before it existed. See
 The root `README.md` is out of date — it describes the project as
 "ingestion layer complete".
 
+### What changed on 2026-08-31
+
+The day the strategy was retuned onto the feed it actually deals on, and the
+day the news programme was closed. Both halves are worth reading; the second
+is six negative results and they cost more than the first.
+
+**The baseline, rebuilt from one source of truth.** Decisions come from
+`capital_1h` now rather than yfinance, on the owner's instruction: the trades
+open at Capital's prices, so the decisions should be made on Capital's bars.
+Switching the feed appeared to cost 41 points, and most of a morning went on
+why. It was not the feed. `capital_1h` carries no `GBPUSD=X`, so every USD
+instrument was converting at 1.0 — a regression introduced with the switch,
+and one I had been filtering out of my own console output as a routine
+warning. With a vendor-interval fallback for the FX pairs the honest baseline
+is **23.7%/yr at −45.7%**.
+
+Three changes then raised it, each expressed as `ExecutionConfig` settings
+and applied by the engine rather than by an overlay:
+
+    baseline                              23.7%   −45.7%
+    screen selects 10 from a pool of 100  82.3%
+    entry size floor removed             130.5%   −40.3%
+    conviction sizing, strength 0.5      254.9%   −41.4%   Calmar 6.17
+
+The screen arm holds every name it selects, so it does not contradict
+yesterday's "eligible must equal held" — it widens what the screen may
+*choose from*, not the gap between chosen and held.
+
+Conviction sizing is the one that invites scepticism, so it carries the
+control yesterday's lesson demanded before the claim rather than after. A
+uniform leverage increase matched to the same mean exposure returns 198.9%,
+so the differential — putting more into high-confidence signals specifically
+— is worth 56 points beyond what the exposure buys. Split-half is +106.6pp
+and +151.9pp, positive in both.
+
+**The news programme is closed.** Six formulations, all null, against
+confidence's +0.20 on the same trips:
+
+    news count against direction, per instrument   5 of 104 — the chance rate
+    news count against trip P&L                    +0.011
+    headline sentiment level                       −0.003 to +0.015
+    sentiment change against the instrument's own
+      trailing baseline                            +0.011 / +0.020
+    confirmation inside confidence's dead middle
+      bands                                        −0.011 to +0.007
+    per-publisher track record, split-half         below chance
+
+The last deserves its detail, because "only trust sources with a record of
+being right" is the most reasonable-sounding of the ideas and it is testable:
+the publisher is stored with every story. Twelve publishers had the volume to
+speak. Two held their sign across a May split with second-half |rho| above
+0.05 — MarketBeat at −0.058 then −0.056, TradingKey at −0.011 then −0.161.
+Neither is a track record. MarketBeat's readings sit inside one standard
+error of zero at both n=243 and n=375, and two identical readings of nothing
+are still nothing; TradingKey's first half is noise whose sign is arbitrary.
+And the count settles it: with sign-agreement a coin flip, chance alone
+predicts three or four survivors out of twelve. **Two survived. The publisher
+split performs below randomness.**
+
+The stratification matters most. Confidence sorts its top and bottom
+quartiles well (rho +0.22 and +0.19) and says nothing in the middle two
+(+0.003 and −0.038) — which is precisely where a second opinion would earn
+its keep, and precisely where news was measured and found empty.
+
+**Two related ideas were not built, deliberately.** Detecting genuinely
+serious headlines — the aircraft-accident, tariff-announcement, price-rise
+class — and separating reported fact from rumour are both the same bet with
+a harder classifier in front of it, and both would need article bodies this
+project does not collect. Sharpening a filter is the right move when a signal
+is *attenuated*. Six formulations returning nothing, including one aimed at
+confidence's blind spot, says the signal is *absent*. No amount of filtering
+recovers what is not there.
+
+What continues: collection runs, off-hours and cheap, and the archive is what
+made these six answers possible rather than arguable. Sentiment appears on
+the Signals page as a display-only indicator, wired to nothing.
+
 ### What changed on 2026-08-30
 
 Twelve measurements, ten of them negative, and the negatives are the more
