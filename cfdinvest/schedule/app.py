@@ -651,6 +651,12 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
             # the broker quoted, and a cost model that changes silently when
             # an unrelated read fails is the harder bug to find.
             use_measured_spreads=getattr(strategy, "use_measured_spreads", False),
+        confidence_sizing_strength=getattr(
+            strategy, "confidence_sizing_strength", None
+        ),
+        confidence_sizing_floor=getattr(
+            strategy, "confidence_sizing_floor", 0.25
+        ),
         )
 
     if missing:
@@ -714,6 +720,12 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
         ),
         breakout_lookback=getattr(strategy, "breakout_lookback", None),
         use_measured_spreads=getattr(strategy, "use_measured_spreads", False),
+        confidence_sizing_strength=getattr(
+            strategy, "confidence_sizing_strength", None
+        ),
+        confidence_sizing_floor=getattr(
+            strategy, "confidence_sizing_floor", 0.25
+        ),
         thresholds=HysteresisThresholds(
             # The size pair is passed explicitly for the same reason the
             # confidence pair is: left to the dataclass default it was the
@@ -1934,6 +1946,15 @@ def _command_record_headlines(args, app_config) -> int:
     account = getattr(args, "account", None)
     wanted = _with_held(_traded(app_config, account), app_config, account) or []
     for extra in _ever_selected(app_config, account):
+        if extra not in wanted:
+            wanted.append(extra)
+    # And every candidate the screen may rank. Sentiment is a plausible
+    # *selection* input as well as a position one, and a feed with no
+    # archive cannot be backfilled: a name whose headlines were never
+    # collected can never be tested, however interesting it later looks.
+    # Same argument that seeding the price history won -- collect it before
+    # you need it, because afterwards is too late.
+    for extra in _screen_candidates(app_config):
         if extra not in wanted:
             wanted.append(extra)
     if not wanted:

@@ -255,6 +255,39 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
                "alone is worth +11.5pp, the pair is not separable here",
     ),
     Justification(
+        path="execution.confidence_sizing_strength",
+        value=0.5,
+        feed=CURRENT_FEED,
+        cost_model=CURRENT_COST_MODEL,
+        source="scratchpad/confsize.py, ctrl.py and halves.py: five strengths "
+               "through the engine screen-gated at target 10, a control "
+               "matched on realised leverage by bisection, and an "
+               "independent split-half",
+        figure="off -> 130.5%/-40.3% (Calmar 3.24); 0.5 -> 254.9%/-41.4% "
+               "(6.17); 1.0 -> 319.8%/-47.2%; 2.0 -> 357.9%; 4.0 -> 371.3% "
+               "at -53.6%. 0.5 chosen over the peak because return nearly "
+               "doubles while drawdown barely moves. CONTROL: uniform "
+               "exposure matched on realised leverage (1.659 vs 1.655) "
+               "returns 198.9% at -46.7%, so conviction is worth +56pp and "
+               "5.3pp less drawdown at the same exposure -- the gain is "
+               "allocation, not leverage. HALVES: +106.6pp in the first, "
+               "+151.9pp in the second, Calmar improving in both. Absolute "
+               "figures are not a forecast: they sit on the screen's +150pp "
+               "ranking edge over one 3.65-year window",
+    ),
+    Justification(
+        path="execution.confidence_sizing_floor",
+        value=0.25,
+        feed=CURRENT_FEED,
+        cost_model=CURRENT_COST_MODEL,
+        source="chosen, not swept -- a bound rather than a tuned parameter",
+        figure="NOT MEASURED against alternatives. It exists so a signal "
+               "that cleared the entry gate is trimmed rather than erased; "
+               "sizing one to zero would be a second gate wearing a "
+               "multiplier, and gates are measured separately. Recorded as "
+               "a choice so nobody later reads it as a finding",
+    ),
+    Justification(
         path="execution.thresholds.exit_size",
         value=0.01,
         feed=CURRENT_FEED,

@@ -528,6 +528,10 @@ def run_execution(signal_frame, analysis_frame, config):
             target_units, units, confidence[bar], config
         )
 
+        # After the trim and before the caps: conviction decides how large a
+        # position should be, and the caps then decide how large it may be.
+        target_units = _size_by_confidence(target_units, confidence[bar], config)
+
         target_units, new_held = _apply_position_limit(
             target_units, new_held, units, config
         )
@@ -821,6 +825,50 @@ def _target_units(held, size_row, reference, equity, config, tradable):
     with np.errstate(invalid="ignore", divide="ignore"):
         units = notional / safe_price
     return np.nan_to_num(units)
+
+
+def _size_by_confidence(target_units, confidence, config):
+    """Scale a position by how much conviction stands behind it.
+
+    Confidence is the best predictor of outcome this project has -- +0.248
+    rank correlation against realised trip P&L, where a purpose-built model
+    on sixteen features managed +0.129 -- and until now it was used only as
+    a *gate*: clear 0.35 or do not trade. Everything above the bar was sized
+    identically, which throws away the ordering the score carries.
+
+    The multiplier is linear in confidence above the entry bar, centred so
+    that a position exactly at the bar is unchanged:
+
+        multiplier = 1 + strength x (confidence - bar) / (1 - bar)
+
+    ``strength`` of 0 is the current behaviour. 1.0 doubles a
+    maximum-confidence position relative to one at the bar. Bounded by
+    ``confidence_sizing_floor`` so a weak signal is trimmed rather than
+    erased, since the gate has already decided it is worth taking.
+
+    **Read the result against a leverage control.** This raises mean
+    exposure, and this project once credited exactly such a gain to
+    selection when the mechanism was a mixture nobody had separated -- a
+    +10.7pp result that turned out to be part signal, part leverage, and was
+    itself wrongly retracted before the control ran. Sizing differentially
+    and levering uniformly are different claims and only one of them is
+    interesting.
+
+    Pure. Applies at entry and to held positions alike: the conviction
+    behind a position is a fact about now, not about when it was opened.
+    """
+    strength = getattr(config, "confidence_sizing_strength", None)
+    if not strength:
+        return target_units
+    bar = float(getattr(config.thresholds, "entry_confidence", 0.0) or 0.0)
+    span = max(1.0 - bar, 1e-9)
+    edge = (np.asarray(confidence, dtype=float) - bar) / span
+    # An absent reading scales nothing rather than scaling to zero: "no
+    # confidence recorded" is not "no conviction".
+    edge = np.nan_to_num(edge, nan=0.0)
+    floor = float(getattr(config, "confidence_sizing_floor", 0.25) or 0.0)
+    multiplier = np.clip(1.0 + float(strength) * edge, floor, None)
+    return target_units * multiplier
 
 
 def _trim_decayed(target_units, units, confidence, config):

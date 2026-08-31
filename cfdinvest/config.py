@@ -303,6 +303,52 @@ class StrategyConfig:
     #: figure should be read as the pair.
     entry_size: float = 0.02
     exit_size: float = 0.01
+
+    #: How strongly position size follows conviction above the entry bar.
+    #:
+    #: Confidence is the best predictor of outcome this book has -- +0.248
+    #: rank correlation against realised trip P&L, where a purpose-built
+    #: sixteen-feature model managed +0.129 -- and until 2026-08-30 it was
+    #: used only as a gate. Everything that cleared 0.35 was sized
+    #: identically, whether it scored 0.36 or 0.95, so the ordering the score
+    #: carries was discarded at the moment of acting on it.
+    #:
+    #: Measured through the engine, screen-gated at target 10, Capital bars,
+    #: measured spreads:
+    #:
+    #:     strength    CAGR    maxDD   Calmar   mean lev
+    #:     0 (off)   130.5%   -40.3%     3.24      1.123
+    #:     0.5       254.9%   -41.4%     6.17      1.655
+    #:     1.0       319.8%   -47.2%     6.77      1.824
+    #:     2.0       357.9%   -50.7%     7.06      1.977
+    #:     4.0       371.3%   -53.6%     6.93      2.109
+    #:
+    #: 0.5 rather than the peak: return nearly doubles while drawdown barely
+    #: moves, and the higher strengths buy return with risk instead of
+    #: earning it.
+    #:
+    #: **Not leverage.** Sizing by conviction lifts mean gross leverage from
+    #: 1.123 to 1.655, and this project once credited exactly such a gain to
+    #: selection when the mechanism was a mixture nobody had separated -- then
+    #: retracted it before the control ran. So the control ran first here, and
+    #: matched on *realised* leverage rather than nominal, because the caps
+    #: bind differently: uniform exposure at leverage 1.659 returns 198.9% at
+    #: -46.7%, against conviction's 254.9% at -41.4%. Allocating the same
+    #: exposure by conviction is worth +56pp and 5.3pp less drawdown.
+    #:
+    #: Holds in both halves independently -- +106.6pp in the first, +151.9pp
+    #: in the second -- with Calmar improving in each, so it is not one
+    #: episode and not risk-bought return.
+    #:
+    #: The absolute figures are not a forecast. They sit on the screen's own
+    #: +150pp ranking edge over a 3.65-year window, and the demo account is
+    #: the only thing that can test whether any of it transfers.
+    confidence_sizing_strength: float | None = 0.5
+
+    #: The smallest multiplier conviction sizing may produce. A signal that
+    #: cleared the gate is worth taking; this trims it rather than erasing
+    #: it, which would be a second unmeasured gate wearing a multiplier.
+    confidence_sizing_floor: float = 0.25
     #: Execution friction beyond the spread, in basis points of price.
     #:
     #: The spread is charged separately and properly; this is what the

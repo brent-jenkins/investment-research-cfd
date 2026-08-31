@@ -129,6 +129,13 @@ class ExecutionConfig:
     #: conditioning at all. Left at ``trend`` regardless: +1.3pp is no
     #: evidence to move a live parameter, even toward something simpler.
     breakout_regime: str = "trend"
+    #: How strongly position size follows confidence above the entry bar.
+    #: ``None`` or 0 sizes every accepted signal identically, which is the
+    #: behaviour up to 2026-08-30. See ``engine._size_by_confidence``.
+    confidence_sizing_strength: float | None = None
+    #: The smallest multiplier confidence sizing may produce. A signal that
+    #: cleared the gate is worth taking; this trims it rather than erasing it.
+    confidence_sizing_floor: float = 0.25
     #: Bars on which the operator may change a position, as a boolean Series
     #: over the analysis index. ``None`` means every bar, which is what every
     #: recorded run assumed.

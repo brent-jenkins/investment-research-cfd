@@ -457,3 +457,91 @@ def test_a_missing_regime_frame_leaves_the_filter_off():
                                                        volatility_regime=None),
                                  "both")
     assert frame is None and labels == ()
+
+
+# --------------------------------------------------------------------------- #
+# Sizing by conviction, not just gating on it
+# --------------------------------------------------------------------------- #
+def test_confidence_sizing_is_off_unless_asked_for():
+    """Every accepted signal was sized identically until 2026-08-30. That
+    stays the default, so a recorded run keeps reproducing."""
+    import numpy as np
+
+    from cfdinvest.execution.engine import _size_by_confidence
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    target = np.array([10.0, -4.0])
+    same = _size_by_confidence(target, np.array([0.9, 0.4]), ExecutionConfig())
+    assert np.allclose(same, target)
+
+
+def test_a_position_at_the_entry_bar_is_unchanged():
+    """The multiplier is centred on the bar: sizing by conviction must not
+    silently re-scale the whole book, or the arm measures leverage."""
+    import dataclasses
+
+    import numpy as np
+
+    from cfdinvest.execution.engine import _size_by_confidence
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    config = dataclasses.replace(ExecutionConfig(), confidence_sizing_strength=1.0)
+    bar = config.thresholds.entry_confidence
+    got = _size_by_confidence(np.array([10.0]), np.array([bar]), config)
+    assert got[0] == pytest.approx(10.0)
+
+
+def test_more_conviction_means_more_size_and_less_means_less():
+    import dataclasses
+
+    import numpy as np
+
+    from cfdinvest.execution.engine import _size_by_confidence
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    config = dataclasses.replace(ExecutionConfig(), confidence_sizing_strength=1.0)
+    bar = config.thresholds.entry_confidence
+    got = _size_by_confidence(
+        np.array([10.0, 10.0, 10.0]),
+        np.array([1.0, bar, bar / 2.0]),
+        config,
+    )
+    assert got[0] > got[1] > got[2], f"not monotone in confidence: {got}"
+    # Sign is preserved: a short sized up is still a short.
+    short = _size_by_confidence(np.array([-10.0]), np.array([1.0]), config)
+    assert short[0] < 0
+
+
+def test_a_weak_signal_is_trimmed_rather_than_erased():
+    """The gate already decided the signal is worth taking. Sizing it to
+    nothing would be a second, unmeasured gate wearing a multiplier."""
+    import dataclasses
+
+    import numpy as np
+
+    from cfdinvest.execution.engine import _size_by_confidence
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    config = dataclasses.replace(
+        ExecutionConfig(), confidence_sizing_strength=5.0,
+        confidence_sizing_floor=0.25,
+    )
+    got = _size_by_confidence(np.array([10.0]), np.array([0.0]), config)
+    assert got[0] == pytest.approx(2.5), (
+        "a low-confidence position was erased rather than trimmed"
+    )
+
+
+def test_an_absent_confidence_reading_scales_nothing():
+    """Absence named: "no confidence recorded" is not "no conviction", and
+    scaling it to zero would silently drop positions."""
+    import dataclasses
+
+    import numpy as np
+
+    from cfdinvest.execution.engine import _size_by_confidence
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    config = dataclasses.replace(ExecutionConfig(), confidence_sizing_strength=1.0)
+    got = _size_by_confidence(np.array([10.0]), np.array([np.nan]), config)
+    assert got[0] == pytest.approx(10.0)
