@@ -61,14 +61,30 @@ _AGENT = "Mozilla/5.0 (compatible; cfdinvest/1.0; research)"
 
 
 def headline_query(ticker: str, since: dt.date | None = None,
-                   until: dt.date | None = None) -> str:
+                   until: dt.date | None = None, *, name: str | None = None) -> str:
     """The search a window is fetched with. Stored with every story.
 
-    ``stock`` is appended to bias the match towards the listed company
-    rather than the word. It is not a guarantee -- see the module note --
-    which is precisely why the query is recorded rather than assumed.
+    **The company name, quoted, wherever one is known.** Searching the
+    symbol looked reasonable and was not: measured across a six-month
+    backfill, "GILD stock" returned gold-mining stories -- New Gold, Coeur
+    Mining, "Why Is Gold Getting Cheaper" -- because the feed fuzzy-matches
+    GILD to gold. "SHOP stock" returned CrowdStrike, Marvell and municipal
+    bin collections. Eighty-seven per cent of Gilead's fetched headlines
+    were about a different industry.
+
+    That was found because the query is stored with every story, which is
+    the thing this docstring claimed it was for: "a bad search becomes
+    visible as a bad search rather than as mysterious noise in a model".
+
+    The quoted name loses nothing. ``"Gilead Sciences" stock`` still
+    returns headlines that name only the symbol, because the feed matches
+    the article rather than the literal title.
+
+    ``stock`` remains appended to bias towards the listed company over the
+    word -- "Target" and "Prologis" are both ordinary English otherwise.
     """
-    parts = [f"{ticker} stock"]
+    label = f'"{name}"' if name else str(ticker)
+    parts = [f"{label} stock"]
     if since is not None:
         parts.append(f"after:{since.isoformat()}")
     if until is not None:
@@ -115,14 +131,16 @@ def _published(item) -> str | None:
 
 def fetch_window(ticker: str, since: dt.date | None = None,
                  until: dt.date | None = None, *, timeout: float = 25.0,
-                 opener=None) -> list[dict]:
+                 opener=None, config=None) -> list[dict]:
     """Stories for one instrument over one window. Never raises.
 
     Returns rows in ``persist.headlines`` shape, plus the ``query`` that
     produced them and the ``source`` feed. A failed window is an empty list
     and a warning: one bad window must not lose the other five.
     """
-    query = headline_query(ticker, since, until)
+    names = company_names(ticker, config=config)
+    query = headline_query(ticker, since, until,
+                           name=names[0] if names else None)
     url = f"{_ENDPOINT}?{urllib.parse.urlencode({'q': query, 'hl': 'en-US', 'gl': 'US', 'ceid': 'US:en'})}"
     try:
         request = urllib.request.Request(url, headers={"User-Agent": _AGENT})
@@ -163,19 +181,22 @@ def fetch_window(ticker: str, since: dt.date | None = None,
             "source": "google-news-rss",
             # Flagged, not dropped -- see ``classify``. A reader filters on
             # this; the record keeps everything the feed said.
-            "noise": list(classify(title, ticker, names=company_names(ticker))),
+            "noise": list(classify(title, ticker, names=names)),
         })
     return stories
 
 
 def fetch_history(ticker: str, *, days: int = RETENTION_DAYS,
                   today: dt.date | None = None, pause: float = _PAUSE_SECONDS,
-                  opener=None) -> list[dict]:
+                  opener=None, config=None) -> list[dict]:
     """Every window across the retention period, for one instrument."""
+    # Warm the name once: the query depends on it, and resolving per window
+    # would ask the vendor seven times for one answer.
+    company_names(ticker, config=config, resolve=True)
     rows: list[dict] = []
     windows = monthly_windows(days, today=today)
     for position, (since, until) in enumerate(windows):
-        rows.extend(fetch_window(ticker, since, until, opener=opener))
+        rows.extend(fetch_window(ticker, since, until, opener=opener, config=config))
         if pause and position + 1 < len(windows):
             time.sleep(pause)
     return rows

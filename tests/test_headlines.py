@@ -324,3 +324,30 @@ def test_reclassifying_fixes_flags_without_refetching(tmp_path, monkeypatch):
     assert [r["title"] for r in store.usable_headlines()] == [
         "Gilead Sciences Wins Approval"
     ], "the story is still excluded after the name became known"
+
+
+def test_the_query_searches_the_company_name_not_the_symbol():
+    """Searching the symbol looked reasonable and was not.
+
+    Measured across a six-month backfill: "GILD stock" returned gold-mining
+    stories -- New Gold, Coeur Mining, "Why Is Gold Getting Cheaper" --
+    because the feed fuzzy-matches GILD to gold, and 87% of Gilead's fetched
+    headlines were about a different industry. "SHOP stock" returned
+    CrowdStrike, Marvell and municipal bin collections.
+
+    Found because the query is stored with every story, which is exactly
+    what that field was added for.
+    """
+    import datetime as dt
+
+    from cfdinvest.ingestion.news_rss import headline_query
+
+    named = headline_query("GILD", dt.date(2026, 6, 1), dt.date(2026, 7, 1),
+                           name="Gilead Sciences")
+    assert '"Gilead Sciences"' in named, "the company name is not quoted"
+    assert "GILD stock" not in named, "still searching the ambiguous symbol"
+    assert "after:2026-06-01" in named and "before:2026-07-01" in named
+
+    # No name known: the symbol is the only thing left, and is still better
+    # than searching nothing.
+    assert headline_query("XYZ") == "XYZ stock"

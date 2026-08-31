@@ -1971,7 +1971,7 @@ def _command_record_headlines(args, app_config) -> int:
 
     rows = []
     for ticker in wanted:
-        stories = news_rss.fetch_window(ticker) or []
+        stories = news_rss.fetch_window(ticker, config=app_config) or []
         if not stories:
             # Fall back to the vendor feed rather than losing the
             # instrument entirely: two days of headlines beats none, and a
