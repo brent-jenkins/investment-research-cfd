@@ -1120,3 +1120,61 @@ def test_the_readme_states_exactly_where_it_may_trade():
     assert "cfd_capital_allow_live" in lower, (
         "the README does not name the switch a live account needs"
     )
+
+
+def test_no_message_claims_the_system_cannot_trade():
+    """M-live: the footer said the opposite of the truth for four days.
+
+    "This system simulates trades and places no orders with any broker" was
+    true when written and stopped being true on 2026-08-27, when the daemon
+    was permitted to deal on the Capital.com demo account. It survived
+    unchanged in four separate files -- the bias digest, the insights digest,
+    the journal digest and the operational alerts -- because it was four
+    copies of one sentence and nothing tied them together.
+
+    A stale reassurance is worse than none: somebody reading an alert at
+    three in the morning is entitled to know whether the thing warning them
+    can place an order.
+    """
+    from pathlib import Path
+
+    stale = "places no orders with any broker"
+    # disclosure.py quotes the old sentence while explaining why it was
+    # wrong. Striking a retraction rather than deleting it is the house rule;
+    # the point is that nothing still *asserts* it.
+    offenders = [
+        str(path)
+        for path in Path("cfdinvest").rglob("*.py")
+        if path.name != "disclosure.py"
+        and stale in path.read_text(encoding="utf-8", errors="ignore")
+    ]
+    assert not offenders, (
+        f"these still claim the system cannot trade: {offenders}"
+    )
+
+
+def test_the_dealing_notice_has_one_owner():
+    """Four copies of a claim is four chances for it to rot, and it did."""
+    from pathlib import Path
+
+    from cfdinvest.disclosure import DEALING_NOTICE, dealing_notice
+
+    assert "demo" in DEALING_NOTICE.lower()
+    assert "live" in DEALING_NOTICE.lower(), (
+        "the notice does not say what would have to change for it to be live"
+    )
+
+    # Absence named: not having checked is not the same as having checked
+    # and found it safe.
+    assert dealing_notice(None) == DEALING_NOTICE
+    assert "WARNING" in dealing_notice(True)
+    assert dealing_notice(False) == DEALING_NOTICE
+
+    # And it is imported, not restated.
+    copies = [
+        str(path)
+        for path in Path("cfdinvest").rglob("*.py")
+        if path.name != "disclosure.py"
+        and DEALING_NOTICE[:40] in path.read_text(encoding="utf-8", errors="ignore")
+    ]
+    assert not copies, f"the notice is restated rather than imported in {copies}"

@@ -539,7 +539,10 @@ def test_the_digest_says_these_are_not_conclusions_about_you():
         build_bias_report(confirmations=sized_after_outcome(), now=NOW)
     ).get_content()
     assert "not conclusions about you" in body
-    assert "places no orders" in body
+    # The notice now says what the system *can* do -- deal on a demo
+    # account -- rather than claiming it cannot trade, which stopped
+    # being true on 2026-08-27. Asserted by meaning, not wording.
+    assert "demo account" in body and "live account" in body
 
 
 def test_the_digest_distinguishes_unmeasured_from_clear():

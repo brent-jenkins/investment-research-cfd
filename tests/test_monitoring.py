@@ -85,11 +85,39 @@ def test_a_weekend_is_not_staleness():
 
 
 def test_a_stale_lake_is_critical():
+    """Age is measured in TRADING days now, not calendar days.
+
+    Six calendar days spanning a weekend is four trading days, and the
+    difference is the whole point: a Friday close read as three calendar
+    days stale every Monday breakfast and fired a critical alert on a
+    weekly schedule. Both figures are reported so the message can say which
+    it means.
+    """
     issues = check_lake_freshness(
         {"newest": NOW - pd.Timedelta("6D")}, LIMITS, now=NOW
     )
     assert severities(issues) == ["critical"]
-    assert issues[0].details["age_days"] == pytest.approx(6.0)
+    assert issues[0].details["age_days"] < issues[0].details["calendar_days"], (
+        "trading-day age is not below calendar age across a weekend, so the "
+        "measure is still counting closed days"
+    )
+    assert issues[0].details["calendar_days"] == pytest.approx(6.0)
+
+
+def test_a_weekend_is_not_a_stale_lake():
+    """The alert this rewrite exists to stop sending.
+
+    Friday's close, read on Monday morning before the open: nothing has
+    traded since, so nothing is stale -- however many calendar days have
+    passed.
+    """
+    friday = pd.Timestamp("2026-08-28 19:00", tz="UTC")
+    monday = pd.Timestamp("2026-08-31 07:33", tz="UTC")
+    issues = check_lake_freshness({"newest": friday}, LIMITS, now=monday)
+    assert issues == [], (
+        "a weekend still reads as a stale lake; this fires every Monday and "
+        "trains the reader to ignore the alert"
+    )
 
 
 def test_no_lake_metadata_is_a_warning_not_a_pass():
@@ -938,11 +966,18 @@ def test_the_alert_says_what_was_checked_and_clear():
     assert "Data lake" in body
 
 
-def test_the_alert_carries_the_simulation_disclaimer():
+def test_the_alert_says_what_the_system_can_actually_do():
+    """It used to claim the system "places no orders with any broker", which
+    stopped being true on 2026-08-27 and survived in four files. A stale
+    reassurance is worse than none in an alert."""
     from cfdinvest.schedule.notify import build_monitoring_alert
 
     body = build_monitoring_alert(snapshot_of()).get_content()
-    assert "places no orders" in body
+    assert "demo account" in body
+    assert "live account" in body, (
+        "the alert does not say what would have to change for it to be live"
+    )
+    assert "places no orders" not in body
 
 
 def test_the_alert_says_when_the_machine_was_not_measured():
@@ -1113,3 +1148,41 @@ def test_absent_equity_is_unchecked_rather_than_silent():
         issues = review_triggers(empty)
         assert issues, "an unreadable book reported as fine"
         assert "could not be checked" in issues[0].message
+
+
+def test_a_public_holiday_is_not_a_stale_lake():
+    """The long-weekend case, which the plain weekend fix does not cover.
+
+    Labour Day 2026 falls on Monday 7 September, so Friday's close is 3.5
+    calendar days old by Tuesday breakfast -- worse than an ordinary
+    weekend, and it would have fired the same two criticals a day later.
+    Trading time across that gap is 0.15 session-days, because no session
+    ran in between.
+
+    The holiday calendar is the market's, not the machine's: the same code
+    path also covers Thanksgiving, Independence Day observed on the 3rd, and
+    Good Friday.
+    """
+    friday = pd.Timestamp("2026-09-04 19:00", tz="UTC")
+    tuesday = pd.Timestamp("2026-09-08 07:33", tz="UTC")
+
+    issues = check_lake_freshness({"newest": friday}, LIMITS, now=tuesday)
+    assert issues == [], (
+        "a three-day holiday weekend reads as a stale lake; the alert would "
+        "fire on the Tuesday after every US market holiday"
+    )
+
+
+def test_the_holiday_calendar_covers_the_year():
+    """Guards the assumption the test above rests on. A calendar missing a
+    holiday would put the staleness measure back on calendar time for that
+    week without anything saying so."""
+    import datetime as dt
+
+    from cfdinvest.schedule.market_calendar import us_market_holidays
+
+    holidays = us_market_holidays(2026)
+    assert dt.date(2026, 9, 7) in holidays, "Labour Day is missing"
+    assert dt.date(2026, 11, 26) in holidays, "Thanksgiving is missing"
+    assert dt.date(2026, 4, 3) in holidays, "Good Friday is missing"
+    assert len(holidays) >= 9, f"only {len(holidays)} holidays in 2026"

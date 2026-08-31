@@ -42,6 +42,36 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+
+def trading_age_days(newest, now) -> float | None:
+    """Staleness in trading days, or ``None`` when it cannot be computed.
+
+    One owner for the *measurement*, beside the threshold it is compared
+    against. ``lake_stale_days`` was changed from calendar days to trading
+    days, and a threshold whose units move while its consumers keep their
+    own arithmetic is two definitions of one number -- which is how the
+    dashboard came to compare a calendar age against a trading limit and
+    call a healthy lake critical.
+
+    Falls back to calendar days if the market calendar cannot be read, and
+    says so, because over-reporting staleness is the safe direction.
+    """
+    if newest is None or now is None:
+        return None
+    try:
+        from cfdinvest.schedule.market_calendar import trading_days_between
+
+        return float(trading_days_between(newest, now))
+    except Exception as error:  # noqa: BLE001 - a calendar fault is not an outage
+        logger.warning(
+            "Could not measure trading-day staleness (%s); falling back to "
+            "calendar days, which over-reports across a closed market", error,
+        )
+        try:
+            return float((now - newest).total_seconds() / 86_400.0)
+        except Exception:  # noqa: BLE001
+            return None
+
 __all__ = [
     "TYPES",
     "SEVERITIES",
@@ -120,8 +150,16 @@ class MonitoringThresholds:
         confirmation before it is worth asking whether it is still open.
     """
 
-    lake_stale_days: float = 3.0
-    scheduler_stale_hours: float = 48.0
+    #: In TRADING days, not calendar days -- see ``_lake_issues``. One full
+    #: session without a new bar means the intraday ingest has stopped while
+    #: the market was open, which is a real fault and shows within hours.
+    #: The old value of 3.0 was in calendar days and breached every Monday.
+    lake_stale_days: float = 1.0
+    #: In trading hours. The intraday jobs run every fifteen minutes while a
+    #: market is open, so 48 hours was simultaneously far too loose to catch
+    #: a weekday failure and too tight to survive a weekend -- the worst of
+    #: both. Four trading hours is roughly sixteen missed ticks.
+    scheduler_stale_hours: float = 4.0
     missed_run_grace_minutes: float = 90.0
     disk_free_gb: float = 1.0
     disk_free_fraction: float = 0.05
@@ -428,7 +466,16 @@ def check_lake_freshness(
     if newest is None:
         return [_unreadable("lake", "Lake freshness", "no newest bar recorded")]
 
-    age_days = (moment - newest).total_seconds() / 86_400.0
+    # Measured in TRADING time, not calendar time. A Friday close is three
+    # calendar days old by Monday breakfast every single week, so a
+    # calendar threshold of three is not a warning about anything -- it is a
+    # weekly alarm clock, and an alert that cries wolf on schedule is one
+    # nobody reads. The vitals page has always known this; the email did
+    # not, and the two disagreed about the same fact.
+    calendar_days = (moment - newest).total_seconds() / 86_400.0
+    age_days = trading_age_days(newest, moment)
+    if age_days is None:
+        age_days = calendar_days
     if age_days <= limits.lake_stale_days:
         return []
 
@@ -437,13 +484,15 @@ def check_lake_freshness(
             type="lake",
             severity="critical",
             message=(
-                f"The newest data in the lake is {age_days:.1f} days old "
-                f"(threshold {limits.lake_stale_days:.0f})."
+                f"The newest data in the lake is {age_days:.1f} trading "
+                f"days old (threshold {limits.lake_stale_days:.1f}); "
+                f"{calendar_days:.1f} calendar days."
             ),
             timestamp=moment,
             details={
                 "newest": newest,
                 "age_days": age_days,
+                "calendar_days": calendar_days,
                 "threshold_days": limits.lake_stale_days,
                 "tickers": lake_metadata.get("tickers"),
             },
@@ -537,8 +586,9 @@ def check_scheduler_health(
                 severity="critical",
                 message=(
                     f"The last successful run was {status['age_hours']:.0f} "
-                    f"hours ago (threshold "
-                    f"{limits.scheduler_stale_hours:.0f})."
+                    f"hours ago, {status.get('trading_age_hours') or 0:.1f} "
+                    f"of them with a market open (threshold "
+                    f"{limits.scheduler_stale_hours:.0f} trading hours)."
                 ),
                 timestamp=moment,
                 details={"age_hours": status["age_hours"]},

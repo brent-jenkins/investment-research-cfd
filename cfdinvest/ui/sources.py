@@ -182,6 +182,16 @@ def open_repository(config: AppConfig) -> Source:
 # --------------------------------------------------------------------------- #
 # Lake
 # --------------------------------------------------------------------------- #
+
+def _trading_age(newest, now):
+    """Staleness in trading days, via the one owner of that measure."""
+    try:
+        from cfdinvest.monitoring.core import trading_age_days
+
+        return trading_age_days(newest, now)
+    except Exception:  # noqa: BLE001 - a dashboard never raises
+        return None
+
 def load_lake_metadata(
     config: AppConfig,
     repository: DataRepository | None = None,
@@ -237,6 +247,15 @@ def load_lake_metadata(
         "age_days": None
         if last_updated is None
         else (utcnow(now) - last_updated).total_seconds() / 86_400.0,
+        # Both, deliberately. Calendar age is what a person means by "how old
+        # is this"; trading age is what a *threshold* must be compared
+        # against, because a market that is shut cannot produce a bar and a
+        # calendar limit therefore breaches every weekend. Reporting one and
+        # comparing the other is how the dashboard called a healthy lake
+        # critical.
+        "trading_age_days": None
+        if last_updated is None
+        else _trading_age(last_updated, utcnow(now)),
         "series_count": int(len(coverage)) + int(len(macro)),
         "market_series": int(len(coverage)),
         "macro_series": int(len(macro)),

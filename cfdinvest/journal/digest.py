@@ -11,6 +11,7 @@ suffix and the recipient list are decided in one place.
 
 from __future__ import annotations
 
+from cfdinvest.disclosure import DEALING_NOTICE
 import logging
 from typing import Sequence
 
@@ -61,7 +62,7 @@ def build_journal_digest(entries: Sequence, config=None, *, period: str = "recen
     )
     lines.append("")
     lines.append(
-        "This system simulates trades and places no orders with any broker."
+        DEALING_NOTICE
     )
 
     subject = f"Journal — {len(ordered)} entr{'y' if len(ordered) == 1 else 'ies'}"

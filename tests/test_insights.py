@@ -467,7 +467,10 @@ def test_the_digest_carries_the_multiple_comparisons_warning():
 
     body = build_insight_digest(build_report(trips(150), now=NOW)).get_content()
     assert "by chance" in body
-    assert "places no orders" in body
+    # The notice now says what the system *can* do -- deal on a demo
+    # account -- rather than claiming it cannot trade, which stopped
+    # being true on 2026-08-27. Asserted by meaning, not wording.
+    assert "demo account" in body and "live account" in body
 
 
 # --------------------------------------------------------------------------- #

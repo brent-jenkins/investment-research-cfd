@@ -221,7 +221,13 @@ def _check_lake_readable(lake: Source) -> Check:
 @_safe("lake_fresh", "Lake freshness")
 def _check_lake_freshness(lake: Source, thresholds: HealthThresholds) -> Check:
     metadata = lake.value or {}
-    age = metadata.get("age_days")
+    # Trading days, matching the units ``lake_stale_days`` is expressed in.
+    # The source reports calendar days; comparing those against a trading
+    # threshold called a perfectly healthy lake critical every weekend, and
+    # is the same unit mismatch in reverse that the email had.
+    age = metadata.get("trading_age_days")
+    if age is None:
+        age = metadata.get("age_days")
 
     if lake.failed:
         return Check(
@@ -242,8 +248,8 @@ def _check_lake_freshness(lake: Source, thresholds: HealthThresholds) -> Check:
         title="Lake freshness",
         triggered=stale,
         detail=(
-            f"newest data is {age:.1f} days old "
-            f"(threshold {thresholds.lake_stale_days:.0f})"
+            f"newest data is {age:.1f} trading days old "
+            f"(threshold {thresholds.lake_stale_days:.1f})"
         ),
         remedy="Run ingestion. If it is scheduled, check why the schedule "
         "is not firing.",

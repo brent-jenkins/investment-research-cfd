@@ -7,6 +7,7 @@ evidence, because separating them is how a caveat gets skipped.
 
 from __future__ import annotations
 
+from cfdinvest.disclosure import DEALING_NOTICE
 import logging
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ def build_bias_digest(report, config=None):
         "same numbers are usually consistent with having meant to, which is "
         "why every one of them comes with the other reading.",
         "",
-        "This system simulates trades and places no orders with any broker.",
+        DEALING_NOTICE,
     ]
 
     subject = (

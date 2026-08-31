@@ -47,7 +47,7 @@ def _stamp(value: Any) -> pd.Timestamp | None:
 def compute_scheduler_status(
     scheduler_state: Mapping[str, Any] | None,
     *,
-    stale_after_hours: float = 48.0,
+    stale_after_hours: float | None = None,
     now: pd.Timestamp | None = None,
 ) -> dict[str, Any]:
     """Classify what the scheduler last did.
@@ -56,7 +56,14 @@ def compute_scheduler_status(
     ----------
     stale_after_hours:
         How long a *successful* run may be the most recent one before it is
-        worth saying so. Staleness is reported alongside the status rather
+        worth saying so, measured in **trading** hours. ``None`` reads the
+        limit from ``monitoring.MonitoringThresholds``, which owns it.
+
+        It had its own default of 48.0 here, which is one threshold with two
+        owners: retuning the monitoring limit moved only half of it, and the
+        two then disagreed about whether the same scheduler was stale. That
+        is the failure "one owner per threshold" exists to prevent, and it
+        was found by a test rather than by reading. Staleness is reported alongside the status rather
         than folded into it: a run that succeeded three days ago succeeded,
         and conflating that with failure would hide which of the two happened.
 
@@ -94,13 +101,39 @@ def compute_scheduler_status(
     incomplete = started is not None and (succeeded is None or succeeded < started)
     status = "FAILED" if (incomplete or error) else "OK"
 
+    if stale_after_hours is None:
+        from cfdinvest.monitoring.core import MonitoringThresholds
+
+        stale_after_hours = MonitoringThresholds().scheduler_stale_hours
+
     reference = succeeded or started
     age = (
         (moment - reference).total_seconds() / 3600.0
         if reference is not None
         else None
     )
-    stale = bool(status == "OK" and age is not None and age > stale_after_hours)
+    # Staleness is judged in TRADING hours, not wall-clock hours. The
+    # intraday jobs are gated on the market being open, so a Friday-evening
+    # last run is ~55 wall-clock hours old by Monday breakfast every week
+    # and nothing whatever is wrong. Judging that as a failure sends a
+    # critical alert on a weekly schedule, and an alert that cries wolf on
+    # schedule is one nobody reads.
+    #
+    # `age_hours` stays wall-clock because that is what a person reading
+    # "when did it last run" means; only the verdict uses trading time.
+    trading_age = age
+    if reference is not None:
+        try:
+            from cfdinvest.schedule.market_calendar import trading_days_between
+
+            # A session is 6.5 hours; convert session-days to trading hours.
+            trading_age = trading_days_between(reference, moment) * 6.5
+        except Exception:  # noqa: BLE001 - a calendar fault is not an outage
+            trading_age = age
+    stale = bool(
+        status == "OK" and trading_age is not None
+        and trading_age > stale_after_hours
+    )
 
     if incomplete:
         message = (
@@ -112,7 +145,8 @@ def compute_scheduler_status(
     elif stale:
         message = (
             f"Last run completed successfully, but that was {age:.0f} hours "
-            "ago. Check that the schedule is still firing."
+            f"ago -- {trading_age:.1f} of them with a market open. Check "
+            "that the schedule is still firing."
         )
     else:
         message = "Last run completed successfully."
@@ -125,6 +159,7 @@ def compute_scheduler_status(
         "last_error": error,
         "last_error_at": errored_at,
         "age_hours": age,
+        "trading_age_hours": trading_age,
         "stale": stale,
         "incomplete": incomplete,
         "runs": int(state.get("runs", 0) or 0),

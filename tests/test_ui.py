@@ -729,9 +729,37 @@ def test_the_banner_text_is_the_specified_string():
 
 
 def test_thresholds_are_configurable(lake, run):
-    strict = health.HealthThresholds(lake_stale_days=0.5)
-    report = health.run_checks(**healthy_sources(lake), thresholds=strict, now=NOW)
-    assert "lake_fresh" in {check.key for check in report.critical}
+    # Derived from the measured age rather than hard-coded. The threshold is
+    # in TRADING days now, and the fixture's clock sits before an open, so a
+    # literal 0.5 stopped tripping for a reason that has nothing to do with
+    # whether thresholds are configurable -- which is what this test is for.
+    # A clock where trading time has actually elapsed. NOW sits before a
+    # Monday open, so the fixture's trading age there is exactly 0.0 and no
+    # threshold can sit below it -- which says nothing about configurability.
+    later = pd.Timestamp("2026-08-26 18:00", tz="UTC")   # Wednesday, mid-session
+    baseline = health.run_checks(**healthy_sources(lake, now=later), now=later)
+    measured = next(
+        (c.value for c in baseline.checks if c.key == "lake_fresh"), None
+    )
+    assert measured, (
+        f"expected a non-zero trading age at {later}, got {measured!r}"
+    )
+
+    strict = health.HealthThresholds(lake_stale_days=measured / 2.0)
+    report = health.run_checks(
+        **healthy_sources(lake, now=later), thresholds=strict, now=later
+    )
+    assert "lake_fresh" in {check.key for check in report.critical}, (
+        f"a threshold below the measured age of {measured} did not trip"
+    )
+
+    lax = health.HealthThresholds(lake_stale_days=measured + 1.0)
+    report = health.run_checks(
+        **healthy_sources(lake, now=later), thresholds=lax, now=later
+    )
+    assert "lake_fresh" not in {check.key for check in report.critical}, (
+        "a threshold above the measured age tripped anyway"
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -10,6 +10,7 @@ Pure: a report in, an :class:`~email.message.EmailMessage` out.
 
 from __future__ import annotations
 
+from cfdinvest.disclosure import DEALING_NOTICE
 import logging
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ def build_insight_digest(report, config=None):
     )
     lines.append("")
     lines.append(
-        "This system simulates trades and places no orders with any broker."
+        DEALING_NOTICE
     )
 
     subject = f"Insights — {len(said)} of {len(insights)} supported"

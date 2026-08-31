@@ -20,6 +20,7 @@ line in this module.
 
 from __future__ import annotations
 
+from cfdinvest.disclosure import DEALING_NOTICE
 import logging
 import os
 import smtplib
@@ -565,8 +566,7 @@ def build_monitoring_alert(snapshot, config: SmtpConfig | None = None) -> EmailM
 
     lines += [
         "",
-        "This system simulates trades and places no orders with any broker. "
-        "Nothing in this message has moved money.",
+        DEALING_NOTICE,
     ]
 
     subject = f"{status} — {headline[:70]}" if headline else f"{status} — monitoring"

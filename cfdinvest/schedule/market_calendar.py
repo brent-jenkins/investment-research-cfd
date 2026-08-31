@@ -498,3 +498,50 @@ def describe(
             }
         )
     return pd.DataFrame(rows).set_index("asset") if rows else pd.DataFrame()
+
+
+def trading_days_between(start, end, asset: str = "AAPL", mapping=None) -> float:
+    """Trading time elapsed between two moments, in session-days.
+
+    Staleness is meaningless in calendar days for a market that shuts. A
+    Friday close is three calendar days old by Monday morning every single
+    week, so a three-day threshold is not a warning about anything -- it is
+    a weekly alarm clock. Measured in trading time the same gap is nearly
+    zero, and a genuine weekday failure still surfaces within hours.
+
+    Computed as accumulated *session overlap*, not by counting dates. An
+    earlier version counted Monday as a whole trading day the moment the
+    date rolled over, so Friday's close read as 1.00 days stale at Monday
+    breakfast when no market had opened since. Overlap has no such edge: it
+    only advances while a session is actually running.
+
+    Returns 0.0 when ``end`` precedes ``start``. A bar from the future is a
+    clock problem rather than a staleness one, and reporting negative age
+    would let it slip under every threshold in silence.
+    """
+    rule = session_for(asset, mapping)
+    first = _to_utc(start)
+    last = _to_utc(end)
+    if last <= first:
+        return 0.0
+
+    total = 0.0
+    cursor = first.tz_convert(rule.timezone).date()
+    final = last.tz_convert(rule.timezone).date()
+    one = dt.timedelta(days=1)
+    # Bounded: a lake stale by years should say "very stale" rather than walk
+    # a decade of dates on every monitoring pass.
+    guard = 0
+    while cursor <= final and guard < 400:
+        guard += 1
+        if _is_trading_day(cursor, rule):
+            try:
+                opens, closes = session_bounds(cursor, rule)
+            except Exception:  # noqa: BLE001 - a bad bound is not an outage
+                opens = closes = None
+            if opens is not None and closes is not None and closes > opens:
+                overlap = (min(last, closes) - max(first, opens)).total_seconds()
+                if overlap > 0:
+                    total += overlap / (closes - opens).total_seconds()
+        cursor += one
+    return float(total)

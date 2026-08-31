@@ -449,7 +449,10 @@ def test_the_digest_says_entries_are_never_rewritten():
 
     body = build_journal_digest(build_entries([opened()])).get_content()
     assert "never rewritten" in body
-    assert "places no orders" in body
+    # The notice now says what the system *can* do -- deal on a demo
+    # account -- rather than claiming it cannot trade, which stopped
+    # being true on 2026-08-27. Asserted by meaning, not wording.
+    assert "demo account" in body and "live account" in body
 
 
 def test_the_digest_subject_counts_the_entries():
