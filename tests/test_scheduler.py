@@ -181,50 +181,81 @@ def _split_refresh(monkeypatch, tickers, config_interval="capital_1h"):
     return seen
 
 
-def test_the_broker_is_not_asked_for_pairs_it_does_not_quote(monkeypatch):
-    """The reported failure: five permanent manifest failures."""
-    seen = _split_refresh(monkeypatch, ["AAPL", "MU", "GBPUSD=X", "EURGBP=X"])
+def test_the_pairs_are_fetched_from_the_broker_by_its_own_epic():
+    """The pairs were the last input still coming from yfinance intraday.
 
-    assert seen["capital"] == ["AAPL", "MU"], (
-        f"the broker was asked for {seen['capital']}; it does not quote the "
-        "currency pairs and never will, so every pass records a failure"
-    )
-
-
-def test_the_pairs_are_still_fetched_from_a_vendor_that_has_them(monkeypatch):
-    """The half that matters more.
-
-    Not asking Capital is worthless if it means nobody asks anyone. Their
-    bars are what convert a dollar instrument into sterling, and stale ones
-    are how the rate silently becomes 1.0.
+    They failed against Capital only because the lake spells them
+    GBPUSD=X and the broker calls the same market GBPUSD. That read as a
+    vendor limitation for a day. It is a naming mismatch, and the standing
+    instruction is one source of truth with no intraday data from yfinance.
     """
-    from cfdinvest.backtest.runner import REFERENCE_FALLBACK_INTERVAL
+    from cfdinvest.schedule.app import fx_support_tickers, reference_epics
 
-    seen = _split_refresh(monkeypatch, ["AAPL", "GBPUSD=X", "USDJPY=X"])
+    epics = reference_epics()
 
-    assert seen["yfinance"] == ["GBPUSD=X", "USDJPY=X"]
-    assert seen["yfinance_interval"] == REFERENCE_FALLBACK_INTERVAL
-
-
-def test_a_run_with_no_pairs_asks_the_second_vendor_nothing(monkeypatch):
-    """No empty fetches. An ingest of nothing is a vendor call that can fail
-    and a manifest entry that can mislead."""
-    seen = _split_refresh(monkeypatch, ["AAPL", "MU"])
-
-    assert seen["capital"] == ["AAPL", "MU"]
-    assert seen["yfinance"] is None
+    assert set(epics) == set(fx_support_tickers()), (
+        "a pair exists that has no epic, so the broker would be asked for a "
+        "name it does not know and the fetch would silently return nothing"
+    )
+    assert epics["GBPUSD=X"] == "GBPUSD"
+    for lake, epic in epics.items():
+        assert "=X" in lake and "=X" not in epic
+        assert epic == lake.replace("=X", "")
 
 
-def test_a_yfinance_feed_is_not_split_at_all(monkeypatch):
-    """The other branch is unchanged: when yfinance is the decision feed it
-    serves the pairs too, and splitting would be two calls for one job."""
-    seen = _split_refresh(
-        monkeypatch, ["AAPL", "GBPUSD=X"], config_interval="1d"
+def test_the_refresh_hands_the_broker_the_epic_map(monkeypatch):
+    """Functional: the map must actually reach the fetch.
+
+    A correct mapping that nothing passes down is the shape of the bug this
+    replaced -- the routing was right and the value it carried was not.
+    """
+    from cfdinvest.backtest.runner import BacktestConfig
+    from cfdinvest.ingestion import capital_prices
+    from cfdinvest.schedule import runner as runner_module
+
+    seen = {}
+
+    def _backfill(names, *a, **k):
+        seen["names"] = list(names or ())
+        seen["epics"] = k.get("epics")
+
+    monkeypatch.setattr(capital_prices, "backfill", _backfill)
+    monkeypatch.setattr(runner_module, "_refresh_events", lambda *a, **k: None)
+
+    class _Capital:
+        complete = True
+
+        @classmethod
+        def from_env(cls):
+            return cls()
+
+    from cfdinvest.broker.capital import client as capital_client
+    monkeypatch.setattr(capital_client, "CapitalConfig", _Capital)
+
+    class _Macro:
+        api_key = ""
+
+    class _Config:
+        macro = _Macro()
+
+        class market:
+            interval = "capital_1h"
+
+    class _Repo:
+        config = _Config()
+
+    runner_module._refresh(
+        _Repo(), ["AAPL", "GBPUSD=X"],
+        BacktestConfig(tickers=["AAPL", "GBPUSD=X"], interval=None),
     )
 
-    assert seen["capital"] is None
-    assert seen["yfinance"] == ["AAPL", "GBPUSD=X"]
-    assert seen["yfinance_interval"] == "1d"
+    assert seen["names"] == ["AAPL", "GBPUSD=X"], (
+        "the pairs were dropped from the fetch, so nothing converts a dollar "
+        "price into sterling"
+    )
+    assert (seen["epics"] or {}).get("GBPUSD=X") == "GBPUSD", (
+        "the broker was handed the lake's spelling, which it does not know"
+    )
 
 
 def test_the_pair_list_has_one_owner(monkeypatch):

@@ -565,6 +565,23 @@ def fx_support_tickers() -> tuple[str, ...]:
     return tuple(found)
 
 
+def reference_epics() -> dict[str, str]:
+    """Lake ticker to the epic Capital knows it by, for the currency pairs.
+
+    The lake stores them under yfinance's names -- ``GBPUSD=X`` -- because
+    that is what every reader, panel and fallback already spells. Capital
+    calls the same market ``GBPUSD``. Asking the broker for ``GBPUSD=X``
+    means nothing to it, which is why the pairs were the one thing on the
+    decision feed the broker never served.
+
+    Derived from :func:`fx_support_tickers` rather than listed again, for the
+    reason that function's own docstring gives: a second list is right until
+    the day it is not. Verified on 2026-08-31 -- all five resolve, all five
+    carry hourly history from 2023-01-03, the same start as the equity bars.
+    """
+    return {ticker: ticker.replace("=X", "") for ticker in fx_support_tickers()}
+
+
 def _with_fx_support(tickers) -> list[str]:
     """The universe, plus the pairs needed to price it in sterling."""
     wanted = list(tickers or [])

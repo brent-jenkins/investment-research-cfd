@@ -651,41 +651,35 @@ def _refresh(repository: DataRepository, tickers, backtest_config) -> None:
                 f"{interval} bars are the decision feed but no Capital "
                 "credentials are configured, so the lake cannot be topped up"
             )
-        # The broker does not quote the currency pairs, and never will.
+        # The broker DOES quote the currency pairs -- under its own names.
         #
-        # They ride along in the ticker list because the engine needs them to
-        # price a dollar instrument in sterling, and ``backtest.runner``
-        # already falls back to the vendor interval for them. But they were
-        # still being *asked* of Capital on every pass, which did two things:
-        # recorded five permanent "failed" entries in the lake manifest, so
-        # the dashboard showed a critical banner that could never clear; and
-        # left nobody fetching them at all once the decision feed moved off
-        # yfinance. Their 1h bars were two days stale and getting staler,
-        # which is how every USD instrument ends up converting at 1.0 -- a
-        # regression this project has already paid 11 points of drawdown for.
+        # This spent a day looking like a vendor limitation. The pairs are
+        # stored under yfinance's names, GBPUSD=X, because that is what every
+        # reader and panel already spells; Capital calls the same market
+        # GBPUSD, so asking it for GBPUSD=X returned nothing and the obvious
+        # reading was "the broker does not serve FX". It serves all five,
+        # with hourly history from 2023-01-03 -- the same start as the equity
+        # bars.
         #
-        # So the list is split by what each vendor can actually serve. This
-        # is not a fallback firing after a failure; it is not asking the
-        # wrong vendor in the first place.
-        reference = set(_reference_pairs(config))
-        served = [t for t in (tickers or ()) if str(t) not in reference]
-        pairs = [t for t in (tickers or ()) if str(t) in reference]
+        # Which matters because of the standing instruction behind the whole
+        # feed switch: one source of truth, and no intraday data from
+        # yfinance. FX was the last input still breaking it, and it is not a
+        # minor one -- it converts every price in a book of dollar
+        # instruments held in a sterling account.
+        #
+        # An epic map rather than a second fetch. backfill already takes one,
+        # a name absent from it falls back to the ticker itself, and the lake
+        # keeps its existing filenames so nothing downstream learns a new
+        # spelling.
+        from cfdinvest.schedule.app import reference_epics
 
         capital_prices.backfill(
-            served or None, settings, config,
+            list(tickers) or None, settings, config,
             interval=interval,
             resolution=capital_prices.resolution_for(interval),
+            epics=reference_epics(),
         )
-        if pairs:
-            from cfdinvest.backtest.runner import REFERENCE_FALLBACK_INTERVAL
 
-            logger.info(
-                "Refreshing %d reference pair(s) at %s -- the broker does not "
-                "quote them", len(pairs), REFERENCE_FALLBACK_INTERVAL,
-            )
-            MarketDataIngestor(config).ingest(
-                pairs, interval=REFERENCE_FALLBACK_INTERVAL
-            )
     else:
         MarketDataIngestor(config).ingest(list(tickers) or None, interval=interval)
 
