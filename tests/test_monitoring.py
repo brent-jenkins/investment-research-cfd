@@ -1222,3 +1222,123 @@ def test_a_genuinely_stale_lake_still_fires():
     assert severities(issues) == ["critical"], (
         "a week without new data did not fire; the threshold is too loose"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The drawdown triggers, set from the distribution rather than from one path
+# --------------------------------------------------------------------------- #
+# review_drawdown_fraction was 0.45, chosen as the single backtest's worst
+# drawdown plus a margin. Block-bootstrapping the book's own bar returns
+# (4,000 paths, 2026-08-31) put the MEDIAN modelled drawdown between 42% and
+# 49%, and showed that between 53% and 81% of modelled paths drew down worse
+# than the one the backtest happened to produce. So 0.45 sat between the
+# median and the 75th percentile of the model's own range while its message
+# claimed it was "past the 45% that backtesting ever produced".
+#
+# Two different questions were being answered by one number, which is why it
+# could not be set coherently: "has the book fallen far enough to look at"
+# is about the account, "is this worse than the model can produce" is about
+# the model, and they call for different responses.
+
+
+def _drawn_down(depth: float):
+    """A curve that rises then falls `depth` from its peak."""
+    import numpy as np
+
+    return _curve(np.concatenate([
+        np.linspace(5_000, 9_000, 100),
+        np.linspace(9_000, 9_000 * (1.0 - depth), 100),
+    ]))
+
+
+def test_the_backtests_own_drawdown_does_not_raise_a_review():
+    """M: the trigger fires on an ordinary path and teaches the reader to
+    ignore it.
+
+    41.4% is what the configured strategy draws in backtest, and resampling
+    says even that was a mild path. A warning that fires on the modelled
+    median is a calendar, not a warning -- and this one competes for
+    attention with the alerts that mean something.
+    """
+    from cfdinvest.monitoring.core import review_triggers
+
+    for depth in (0.35, 0.414, 0.45):
+        issues = [i for i in review_triggers(_drawn_down(depth))
+                  if "below its peak" in i.message]
+        assert not issues, (
+            f"a {depth:.1%} drawdown raised a review, and the model's own "
+            "median is deeper than that"
+        )
+
+
+def test_a_drawdown_beyond_the_models_range_says_something_different():
+    """The two questions must produce two statements, not one louder one.
+
+    "You have lost a lot" and "the model is wrong" call for different
+    actions -- watch it, versus re-measure it -- so the second has to be
+    distinguishable from the first rather than being the same warning at a
+    bigger number.
+    """
+    from cfdinvest.monitoring.core import review_triggers
+
+    halved = [i for i in review_triggers(_drawn_down(0.52))
+              if "below its peak" in i.message]
+    assert len(halved) == 1, "halving should say one thing, not two"
+    assert "modelled path" not in halved[0].message, (
+        "halving was reported as beyond the model's range; it is well "
+        "inside it, and overstating a warning is how it stops being believed"
+    )
+
+    deeper = [i for i in review_triggers(_drawn_down(0.65))
+              if "below its peak" in i.message]
+    assert len(deeper) == 2, "a drawdown outside the model's range said no more"
+    assert any("modelled path" in i.message for i in deeper)
+    # The remedies differ in kind, which is the whole point of the split.
+    assert any("re-measure" in (i.remedy or "") for i in deeper)
+
+
+def test_neither_drawdown_trigger_is_ever_critical():
+    """A review trigger is a question for a person, never an outage.
+
+    Four automatic pauses were tested causally on this strategy and all four
+    lost money, because it earns most in the conditions a fear-based rule
+    sits out. Severity is what keeps this a question.
+    """
+    from cfdinvest.monitoring.core import review_triggers
+
+    for depth in (0.52, 0.65, 0.85):
+        for issue in review_triggers(_drawn_down(depth)):
+            assert issue.severity == "warning", (
+                f"a {depth:.0%} drawdown was reported as {issue.severity}; a "
+                "review trigger must not read as an outage"
+            )
+
+
+def test_the_model_threshold_is_never_below_the_account_one():
+    """An ordering invariant, not a pair of independent numbers.
+
+    If the "beyond the model" threshold were the lower of the two, it would
+    fire first and claim the model was wrong about a fall the model produces
+    routinely -- which is the original bug wearing the other name.
+    """
+    from cfdinvest.monitoring.core import DEFAULTS, MonitoringThresholds
+
+    for settings in (DEFAULTS, MonitoringThresholds()):
+        assert (settings.unmodelled_drawdown_fraction
+                >= settings.review_drawdown_fraction)
+
+
+def test_the_thresholds_sit_outside_the_measured_modelled_median():
+    """The property the numbers were chosen for, asserted as a property.
+
+    Resampling put the median modelled drawdown between 42% and 49%
+    depending on block size. Both triggers must sit clear of that band, or
+    they fire on paths the strategy produces about half the time. Asserted
+    against the measured range rather than against the constants, so it
+    fails if someone lowers a threshold back into it.
+    """
+    from cfdinvest.monitoring.core import DEFAULTS
+
+    worst_modelled_median = 0.49
+    assert DEFAULTS.review_drawdown_fraction > worst_modelled_median
+    assert DEFAULTS.unmodelled_drawdown_fraction > worst_modelled_median

@@ -617,6 +617,61 @@ data comes back for the cost of one run. What does not come back cheaply is
 the reasoning above, which is why it is written here at length for a
 component that no longer exists.
 
+**The drawdown review trigger was set from one path, and the path was a
+mild one.** `review_drawdown_fraction` was 0.45, chosen as the single
+backtest's worst drawdown plus a margin, with a docstring still citing a
+stale −39.5% and a warning that told the reader 45% was "past the 45% that
+backtesting ever produced". Backtesting produced 41.4%.
+
+Block-bootstrapping the book's own bar returns through
+`backtest.montecarlo.resample_returns`, 4,000 paths at each block size:
+
+    block    p50     p75     p90     p95     p99   worse than 41.4%
+        1   49.0%   56.4%   63.9%   68.7%   77.8%        80.7%
+        5   47.3%   54.5%   61.4%   65.8%   75.1%        74.7%
+       20   45.4%   52.0%   59.3%   63.3%   72.9%        68.3%
+       50   43.2%   49.0%   55.4%   59.3%   66.9%        59.0%
+      100   41.9%   47.8%   54.1%   58.2%   66.6%        52.9%
+
+**Between 53% and 81% of modelled paths drew down worse than the backtest
+did**, and the median modelled drawdown is 42% to 49%. So 0.45 was not
+3.6 points above the worst case; it sat between the median and the 75th
+percentile of the model's own range, and would have fired on an ordinary
+bad patch while claiming to mean the opposite.
+
+Trade-level resampling was **not** used, on that module's own warning: it
+destroys volatility clustering and its drawdown distribution is "a floor on
+how bad things get, not an estimate of it". Using it would have understated
+the tail and set the trigger lower still. Worth noting that here the i.i.d.
+shuffle produces *wider* drawdowns than the block bootstrap, the reverse of
+`backtest.montecarlo`'s stated intuition, because this book's realised
+sequence was favourable and scrambling it destroys the recovery ordering.
+
+**One number was answering two questions, which is why it could not be set.**
+"Has the book fallen far enough to look at" is a fact about the account;
+"is this worse than the model can produce" is a fact about the model. They
+call for different responses — watch it, versus re-measure it — so they are
+now two thresholds over the same reading: `review_drawdown_fraction` at 0.50
+(halving is worth a person's attention, and the message says plainly that it
+is *inside* the model's range) and `unmodelled_drawdown_fraction` at 0.60
+(near the 90th–95th percentile at blocks 20–50, so about one modelled path
+in ten). Both stay warnings and neither is wired to execution: four
+automatic pauses were tested causally here and all four lost money.
+
+Deliberately not the 99th percentile. This trigger stops nothing and only
+asks a person to look, so being seen occasionally in a genuinely bad stretch
+is the point, and a threshold nobody ever reaches is not a safeguard.
+
+The most useful thing to come out of it is not the threshold. **It is that
+the strategy's drawdown risk is materially worse than its backtest shows** —
+a median modelled drawdown near 45% against a realised 41.4%, and a 90th
+percentile around 60%. Any risk statement quoting 41.4% as the worst case is
+quoting the luckiest half of the distribution.
+
+`review_flat_months = 3` was checked at the same time and is fine: 4 of 41
+rolling three-month windows are negative, so it fires about a tenth of the
+time rather than routinely.
+
 **The five parameters that predated the corrected cost model are
 re-measured.** Every figure justifying them came from yfinance bars at a
 flat 5bp; decisions now come from `capital_1h` and spread is charged per bar

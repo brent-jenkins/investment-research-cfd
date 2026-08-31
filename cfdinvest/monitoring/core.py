@@ -193,11 +193,77 @@ class MonitoringThresholds:
     #: most in exactly the conditions a fear-based rule would sit out. So
     #: this raises a warning for a person and stops nothing.
     #:
-    #: Set above the -39.5% the eight-to-twelve-name book has already drawn
-    #: down in backtest, so an ordinary bad patch does not cry wolf. What it
-    #: is for is the drawdown that is worse than anything modelled -- which
-    #: is a signal about the model rather than about the market.
-    review_drawdown_fraction: float = 0.45
+    #: What it is for is the drawdown that is worse than the model plausibly
+    #: produces -- a statement about the model rather than about the market.
+    #:
+    #: **Was 0.45, against a stale -39.5%, and it was wrong for a reason
+    #: worth keeping.** The threshold was set from the single backtest's
+    #: worst drawdown plus a margin, and one backtest is one path. Block-
+    #: bootstrapping the book's own bar returns (4,000 paths, the engine's
+    #: configuration, 2026-08-31) shows the realised 41.4% was a MILD one:
+    #:
+    #:     block    p50     p75     p90     p95     p99   worse than 41.4%
+    #:         1   49.0%   56.4%   63.9%   68.7%   77.8%        80.7%
+    #:         5   47.3%   54.5%   61.4%   65.8%   75.1%        74.7%
+    #:        20   45.4%   52.0%   59.3%   63.3%   72.9%        68.3%
+    #:        50   43.2%   49.0%   55.4%   59.3%   66.9%        59.0%
+    #:       100   41.9%   47.8%   54.1%   58.2%   66.6%        52.9%
+    #:
+    #: Between 53% and 81% of modelled paths drew down worse than the one
+    #: the backtest happened to produce, so 0.45 sat between the median and
+    #: the 75th percentile of the model's own range. It did not mean "worse
+    #: than anything modelled"; it meant "about average", and it would have
+    #: fired on an ordinary bad patch and taught the reader to ignore it.
+    #:
+    #: **Two questions, two thresholds.** Trying to answer both with one
+    #: number is what made 0.45 incoherent. "The book has fallen a long way"
+    #: is a fact about the account and halving qualifies whatever the model
+    #: says; "this is worse than the model can produce" is a fact about the
+    #: model. They call for different responses -- the first is a reason to
+    #: look, the second a reason to doubt the strategy -- so they are
+    #: separate readings of the same drawdown. See
+    #: ``unmodelled_drawdown_fraction`` for the second.
+    #:
+    #: This one stays at 0.50: a book that has halved is worth a person's
+    #: attention, and that is the owner's stated policy of running for
+    #: growth and reviewing when things turn bad. It is NOT evidence the
+    #: model is wrong -- roughly a quarter to two-fifths of modelled paths
+    #: reach it -- and the message says so, because a warning that overstates
+    #: itself is one nobody believes twice.
+    #:
+    #: The old 0.60 reasoning, kept because it belongs to the other
+    #: threshold: 0.60 sits near the 90th to 95th percentile at blocks 20 to 50 --
+    #: a week to a fortnight of hourly bars, which is the horizon this
+    #: book's losing runs cluster over given a four-hour median hold. Roughly
+    #: one modelled path in ten to twenty reaches it. That is deliberately
+    #: not the 99th: this trigger stops nothing and only asks a person to
+    #: look, so being seen occasionally in a genuinely bad stretch is the
+    #: point, and a threshold nobody ever reaches is not a safeguard.
+    #:
+    #: Read as a sensitivity check on sequencing, not a forecast. Resampling
+    #: assumes returns are exchangeable draws from a stable process and they
+    #: are not -- ``backtest.montecarlo`` says so in its own docstring.
+    #: Note also that here the i.i.d. shuffle produces WIDER drawdowns than
+    #: the block bootstrap, the opposite of that module's stated intuition,
+    #: because this book's realised sequence was favourable and scrambling
+    #: it destroys the recovery ordering.
+    review_drawdown_fraction: float = 0.50
+
+    #: The drawdown that is worse than the model itself plausibly produces.
+    #:
+    #: Distinct from ``review_drawdown_fraction`` above in what it claims
+    #: rather than merely in size. That one says the account has fallen a
+    #: long way; this one says the fall is outside the range the strategy's
+    #: own resampled paths reach, which is evidence about the model rather
+    #: than about the market -- and therefore a reason to re-measure the
+    #: strategy rather than to watch it more closely.
+    #:
+    #: 0.60 is near the 90th to 95th percentile of the modelled distribution
+    #: at block sizes 20 to 50 (see the table above), so roughly one path in
+    #: ten to twenty reaches it. Deliberately not the 99th: this stops
+    #: nothing and only asks a person to look, and a threshold nobody ever
+    #: reaches is not a safeguard.
+    unmodelled_drawdown_fraction: float = 0.60
 
     #: Months of trailing return that may be negative before it is worth
     #: asking whether the strategy still fits the market. A trend follower
@@ -1211,10 +1277,14 @@ def review_triggers(
 
     Two triggers, deliberately different in kind:
 
-    * A drawdown deeper than anything modelled. Not "a drawdown" -- the
-      book has already drawn down 39.5% in backtest and that is the price
-      of the growth rate. Deeper than the model's own worst case is a
-      statement about the model.
+    * A drawdown deeper than the model plausibly produces. Not "a
+      drawdown" -- the book draws down 41.4% in backtest and that is the
+      price of the growth rate, and resampling puts the MEDIAN modelled
+      drawdown between 42% and 49%, so even that realised figure was a mild
+      path. The threshold is set from the distribution rather than from the
+      one path, because "worse than the single backtest" is a statement
+      about luck and "worse than the model's own range" is a statement
+      about the model. See ``review_drawdown_fraction``.
     * Months of going nowhere. A trend follower in a sideways market is the
       known failure mode, and it does not announce itself as a crash. It
       announces itself as a flat line, which no drawdown threshold catches.
@@ -1233,6 +1303,11 @@ def review_triggers(
         return [_unreadable("review", "Review triggers", "equity curve is empty")]
 
     drawdown = float((curve / curve.cummax() - 1.0).min())
+
+    # Two readings of the same number, saying different things. The first is
+    # about the account and the second about the model; both fire on a deep
+    # enough fall, and that is intended -- the second escalates the first
+    # rather than replacing it.
     limit = float(settings.review_drawdown_fraction)
     if abs(drawdown) >= limit:
         issues.append(
@@ -1241,14 +1316,40 @@ def review_triggers(
                 severity="warning",
                 message=(
                     f"The book is {abs(drawdown):.1%} below its peak, past "
-                    f"the {limit:.0%} that backtesting ever produced."
+                    f"the {limit:.0%} worth a look."
                 ),
                 timestamp=moment,
                 details={"drawdown_fraction": drawdown, "limit": limit},
                 remedy=(
+                    "Worth a look, and not by itself evidence the strategy "
+                    "has stopped working: a drawdown this deep is inside the "
+                    "range the model's own resampled paths reach. Do not "
+                    "pause automatically -- every automatic pause tested "
+                    "here lost money."
+                ),
+            )
+        )
+
+    unmodelled = float(
+        getattr(settings, "unmodelled_drawdown_fraction", limit) or limit
+    )
+    if abs(drawdown) >= unmodelled:
+        issues.append(
+            MonitoringIssue(
+                type="review",
+                severity="warning",
+                message=(
+                    f"The book is {abs(drawdown):.1%} below its peak, beyond "
+                    f"the {unmodelled:.0%} that only about one modelled path "
+                    f"in ten reaches."
+                ),
+                timestamp=moment,
+                details={"drawdown_fraction": drawdown, "limit": unmodelled},
+                remedy=(
                     "Worth reviewing the strategy rather than the plumbing: "
-                    "a drawdown deeper than anything modelled says the model "
-                    "is missing something. Do not pause automatically -- "
+                    "a drawdown outside the model's own range says the model "
+                    "is missing something, which is a reason to re-measure "
+                    "rather than to watch. Do not pause automatically -- "
                     "every automatic pause tested here lost money."
                 ),
             )
