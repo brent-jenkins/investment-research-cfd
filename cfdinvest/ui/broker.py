@@ -20,7 +20,65 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["read_broker"]
+__all__ = ["read_broker", "performance_since_opening"]
+
+
+def performance_since_opening(account, opening_balance) -> dict[str, Any]:
+    """Has the account made or lost money since it was funded?
+
+    The question the whole forward record exists to answer, and until
+    2026-08-31 the dashboard could not answer it. It showed the broker's
+    ``profitLoss`` -- unrealised P&L on open positions -- under the heading
+    "since the account opened", which on a 5,000 account standing at 4,890
+    read "+26.12" while the account was 110 down.
+
+    The broker cannot supply the opening figure, so it comes from
+    ``CFD_CAPITAL_OPENING_BALANCE`` beside the credentials, which is where a
+    fact about *this* account belongs: point the system at a live account and
+    both change together.
+
+    Returns the three quantities and the identity that ties them:
+
+        realised    = cash now minus what was put in
+        unrealised  = the broker's open-position P&L
+        since       = realised + unrealised = balance minus opening
+
+    **Absent when the opening balance is unset**, and absent by name rather
+    than as a zero. A wrong lifetime P&L is worse than none: it is the number
+    somebody uses to decide whether the thing works.
+
+    Assumes no deposits or withdrawals after funding. Nothing available here
+    can detect one -- Capital's ``deposit`` folds contributions and realised
+    P&L into a single figure -- so the assumption is stated rather than
+    checked, and the page says so.
+    """
+    absent = {
+        "opening_balance": None,
+        "since_opening": None,
+        "realised": None,
+        "unrealised": account.profit_loss,
+        "since_opening_pct": None,
+        "performance_note": (
+            "not available: no opening balance is configured, so profit "
+            "since the account opened cannot be computed"
+        ),
+    }
+    if not opening_balance or account.balance is None:
+        return absent
+
+    since = float(account.balance) - float(opening_balance)
+    realised = (
+        None if account.deposit is None
+        else float(account.deposit) - float(opening_balance)
+    )
+    return {
+        "opening_balance": float(opening_balance),
+        "since_opening": since,
+        "realised": realised,
+        "unrealised": account.profit_loss,
+        "since_opening_pct": since / float(opening_balance),
+        "performance_note": "",
+    }
 
 
 def read_broker(config=None) -> dict[str, Any]:
@@ -72,6 +130,7 @@ def read_broker(config=None) -> dict[str, Any]:
             "available": account.available,
             "profit_loss": account.profit_loss,
             "deposit": account.deposit,
+            **performance_since_opening(account, settings.opening_balance),
         }
 
         found, error = dealing.list_positions(session, settings)

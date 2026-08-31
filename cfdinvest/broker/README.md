@@ -42,14 +42,41 @@ start-up:
   typo away from a funded account; two mean the mistake has to be made
   twice, in different words.
 
+`CFD_CAPITAL_OPENING_BALANCE` is optional and answers a different question:
+what the account was funded with, so "have we made or lost money since"
+can be computed at all. The broker cannot supply it — Capital reports
+`balance`, `deposit` (the opening figure plus everything realised) and
+`profitLoss` (unrealised, open positions only), and deriving the opening
+from `deposit` is wrong by exactly the realised P&L, which is the quantity
+being sought.
+
+It lives beside the credentials rather than in `config.toml` because it is a
+property of the *account those credentials reach*: point the system at a
+live account and both change together, where a figure in the shared config
+would go on describing the demo one. Unset means unset — the figure is
+reported unavailable rather than guessed, and a value that will not parse or
+is non-positive is treated as unset for the same reason. Zero is the
+dangerous one: it would make any account look infinitely profitable.
+
+It is not a secret and is not hidden from `repr`, which is deliberate — it
+is the one field here somebody may need to see to debug a figure, and the
+credentials beside it stay hidden.
+
 Closing is gated identically to opening. Safety that depends on which
 function you happened to call is not safety.
 
 `bridge.py` decides what to place and places nothing. It is pure: it reads
-the shadow book, sizes against the balance the broker reports, applies every
-limit, and returns intents. Since 2026-08-28 it does not decide *what* to
-hold — the shadow book does, and the bridge mirrors it. Two decision paths
-reading the same signals could disagree, and the value of running a
+the engine's intended positions, sizes against the balance the broker
+reports, applies every limit, and returns intents. It does not decide *what*
+to hold — `persist.intent` reads that back from the run the engine already
+persisted, and the bridge mirrors it.
+
+This used to read the shadow book, which was removed on 2026-08-30. The
+reasoning for reading it was right and the premise was wrong: the book
+applied four of the strategy's rules and none of the other five, so the
+second decision path it was meant to avoid existed anyway and the account
+was trading it. Two decision paths reading the same signals could disagree,
+and the value of running a
 simulation beside an account is that a difference means the simulation was
 wrong, not that the two made different calls.
 

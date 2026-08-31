@@ -131,14 +131,49 @@ components.render_tiles(st, [
      "pass" if (account.get("profit_loss") or 0) >= 0 else "warning"),
 ])
 
-components.render_note(
-    st,
-    "**Profit since the account opened is not shown.** The broker reports "
-    "cash and unrealised P&L but not the opening deposit, and nothing here "
-    "records it, so the figure cannot be computed. It is left absent rather "
-    "than approximated: this tile previously showed unrealised P&L under "
-    "that heading, which read as a profit while the account was down.",
-)
+# --------------------------------------------------------------------------- #
+# The question the account exists to answer
+# --------------------------------------------------------------------------- #
+# "If I gave you £5,000, would you earn or lose me money?" -- the owner's
+# framing, and the reason the forward record is kept at all. It goes first
+# and it is stated plainly, in money, with the two halves that make it up.
+#
+# The opening balance comes from CFD_CAPITAL_OPENING_BALANCE beside the
+# credentials, because it is a fact about the account those credentials
+# reach: point this at a live account and both change together.
+since = account.get("since_opening")
+if since is None:
+    components.render_note(
+        st,
+        "**Profit since the account opened is not shown.** "
+        f"{account.get('performance_note') or 'The opening balance is unset.'} "
+        "Set `CFD_CAPITAL_OPENING_BALANCE` beside the Capital credentials to "
+        "answer it. It is left absent rather than approximated: this figure "
+        "once showed unrealised P&L instead, which read as a profit while "
+        "the account was down.",
+    )
+else:
+    opening = account.get("opening_balance")
+    share = account.get("since_opening_pct")
+    components.render_tiles(st, [
+        ("Since the account opened", _money(since),
+         f"against {_money(opening)} put in"
+         + ("" if share is None else f" — {share:+.2%}"),
+         "pass" if since >= 0 else "warning"),
+        ("of which realised", _money(account.get("realised")),
+         "closed positions, banked", "pass"),
+        ("of which unrealised", _money(account.get("unrealised")),
+         "open positions, not yet banked", "pass"),
+    ])
+    components.render_note(
+        st,
+        "The two halves sum to the whole: cash now minus what was put in, "
+        "plus the open-position P&L. **Assumes no deposits or withdrawals "
+        "after funding** — the broker folds contributions and realised P&L "
+        "into one figure, so nothing here can detect one. And a few days of "
+        "this is not evidence of anything: it is a record being kept, not a "
+        "result.",
+    )
 
 # --------------------------------------------------------------------------- #
 # Positions

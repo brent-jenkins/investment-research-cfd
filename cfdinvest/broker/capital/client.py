@@ -64,10 +64,56 @@ IDENTIFIER_VAR = "CFD_CAPITAL_IDENTIFIER"
 PASSWORD_VAR = "CFD_CAPITAL_PASSWORD"
 ENVIRONMENT_VAR = "CFD_CAPITAL_ENV"
 
+#: What the account started with, so "have we made money" can be answered.
+#:
+#: The broker cannot supply this. Capital reports `balance`, `deposit` (cash:
+#: the opening deposit plus everything realised) and `profitLoss`
+#: (unrealised, on open positions), and none of them is the opening figure --
+#: inferring it from `deposit` is wrong by exactly the realised P&L, which is
+#: the quantity being sought.
+#:
+#: It sits beside the credentials rather than in config.toml because it is a
+#: property of the ACCOUNT those credentials reach. Pointing the system at a
+#: live account changes the account, and its opening balance changes with it;
+#: a figure in the shared config would quietly describe the wrong one.
+#:
+#: Optional, and absent means absent. With this unset the answer is reported
+#: as unavailable rather than guessed, because a wrong lifetime P&L is worse
+#: than none: it is the number a person uses to decide whether the thing
+#: works.
+OPENING_BALANCE_VAR = "CFD_CAPITAL_OPENING_BALANCE"
+
 #: Documented as ten per second overall and one per second for the session.
 #: Respected by pausing between calls rather than by retrying after a 429:
 #: a rate limiter that only reacts to being refused has already been rude.
 REQUEST_INTERVAL_SECONDS = 0.2
+
+
+def _opening_balance(raw) -> float | None:
+    """Parse the configured opening balance, or report it absent.
+
+    A value that will not parse is treated as unset rather than as zero. An
+    opening balance of zero would make every account look infinitely
+    profitable, and "somebody typed it wrong" is not a reason to publish
+    that. Non-positive values are refused for the same reason.
+    """
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        value = float(str(raw).strip().replace(",", ""))
+    except (TypeError, ValueError):
+        logger.warning(
+            "%s is not a number (%r); the opening balance is unset",
+            OPENING_BALANCE_VAR, raw,
+        )
+        return None
+    if value <= 0:
+        logger.warning(
+            "%s must be positive, got %r; the opening balance is unset",
+            OPENING_BALANCE_VAR, raw,
+        )
+        return None
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +129,10 @@ class CapitalConfig:
     identifier: str | None = field(default=None, repr=False)
     password: str | None = field(default=None, repr=False)
     environment: str = "demo"
+    #: What the account was funded with. ``None`` when unset -- see
+    #: :data:`OPENING_BALANCE_VAR`. Not a secret, so not hidden from repr:
+    #: it is the one field here somebody may need to see to debug a figure.
+    opening_balance: float | None = None
 
     @property
     def host(self) -> str:
@@ -108,6 +158,7 @@ class CapitalConfig:
             identifier=source.get(IDENTIFIER_VAR) or None,
             password=source.get(PASSWORD_VAR) or None,
             environment="live" if wanted == "live" else "demo",
+            opening_balance=_opening_balance(source.get(OPENING_BALANCE_VAR)),
         )
 
 

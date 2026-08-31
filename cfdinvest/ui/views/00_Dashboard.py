@@ -87,13 +87,26 @@ else:
     # Keys are the broker reader's own display labels -- balance, available,
     # profit_loss -- not invented ones. Guessing them showed a row of blanks
     # while looking like it worked.
+    # "Since opening" leads, because it is the question the account exists
+    # to answer and the front page is where it is asked. Open P&L sits
+    # beside it rather than instead of it -- showing only the second under
+    # the first's name is the bug this replaced.
     row = st.columns(4)
     profit = account.get("profit_loss")
-    row[0].metric("Balance", _money(account.get("balance")))
-    row[1].metric("Available", _money(account.get("available")))
+    since = account.get("since_opening")
+    row[0].metric(
+        "Since opening",
+        "—" if since is None else _money(since),
+        delta=None if since is None else f"{since:+,.2f}",
+        help=account.get("performance_note") or
+        "Balance now against what was put in. Realised and unrealised "
+        "together.",
+    )
+    row[1].metric("Balance", _money(account.get("balance")))
     row[2].metric(
         "Open P&L", _money(profit),
         delta=None if profit is None else f"{profit:+,.2f}",
+        help="Unrealised, on open positions only.",
     )
     row[3].metric("Open positions", len(positions))
 

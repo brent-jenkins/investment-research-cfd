@@ -475,3 +475,128 @@ def test_the_two_figures_reconcile_to_the_balance():
     # the old label got backwards.
     assert account.balance < 5_000.0 < account.balance + 200
     assert account.profit_loss > 0
+
+
+# --------------------------------------------------------------------------- #
+# "If I gave you 5,000, would you earn or lose me money?"
+# --------------------------------------------------------------------------- #
+# The owner's framing, and the question the whole forward record exists to
+# answer. It could not be answered at all until the opening balance was
+# recorded, because the broker never reports it: `deposit` is the opening
+# figure plus everything realised, so inferring the opening from it is wrong
+# by exactly the realised P&L -- which is the quantity being sought.
+
+
+def _account(balance=4890.35, deposit=4863.92, profit_loss=26.43):
+    return capital.CapitalAccount(
+        currency="GBP", balance=balance, available=1933.53,
+        profit_loss=profit_loss, deposit=deposit,
+    )
+
+
+def test_the_lifetime_answer_is_computed_from_what_was_put_in():
+    """The reported case, to the penny.
+
+    A 5,000 account standing at 4,890 is DOWN 110, while its unrealised P&L
+    is up 26. Those are different numbers with different signs, and the page
+    used to show the second under the first's name.
+    """
+    from cfdinvest.ui.broker import performance_since_opening
+
+    got = performance_since_opening(_account(), 5_000.0)
+
+    assert got["since_opening"] == pytest.approx(-109.65)
+    assert got["realised"] == pytest.approx(-136.08)
+    assert got["unrealised"] == pytest.approx(26.43)
+    assert got["since_opening_pct"] == pytest.approx(-0.02193, abs=1e-5)
+    assert got["since_opening"] < 0 < got["unrealised"], (
+        "the case that matters: down overall while open positions show a "
+        "profit, which is exactly when the old label lied"
+    )
+
+
+def test_the_halves_sum_to_the_whole():
+    """Asserted, not described. Realised plus unrealised is the lifetime
+    figure, and if that identity fails the decomposition is telling a
+    different story from the headline."""
+    from cfdinvest.ui.broker import performance_since_opening
+
+    for balance, deposit, unrealised in (
+        (4890.35, 4863.92, 26.43),
+        (5500.00, 5400.00, 100.00),
+        (5000.00, 5000.00, 0.00),
+    ):
+        got = performance_since_opening(
+            _account(balance, deposit, unrealised), 5_000.0
+        )
+        assert got["realised"] + got["unrealised"] == pytest.approx(
+            got["since_opening"]
+        )
+
+
+def test_an_unset_opening_balance_is_absent_not_zero():
+    """M: unset read as 0, making every account infinitely profitable.
+
+    "Not available" and "broke even" are different statements, and this is
+    the number somebody uses to decide whether the thing works.
+    """
+    from cfdinvest.ui.broker import performance_since_opening
+
+    got = performance_since_opening(_account(), None)
+
+    assert got["since_opening"] is None
+    assert got["realised"] is None
+    assert got["since_opening_pct"] is None
+    assert got["performance_note"], "the absence was not explained"
+    # The unrealised figure is still reported -- it is known, and withholding
+    # it because a different number is missing would be its own inference.
+    assert got["unrealised"] == pytest.approx(26.43)
+
+
+@pytest.mark.parametrize("raw", ["", "abc", "0", "-100", None])
+def test_an_unusable_opening_balance_is_treated_as_unset(raw):
+    """A typo must not publish a wrong lifetime P&L.
+
+    Zero is the dangerous one: it would divide into a percentage and make
+    any account look infinitely profitable. Refused rather than accepted.
+    """
+    env = {} if raw is None else {capital.OPENING_BALANCE_VAR: raw}
+
+    assert capital.CapitalConfig.from_env(env).opening_balance is None
+
+
+def test_the_opening_balance_travels_with_the_account_not_the_config():
+    """Why it is an environment variable beside the credentials.
+
+    The opening balance is a property of the account those credentials
+    reach. Pointing the system at a live account changes the account and its
+    opening balance together; a figure in the shared config file would go on
+    describing the demo one.
+    """
+    demo = capital.CapitalConfig.from_env({
+        capital.ENVIRONMENT_VAR: "demo",
+        capital.OPENING_BALANCE_VAR: "5000",
+    })
+    live = capital.CapitalConfig.from_env({
+        capital.ENVIRONMENT_VAR: "live",
+        capital.OPENING_BALANCE_VAR: "25000",
+    })
+
+    assert demo.opening_balance == 5_000.0 and not demo.is_live
+    assert live.opening_balance == 25_000.0 and live.is_live
+
+
+def test_the_opening_balance_is_not_treated_as_a_secret():
+    """It is not one, and hiding it would make a wrong figure undebuggable.
+
+    The credentials beside it stay hidden -- that assertion is the point of
+    pairing the two here.
+    """
+    shown = repr(capital.CapitalConfig(
+        api_key="SECRET-KEY", identifier="me@example.com",
+        password="SECRET-PASS", opening_balance=5_000.0,
+    ))
+
+    assert "5000" in shown
+    for secret in ("SECRET-KEY", "me@example.com", "SECRET-PASS"):
+        assert secret not in shown

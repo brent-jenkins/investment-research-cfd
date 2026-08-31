@@ -3140,15 +3140,28 @@ def test_the_broker_page_never_calls_unrealised_pnl_lifetime_profit():
     assert "on open positions only" in tiles
 
 
-def test_the_broker_page_says_lifetime_profit_is_absent_rather_than_omitting_it():
-    """Absence named, not inferred.
+def test_the_broker_page_answers_the_lifetime_question_or_names_its_absence():
+    """Both branches, because either alone is a way to mislead.
 
-    Quietly dropping the tile would leave a reader assuming the figure was
-    somewhere else on the page. The rule here is that a number which cannot
-    be computed is reported as not computed.
+    Showing nothing lets a reader assume the figure is elsewhere on the
+    page. Showing something unconditionally is how unrealised P&L came to be
+    labelled "since the account opened" in the first place. The page must
+    compute it when the opening balance is configured and say it cannot when
+    it is not.
     """
     source = (Path(__file__).resolve().parents[1] / "cfdinvest" / "ui" /
               "views" / "03_Broker.py").read_text(encoding="utf-8")
 
+    # The absent branch names itself and says how to fix it.
     assert "Profit since the account opened is not shown" in source
-    assert "not the opening deposit" in source
+    assert "CFD_CAPITAL_OPENING_BALANCE" in source
+
+    # The present branch reports the whole and both halves, so a reader can
+    # see that banked and unbanked money are different things.
+    assert "Since the account opened" in source
+    assert "of which realised" in source
+    assert "of which unrealised" in source
+
+    # And the assumption that makes it valid is stated, not buried.
+    assert "no deposits or withdrawals" in source
+
