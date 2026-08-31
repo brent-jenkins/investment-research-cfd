@@ -699,15 +699,51 @@ adjacent step sits inside the 8pp floor and the whole range spans 12.7pp, so
 it is close to inert on return and stays at 0.5 because nothing says to move
 it, which is a weaker justification than it used to have.
 
-**`rebalance_threshold = 1.0` is measured better and not adopted.** It beats
-the configured 3.0 by 21.8pp, clears the noise floor, and wins in both
-halves (+24.2pp and +18.9pp), so it is not a period artefact. It is still
-refused: the entire gain is handed back in drawdown, 41.4% to 45.5%, and
-Calmar goes 6.17 to 6.08. Raising exposure requires every requirement clear
-at once and this one is not. There is also a concrete second reason —
-`review_drawdown_fraction` is 0.45, so 45.5% would sit above the level at
-which the book asks to be reviewed, and adopting it would mean loosening a
-risk limit to fit a change with no risk-adjusted gain.
+**`rebalance_threshold = 1.0` is measured better and not adopted — and the
+first two reasons for refusing it were both wrong.** Recorded at length
+because a right answer reached the wrong way is one that reverses the next
+time somebody re-derives it, which is the 2026-08-30 lesson in a new place.
+
+*Retracted*: "the entire gain is handed back in drawdown, 41.4% to 45.5%,
+and Calmar goes 6.17 to 6.08." That compared two single realisations.
+Block-bootstrapping both arms puts their drawdown distributions on top of
+each other — p50 45.4% against 45.0%, with 1.0's paths landing beyond the
+configured arm's median **48.5% of the time, a coin flip**. The 4.1pp was
+sequencing noise inside a distribution many times wider than it. The Calmar
+figures are removed from the config table rather than corrected, because
+they were arithmetic on that noise.
+
+*Retracted*: "45.5% sits above `review_drawdown_fraction`." That threshold
+was itself set from a single path, and is now 0.50.
+
+**The real reason is the leverage control, which should have been run
+first.** The two arms differ by *eleven round trips out of 4,179* — a large
+effect from a tiny cause, which this file already defines as something to
+investigate rather than believe. What actually changes is exposure: mean
+leverage 1.65 to 1.69, with held names and flat bars identical.
+
+    3.0 (off, configured)   254.9%   H1 228.3%   H2 284.1%   maxDD 41.4%
+    exposure 1.023x, off    265.2%   H1 233.3%   H2 300.4%   maxDD 40.8%
+    1.0 (rebalancing on)    276.7%   H1 252.5%   H2 303.0%   maxDD 45.5%
+
+    differential            H1 +19.1pp   H2 +2.6pp   whole +11.5pp
+
+About half the headline gain is bought with exposure, and the half belonging
+to the *rule* does not survive the split: +19.1pp then +2.6pp, the second
+inside the 8pp floor and indistinguishable from nothing. A first-half-only
+effect is a period, not a parameter. **`rebalance_threshold` stays at 3.0.**
+
+The exposure arm is also **not** adopted, and it is the more tempting of the
+two: positive in both halves and drawing down slightly *less*. But +10.3pp
+barely clears the floor, its own halves are +5.0pp and +16.3pp, and raising
+leverage on a funded account because one backtest liked it by ten points is
+precisely the overfitting this file exists to prevent.
+`exposure_per_unit_size` stays where it is.
+
+The general lesson, which outlives this parameter: **a difference between
+two backtests is not a measurement until you know how wide the distribution
+is that both were drawn from.** Two of the arguments above stood for a day
+only because nobody had asked.
 
 The old note that drift rebalancing at 0.5 "beat it in 9 of 10 out-of-sample
 windows" is now **refuted rather than superseded**: at measured spreads 0.5

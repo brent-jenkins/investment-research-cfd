@@ -323,7 +323,9 @@ exit_on_opposing_signal = false
 # rather than a finding, and not something to tune against until it is
 # understood.
 #
-# RE-MEASURED under the corrected cost model (2026-08-31, screen-gated at target 10 on Capital bars with measured spreads, baseline 254.9%/-41.4%).
+# RE-MEASURED under the corrected cost model (2026-08-31, screen-gated at
+# target 10 on Capital bars with measured spreads, baseline
+# 254.9%/-41.4%).
 # The 773.6% figure above came from yfinance bars at a flat 5bp and is
 # superseded as a number, but its conclusion holds and hardens:
 #
@@ -372,30 +374,65 @@ reentry_cooldown_days = 0.083 # two hours; the multi-day version measured as noi
 # Relative drift before an open position is resized. At 3.0 and above, drift
 # rebalancing is off entirely and only opens and closes remain.
 #
-# RE-MEASURED (2026-08-31, screen-gated at target 10 on Capital bars with measured spreads, baseline 254.9%/-41.4%):
+# RE-MEASURED (2026-08-31, screen-gated at target 10 on Capital bars
+# with measured spreads, baseline 254.9%/-41.4%):
 #
-#   threshold    CAGR     maxDD   Calmar    H1       H2
-#   3.0 (off)   254.9%    41.4%    6.17   228.3%   284.1%
-#   1.0         276.8%    45.5%    6.08   252.5%   303.0%
-#   0.5         178.9%    49.3%    3.63
-#   0.25        152.3%    43.4%    3.51
+#   threshold    CAGR     maxDD     H1       H2
+#   3.0 (off)   254.9%    41.4%   228.3%   284.1%
+#   1.0         276.8%    45.5%   252.5%   303.0%
+#   0.5         178.9%    49.3%
+#   0.25        152.3%    43.4%
 #
-# MEASURED AND NOT ADOPTED. 1.0 beats the configured value by 21.8pp, which
-# clears the 8pp noise floor, and it wins in both halves (+24.2pp, +18.9pp),
-# so it is not a period artefact. It is still not taken: the whole gain is
-# returned in drawdown, Calmar goes 6.17 to 6.08, and this project only
-# raises exposure when every requirement is clear at once. It is not.
+# The Calmar column that used to sit here (6.17 against 6.08) is gone. It
+# was the stated reason for refusing 1.0 and it was computed from two single
+# realisations of a drawdown whose modelled spread is far wider than the
+# difference between them -- so it was arithmetic on noise, and leaving it
+# in the table would invite the same conclusion being drawn again.
 #
-# A second, concrete reason: review_drawdown_fraction is 0.45, so a 45.5%
-# drawdown sits above the level at which the book asks to be reviewed.
-# Adopting this would mean loosening a risk limit to accommodate a change
-# with no risk-adjusted gain, which is the wrong way round.
+# MEASURED AND NOT ADOPTED -- and the FIRST reasons given for refusing it
+# were both wrong, which is recorded because a right answer reached the
+# wrong way is one that reverses the next time somebody re-derives it.
+#
+# Retracted: "the whole gain is returned in drawdown, 41.4% to 45.5%". That
+# compared two single realisations. Block-bootstrapping both arms (4,000
+# paths, block 20) puts their drawdown distributions on top of each other --
+# p50 45.4% against 45.0%, and 1.0's paths land beyond the configured arm's
+# median 48.5% of the time, which is a coin flip. The 4.1pp was sequencing
+# noise inside a distribution far wider than it, and refusing a change on it
+# was not a decision.
+#
+# Retracted: "review_drawdown_fraction is 0.45, so 45.5% sits above it".
+# That threshold was itself set from a single path and is now 0.50.
+#
+# The real reason is the leverage control, which should have been run first.
+# The two arms differ by ELEVEN round trips out of 4,179 -- a large effect
+# from a tiny cause, which is this project's definition of something to
+# investigate rather than believe. What actually changes is exposure: mean
+# leverage 1.65 to 1.69, held names and flat bars identical. Raising
+# exposure by that same 1.023x with rebalancing OFF returns 265.2%, so:
+#
+#   3.0 (off, configured)   254.9%   H1 228.3%   H2 284.1%   maxDD 41.4%
+#   exposure 1.023x, off    265.2%   H1 233.3%   H2 300.4%   maxDD 40.8%
+#   1.0 (rebalancing on)    276.7%   H1 252.5%   H2 303.0%   maxDD 45.5%
+#
+#   differential            H1 +19.1pp   H2 +2.6pp   whole +11.5pp
+#
+# Half the headline gain is exposure, and the half belonging to the RULE
+# does not survive the split: +19.1pp in the first half and +2.6pp in the
+# second, which is inside the 8pp floor and indistinguishable from nothing.
+# A first-half-only effect is a period, not a parameter.
+#
+# The exposure arm is also NOT adopted, deliberately. It is positive in both
+# halves and draws down slightly less, but +10.3pp barely clears the floor,
+# its own halves are +5.0pp and +16.3pp, and raising leverage on a funded
+# account because one backtest liked it by ten points is the overfitting
+# this file exists to prevent. exposure_per_unit_size stays where it is.
 #
 # The old 0.25 is now firmly refuted rather than merely superseded. The note
 # that "0.5 beat it in 9 of 10 out-of-sample windows" was measured at a flat
 # 5bp; at measured spreads 0.5 returns 178.9% against 254.9%, because drift
 # rebalancing buys precision with turnover and turnover is what got dearer.
-rebalance_threshold = 3.0     # off; 1.0 measured better on return, worse on Calmar
+rebalance_threshold = 3.0     # off; 1.0's gain is exposure plus a first-half effect
 
 # Confidence a signal needs to open a position, and the level below which an
 # open one is closed. The gap between them is hysteresis: it stops a position
@@ -690,7 +727,8 @@ exposure_per_unit_size = 4.0  # was 1.0; efficiency peaks here and degrades afte
 # once bitten. The 0.5%-of-position-days figure the old comment reasoned
 # from also predates a time stop of 0.29 days and a universe of eight.
 #
-# RE-MEASURED (2026-08-31, screen-gated at target 10 on Capital bars with measured spreads, baseline 254.9%/-41.4%):
+# RE-MEASURED (2026-08-31, screen-gated at target 10 on Capital bars
+# with measured spreads, baseline 254.9%/-41.4%):
 #
 #   blackout    CAGR     maxDD
 #   0 days     215.9%    52.5%
@@ -764,7 +802,8 @@ suggestion_confidence = 0.60
 # swept peak landed on it, which is exactly what the rule means. Changing
 # the entry bar moves this with it.
 #
-# RE-MEASURED (2026-08-31, screen-gated at target 10 on Capital bars with measured spreads, baseline 254.9%/-41.4%):
+# RE-MEASURED (2026-08-31, screen-gated at target 10 on Capital bars
+# with measured spreads, baseline 254.9%/-41.4%):
 #
 #   multiplier    CAGR     maxDD
 #   1.0 (off)    263.5%    43.9%
