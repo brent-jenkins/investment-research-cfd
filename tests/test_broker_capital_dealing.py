@@ -369,3 +369,78 @@ def test_a_default_configured_order_is_refused_in_the_suite():
     )
     assert not result.ok
     assert dealing.DEALING_VAR in result.error
+
+
+# --------------------------------------------------------------------------- #
+# M-live: every successful close reported as a failure
+# --------------------------------------------------------------------------- #
+# On 2026-08-31 eight stranded positions were closed correctly and the pass
+# mailed "0 placed, 8 failed" under the subject "FAILED -- the account may
+# not match the record". The account matched the record exactly. The broker
+# confirmed all eight closes and the order store recorded them CLOSED with
+# no error.
+#
+# ``ok`` was written for opens -- status OPEN with a level -- so a close,
+# which confirms as CLOSED and carries no open level, could never satisfy
+# it. One property, two meanings, and the wrong one applied to half the
+# actions.
+#
+# A false alarm here is worse than it sounds. This is the alert that says
+# whether the book and the broker agree, and nobody investigates being told
+# the worse news, so a wrong FAILED survives where a wrong OK gets caught.
+
+
+def test_a_confirmed_close_is_a_success_not_a_failure():
+    """The reported bug, at the property that caused it."""
+    assert dealing.DealResult(status="CLOSED").ok, (
+        "a confirmed close reports as a failure, so the pass mails FAILED "
+        "for work that succeeded"
+    )
+
+
+def test_a_close_that_did_not_happen_is_still_a_failure():
+    """The half that must survive the fix.
+
+    Making closes succeed is worthless if it also silences a close that
+    genuinely did not happen -- and this is the more dangerous direction,
+    because a position believed shut is a position nobody is watching.
+    """
+    for error in (
+        "POSITION STILL OPEN -- close refused: dealing is not enabled",
+        "POSITION STILL OPEN -- HTTP 403 closing abc",
+        "POSITION MAY STILL BE OPEN -- unconfirmed close (timeout)",
+    ):
+        assert not dealing.DealResult(status="CLOSED", error=error).ok, error
+    # And a broker rejection keeps its own word rather than becoming CLOSED,
+    # which is what makes reading the status safe at all.
+    assert not dealing.DealResult(status="REJECTED").ok
+
+
+def test_an_open_still_needs_a_fill_price():
+    """M281, which the asymmetry must not weaken.
+
+    A deal reference is not a fill. An open with no level is a request the
+    broker has not turned into a position, and the close case must not have
+    relaxed that.
+    """
+    assert not dealing.DealResult(status="OPEN").ok
+    assert dealing.DealResult(status="OPEN", level=101.5).ok
+
+
+def test_the_two_actions_normalise_success_to_different_words():
+    """Why reading the status is safe, asserted rather than assumed.
+
+    ``ok`` distinguishes an open from a close by status alone. That only
+    holds because each function normalises ITS OWN success and leaves every
+    other outcome as the broker said it -- so a rejection can never arrive
+    wearing the other action's success word.
+    """
+    import inspect
+
+    opening = inspect.getsource(dealing.place_position)
+    closing = inspect.getsource(dealing.close_position)
+    assert 'status="OPEN" if status.upper() in' in opening
+    assert 'status="CLOSED" if status.upper() in' in closing
+    # Neither normaliser may claim the other's word.
+    assert '"CLOSED"' not in opening.split("status=")[-1].split("\n")[0]
+    assert '"OPEN"' not in closing.split("status=")[-1].split("\n")[0]

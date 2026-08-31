@@ -1436,7 +1436,9 @@ def _send_capital_trades(
         failed = [(i, r) for i, r in outcomes if not getattr(r, "ok", False)]
 
         if done:
-            lines.append("Placed:")
+            # Not "Placed": a close is done, not placed, and this list holds
+            # both. The action is spelled out on every line anyway.
+            lines.append("Done:")
             for intent, result in done:
                 size = getattr(result, "size", None) or intent.target_units
                 level = getattr(result, "level", None)
@@ -1477,7 +1479,7 @@ def _send_capital_trades(
             )
             return
         subject = (
-            f"{len(done)} placed, {len(failed)} failed "
+            f"{len(done)} done, {len(failed)} failed "
             f"on the Capital {where} account"
         )
         notify.send(

@@ -122,8 +122,37 @@ class DealResult:
 
     @property
     def ok(self) -> bool:
-        """Accepted *and* confirmed as a position, with a level."""
-        return not self.error and self.status == "OPEN" and self.level is not None
+        """The broker confirmed the deal did what it was asked to do.
+
+        Deliberately asymmetric, because "it worked" is a different fact for
+        an open and for a close. This used to read ``status == "OPEN" and
+        level is not None`` -- correct for an open, and false for every
+        successful close, because a closed position confirms as CLOSED and
+        has no open level.
+
+        That was not a cosmetic bug. Eight stranded positions were closed
+        correctly on 2026-08-31 and the pass reported "0 placed, 8 failed"
+        with the subject "FAILED -- the account may not match the record".
+        The account matched the record exactly. A false alarm on the one
+        alert that says whether the book and the broker agree is as
+        corrosive as a false all-clear, and harder to notice, because
+        nobody investigates being told the worse news.
+
+        Safe to read the status this way: ``place_position`` normalises a
+        successful open to OPEN and ``close_position`` normalises a
+        successful close to CLOSED, while a rejection keeps the broker's own
+        word (REJECTED and the rest), so no failure can present as either.
+
+        An open additionally requires a level and a close does not. A
+        position with no fill price is a reference the broker has not turned
+        into anything, and treating that as filled is the failure this whole
+        module is shaped around. A close has no such price to carry.
+        """
+        if self.error:
+            return False
+        if self.status == "CLOSED":
+            return True
+        return self.status == "OPEN" and self.level is not None
 
 
 @dataclass(frozen=True, slots=True)
