@@ -150,11 +150,27 @@ class MonitoringThresholds:
         confirmation before it is worth asking whether it is still open.
     """
 
-    #: In TRADING days, not calendar days -- see ``_lake_issues``. One full
-    #: session without a new bar means the intraday ingest has stopped while
-    #: the market was open, which is a real fault and shows within hours.
-    #: The old value of 3.0 was in calendar days and breached every Monday.
-    lake_stale_days: float = 1.0
+    #: In TRADING days, not calendar days -- see ``_lake_issues``. The old
+    #: value of 3.0 was in calendar days and breached every Monday.
+    #:
+    #: 2.5 rather than 1.0, and the reason is an artefact worth naming. The
+    #: lake's newest datum is usually a *daily* bar, and daily bars are
+    #: stamped at midnight -- so the bar for Friday carries 2026-08-28
+    #: 00:00 while representing a session that ended at 20:00. Its whole
+    #: session therefore counts as elapsed the moment it is written, and the
+    #: lake reads exactly 1.00 trading days old in normal operation, rising
+    #: to about 2.0 just before the next daily ingest. A threshold of 1.0
+    #: would have fired every afternoon, which is the same weekly-alarm-clock
+    #: failure it replaced, only louder.
+    #:
+    #: The sharper measure would be the staleness of the *decision feed*
+    #: alone -- capital_1h, whose newest bar reads 0.15 trading days old at
+    #: the same moment -- rather than the newest datum across market and
+    #: macro series together. That is a change to what load_lake_metadata
+    #: reports and is not made here; recorded so the next reader knows this
+    #: value accommodates an artefact rather than measuring the thing
+    #: directly.
+    lake_stale_days: float = 2.5
     #: In trading hours. The intraday jobs run every fifteen minutes while a
     #: market is open, so 48 hours was simultaneously far too loose to catch
     #: a weekday failure and too tight to survive a weekend -- the worst of

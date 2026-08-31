@@ -1186,3 +1186,39 @@ def test_the_holiday_calendar_covers_the_year():
     assert dt.date(2026, 11, 26) in holidays, "Thanksgiving is missing"
     assert dt.date(2026, 4, 3) in holidays, "Good Friday is missing"
     assert len(holidays) >= 9, f"only {len(holidays)} holidays in 2026"
+
+
+def test_a_midnight_stamped_daily_bar_is_not_stale():
+    """The artefact that made a 1.0 threshold fire every afternoon.
+
+    Daily bars are stamped at midnight while representing a session that
+    ends at 20:00, so the bar for Friday counts its own whole session as
+    elapsed the instant it is written. In normal operation the lake reads
+    1.00 trading days old, rising to about 2.0 before the next daily
+    ingest -- neither of which is staleness.
+
+    Guards the calibration rather than the number: if the threshold is ever
+    tightened back below the normal cycle, this fails.
+    """
+    friday_bar = pd.Timestamp("2026-08-28 00:00", tz="UTC")
+    monday = pd.Timestamp("2026-08-31 07:55", tz="UTC")
+    assert check_lake_freshness({"newest": friday_bar}, LIMITS, now=monday) == [], (
+        "a midnight-stamped daily bar reads as stale; the alert fires in "
+        "normal operation"
+    )
+
+    # And the day after a full session, before the next ingest.
+    tuesday = pd.Timestamp("2026-09-01 07:55", tz="UTC")
+    assert check_lake_freshness({"newest": friday_bar}, LIMITS, now=tuesday) == [], (
+        "the normal daily cycle reads as stale"
+    )
+
+
+def test_a_genuinely_stale_lake_still_fires():
+    """The calibration must not be so loose that a real outage is silent."""
+    friday_bar = pd.Timestamp("2026-08-28 00:00", tz="UTC")
+    later = pd.Timestamp("2026-09-04 18:00", tz="UTC")   # a week of sessions
+    issues = check_lake_freshness({"newest": friday_bar}, LIMITS, now=later)
+    assert severities(issues) == ["critical"], (
+        "a week without new data did not fire; the threshold is too loose"
+    )
