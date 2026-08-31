@@ -672,6 +672,38 @@ quoting the luckiest half of the distribution.
 rolling three-month windows are negative, so it fires about a tenth of the
 time rather than routinely.
 
+**The currency pairs now come from Capital too, and that closes the feed
+switch.** They were the last input still taken from yfinance intraday,
+against the standing instruction of one source of truth — and not a small
+one, since they convert every price in a book of dollar instruments held in
+a sterling account.
+
+It looked like a vendor limitation for a day. The lake spells them
+`GBPUSD=X`, Capital calls the same market `GBPUSD`, so every request
+returned nothing and the log line — "the broker does not quote them" —
+read as fact. It quotes all five, with hourly history from 2023-01-03, the
+same start as the equity bars.
+
+Measured through the engine before adopting, on the screen-gated harness:
+**257.6%/−41.9% against the recorded 254.9%/−41.4%**, a 2.7pp drift inside
+the 8pp floor, with the trade count unchanged at 4,178. So the switch
+changes nothing measurable, which is the outcome that makes it safe rather
+than the outcome that makes it interesting.
+
+What it does improve is coverage. The yfinance `1h` pair ran 2024-08-26 to
+2026-08-26 — under two years, not even reaching the start of the backtest,
+and five days stale. Capital's runs 2023-01-02 to now. The runner's
+`REFERENCE_FALLBACK_INTERVAL` path fired once in the old run and fires zero
+times in the new one.
+
+Two failures on the way, both recorded because the second was caused by
+fixing the first badly. The pairs stopped being fetched *at all* once the
+decision feed moved to `capital_1h`, because the yfinance branch was never
+reached — their bars were two days stale and decaying toward the 1.0
+conversion this project has already paid eleven points of drawdown for. The
+first fix routed them back to yfinance so *somebody* would fetch them: right
+for the symptom, wrong for the cause, and retired within the hour.
+
 **The five parameters that predated the corrected cost model are
 re-measured.** Every figure justifying them came from yfinance bars at a
 flat 5bp; decisions now come from `capital_1h` and spread is charged per bar
