@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -208,14 +209,37 @@ def _read(url: str, *, data=None, headers=None, method: str | None = None):
         return json.loads(body), dict(response.headers)
 
 
+#: How long to wait before retrying a rate-limited authentication, in
+#: seconds, one entry per retry.
+#:
+#: Capital.com limits how often a session may be created. Two jobs half a
+#: second apart is enough to trip it: on 2026-08-31 ``record-spreads``
+#: started at :38.754 and ``trade-capital`` at :39.276, each opening its own
+#: session, and the second was refused with 429. It happened twice and cost
+#: a dealing pass each time -- the book sat four positions short of what the
+#: engine wanted while the market was open.
+#:
+#: Short and bounded. A rate limit clears on its own in about a second, so
+#: waiting is the correct response; waiting *long* is not, because the job
+#: behind this runs every fifteen minutes and a pass that arrives late is
+#: worth less than one that arrives never is worth nothing.
+SESSION_RETRY_WAITS: tuple[float, ...] = (1.0, 2.0)
+
+
 def open_session(
-    config: CapitalConfig | None = None, *, opener=None
+    config: CapitalConfig | None = None, *, opener=None, sleeper=None
 ) -> CapitalSession:
     """Authenticate. Never raises; a failure comes back as a reason.
 
     Reports which variables are missing by name, and never their values --
     "the key is wrong" and "the key is absent" are different problems and
     only one of them is fixed by looking at the environment file.
+
+    Retries a **429 and nothing else**. A rate limit is a request to wait
+    and says nothing about whether the credentials are good. Every other
+    status is returned on the first attempt, deliberately: retrying a 401 or
+    a 403 cannot succeed, and repeating a rejected credential at a broker is
+    how an account gets locked rather than authenticated.
     """
     settings = config or CapitalConfig.from_env()
     if not settings.complete:
@@ -232,35 +256,50 @@ def open_session(
         )
 
     read = opener or _read
+    wait = sleeper if sleeper is not None else time.sleep
     payload = json.dumps(
         {"identifier": settings.identifier, "password": settings.password}
     ).encode("utf-8")
-    try:
-        document, headers = read(
-            f"{settings.host}/session",
-            data=payload,
-            headers={
-                "X-CAP-API-KEY": settings.api_key,
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-    except urllib.error.HTTPError as error:
-        # The body carries an errorCode worth surfacing -- "error.invalid.details"
-        # and a 429 are different problems with the same status class.
-        detail = ""
+
+    document = headers = None
+    for attempt in range(len(SESSION_RETRY_WAITS) + 1):
         try:
-            detail = json.loads(error.read().decode("utf-8")).get("errorCode", "")
-        except Exception:  # noqa: BLE001 - the status is the useful part
+            document, headers = read(
+                f"{settings.host}/session",
+                data=payload,
+                headers={
+                    "X-CAP-API-KEY": settings.api_key,
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            break
+        except urllib.error.HTTPError as error:
+            # The body carries an errorCode worth surfacing --
+            # "error.invalid.details" and a 429 are different problems with
+            # the same status class.
             detail = ""
-        return CapitalSession(
-            host=settings.host,
-            error=f"HTTP {error.code}{f' ({detail})' if detail else ''}",
-        )
-    except Exception as error:  # noqa: BLE001
-        return CapitalSession(
-            host=settings.host, error=f"{type(error).__name__}: {error}"
-        )
+            try:
+                detail = json.loads(error.read().decode("utf-8")).get("errorCode", "")
+            except Exception:  # noqa: BLE001 - the status is the useful part
+                detail = ""
+            if error.code == 429 and attempt < len(SESSION_RETRY_WAITS):
+                pause = SESSION_RETRY_WAITS[attempt]
+                logger.info(
+                    "Capital: rate limited authenticating; retrying in %.0fs "
+                    "(attempt %d of %d)",
+                    pause, attempt + 2, len(SESSION_RETRY_WAITS) + 1,
+                )
+                wait(pause)
+                continue
+            return CapitalSession(
+                host=settings.host,
+                error=f"HTTP {error.code}{f' ({detail})' if detail else ''}",
+            )
+        except Exception as error:  # noqa: BLE001
+            return CapitalSession(
+                host=settings.host, error=f"{type(error).__name__}: {error}"
+            )
 
     # Header names arrive with inconsistent casing across proxies.
     lowered = {str(k).lower(): v for k, v in (headers or {}).items()}

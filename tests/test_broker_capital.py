@@ -289,3 +289,113 @@ def test_the_reader_is_paced():
     )
     assert pauses, "no pacing at all"
     assert all(p >= capital.REQUEST_INTERVAL_SECONDS for p in pauses)
+
+
+# --------------------------------------------------------------------------- #
+# M-live: two jobs half a second apart, and the second one refused
+# --------------------------------------------------------------------------- #
+# Capital.com limits how often a session may be created, and the daemon runs
+# record-spreads and trade-capital back to back. On 2026-08-31 they started
+# at :38.754 and :39.276, each opening its own session, and the second was
+# refused with 429. It cost a dealing pass twice over, while the book sat
+# four positions short of what the engine wanted with the market open.
+#
+# A rate limit is a request to wait. It says nothing about the credentials,
+# which is why only a 429 is retried.
+
+import io as _io
+import urllib.error as _urlerror
+
+
+def _config():
+    return capital.CapitalConfig(
+        api_key="k", identifier="i", password="p", environment="demo"
+    )
+
+
+def _rate_limited(times: int):
+    """An opener that returns 429 `times` times, then succeeds."""
+    state = {"calls": 0}
+
+    def read(url, data=None, headers=None, method=None):
+        state["calls"] += 1
+        if state["calls"] <= times:
+            raise _urlerror.HTTPError(
+                url, 429, "rate", {},
+                _io.BytesIO(b'{"errorCode":"error.too-many.requests"}'),
+            )
+        return ({"clientId": "c"}, {"CST": "a", "X-SECURITY-TOKEN": "b"})
+
+    return read, state
+
+
+def test_a_rate_limited_session_is_retried_and_succeeds():
+    """The reported failure, and that it now recovers within one pass."""
+    waits: list[float] = []
+    read, state = _rate_limited(1)
+
+    session = capital.open_session(_config(), opener=read, sleeper=waits.append)
+
+    assert session.ok, session.error
+    assert state["calls"] == 2, "the 429 was not retried"
+    assert waits == [1.0], "retried without waiting, which trips the limit again"
+
+
+def test_the_retry_is_bounded_and_keeps_the_reason():
+    """A wait must not become a hang.
+
+    The job behind this runs every fifteen minutes. A pass that arrives late
+    is worth something; one that never returns is worth less than a failure,
+    because a failure at least says so.
+    """
+    waits: list[float] = []
+    read, state = _rate_limited(99)
+
+    session = capital.open_session(_config(), opener=read, sleeper=waits.append)
+
+    assert not session.ok
+    assert state["calls"] == len(capital.SESSION_RETRY_WAITS) + 1
+    assert waits == list(capital.SESSION_RETRY_WAITS)
+    # The reason survives the retries. "Rate limited" and "wrong password"
+    # are different problems and only one is fixed by waiting.
+    assert "429" in session.error and "too-many" in session.error
+
+
+def test_a_credential_failure_is_not_retried():
+    """The half that matters more than the fix.
+
+    Retrying a 401 or 403 cannot succeed, and repeating a rejected
+    credential at a broker is how an account gets locked rather than
+    authenticated. Only a 429 is a request to wait.
+    """
+    for status, code in ((401, b"error.invalid.details"),
+                         (403, b"error.forbidden"),
+                         (500, b"error.server")):
+        calls = {"n": 0}
+        waits: list[float] = []
+
+        def read(url, data=None, headers=None, method=None, _s=status, _c=code):
+            calls["n"] += 1
+            raise _urlerror.HTTPError(
+                url, _s, "no", {}, _io.BytesIO(b'{"errorCode":"' + _c + b'"}')
+            )
+
+        session = capital.open_session(_config(), opener=read, sleeper=waits.append)
+
+        assert not session.ok
+        assert calls["n"] == 1, f"HTTP {status} was retried"
+        assert waits == [], f"HTTP {status} caused a wait"
+        assert str(status) in session.error
+
+
+def test_the_password_never_reaches_the_error_text():
+    """Unchanged by the retry, and worth re-asserting where it is easy to lose.
+
+    A retried failure builds its message more than once; a leak here would
+    put a broker password in a log that is read every time dealing breaks.
+    """
+    read, _ = _rate_limited(99)
+    session = capital.open_session(_config(), opener=read, sleeper=lambda _s: None)
+
+    assert "p" not in session.error.replace("error.too-many.requests", "")
+    assert "k" not in session.error.replace("error.too-many.requests", "")
