@@ -705,6 +705,37 @@ One path, and the block-bootstrap work says the realised sequence was a mild
 draw, so the true month-to-month spread is likely wider than this. The 2026
 row is eight months.
 
+**Weekly, the same shape harder, and it puts a number on how long a forward
+result takes to mean anything.** 190 complete weeks: 54% positive — a coin
+flip — median +0.6%, quartiles −3.3% to +9.3%, middle 90% spanning −10.9% to
++19.1%, best +43.1% and worst −21.0%, mean +2.9% at a standard deviation of
+10.0.
+
+The monthly smoothing is pure aggregation rather than mean reversion.
+Signal-to-noise is 0.29 weekly against 0.64 monthly, and 0.29 × √(52/12) =
+0.60 — near enough the observed figure that week-to-week returns are
+effectively serially independent.
+
+Concentration is worse at this resolution: 102.7x total, 23.9x without the
+best five weeks, 8.6x without the best ten, **1.8x without the best twenty**.
+Ten per cent of weeks are the whole result.
+
+    after  1 week    t = 0.29
+    after  4 weeks   t = 0.58
+    after 13 weeks   t = 1.05
+    after 52 weeks   t = 2.11   distinguishable from zero
+
+**About 47 weeks — eleven months — before a forward result is distinguishable
+from noise.** That is the honest answer to "how are we doing" at any short
+horizon, and it applies to the demo account's forward record as much as to a
+backtest.
+
+The concrete case, worth keeping because it is the causal argument against
+every safety valve tested here: the longest losing run in the record is
+**seven consecutive negative weeks, ending 7 February 2025**, bracketing the
+−35.1% January. The year that followed returned +385.8%, the best in the
+span. Stopping during that run would have missed it.
+
 **The currency pairs now come from Capital too, and that closes the feed
 switch.** They were the last input still taken from yfinance intraday,
 against the standing instruction of one source of truth — and not a small
