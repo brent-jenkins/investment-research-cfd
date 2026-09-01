@@ -705,6 +705,57 @@ One path, and the block-bootstrap work says the realised sequence was a mild
 draw, so the true month-to-month spread is likely wider than this. The 2026
 row is eight months.
 
+**The overnight gap is mostly not a gap: Capital quotes through it, and the
+engine cannot see those bars.** The strongest open lead in the project, found
+2026-09-01 on the owner's observation that the book sits idle while the
+shares keep moving.
+
+`gap` means the move from the previous close to this bar's fill, on the
+position held into the bar — verified as overnight rather than intrabar:
+88.8% of all |gap| P&L lands on the first bar of a session, and the median
+discontinuity on a held position is 0.862% there against 0.008% on later
+bars. Net across the run it is **−5.8M on session opens against +0.2M on
+every other bar**, so this book systematically pays to hold overnight and
+earns during the session.
+
+But Capital trades 57 of the 100 candidates from 08:00 to 00:00 UTC rather
+than 13:30 to 20:00, `marketStatus` reads TRADEABLE, **and the lake already
+holds those bars** — MU's raw file has 14,087 rows spanning 08:00–23:00 and
+`restrict_to_session` hands the engine about 6,400 of them. More than half
+the data is discarded, in exactly the window that produces the losses.
+
+One ordinary NVDA night shows what is being thrown away. Session close
+129.91, then 129.46 / 130.26 / 130.44 / 131.28 through the evening, a dead
+zone from 00:00 to 07:00, then 132.43 / 132.17 / 132.41 / 133.82 / 133.53
+through the morning, opening at 132.67. A continuously quoted path at
+8–12bp against 8.2–8.5bp in session, booked as an unavoidable jump.
+
+Measured over 6,406 nights on the largest extended-hours names: the median
+session-close-to-session-open move is 0.52% to 1.37%, of which the quoted
+leg is 0.682% and the genuinely unquoted leg 0.500% — so **about 58% of the
+overnight move happens while the broker is dealing**. (The two legs exceed
+the total because they are medians of absolute moves that partly offset.)
+Out-of-session spread runs 1.4x to 2.2x the in-session figure for the
+majors.
+
+The likely prize is exits more than entries: a position that reverses at
+22:00 currently bleeds until 13:30.
+
+**Not acted on, and it is a project rather than a setting.** Three real
+obstacles, in order of seriousness:
+
+* **Mixed calendars are a known killer here.** 57 candidates have extended
+  hours and 43 do not. This file already records what happened when
+  instruments with different sessions were joined into one hourly panel: the
+  index became the union of two calendars, the shares went NaN outside their
+  own session, and every signal in the book died. That is precisely this
+  shape, and it is why `restrict_to_session` exists.
+* **Every figure the project holds is measured on session bars** — the
+  254.9% baseline, all five parameter sweeps, the 8pp noise floor. Extending
+  roughly doubles the bar count and invalidates all of it.
+* **Costs are already 35% of gross**, and more bars means more decisions at
+  one and a half to two times the spread.
+
 **Losses come from gaps; gains come from trading.** Asked what happened in
 the best and worst weeks, and the answer generalises. Read from the engine's
 own per-bar decomposition, whose five components sum to the equity change to
