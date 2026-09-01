@@ -498,6 +498,58 @@ The forward record on the demo account restarts from today for the same
 reason: the account is now trading a different configuration from the one it
 ran on 31 August.
 
+**Late entries are the good ones, and `open_delay_minutes` is not modelled
+in the engine.** Asked whether opening near the close is wasteful — pay the
+spread, carry the overnight gap and financing, little session left to earn
+it back. The worry has the right shape and the data goes the other way.
+
+    bars left   trips      total P&L      mean  win rate  held overnight
+            0     429         17,886        42     56.2%           100%
+            1     443      2,758,022     6,226     54.4%            86%
+            2     586      6,944,751    11,851     52.2%            78%
+            3     662      6,102,413     9,218     48.5%            69%
+            4     907      4,524,889     4,989     48.7%            73%
+            5     662      3,642,298     5,502     44.1%            47%
+            6     494        400,274       810     45.1%            38%
+
+A trade opened with two bars left averages +11,851 at a 52.2% win rate; one
+opened early averages +810 at 45.1% — and the late ones earn it *despite*
+being held overnight far more often. Only the final bar is weak, 429 trips
+averaging +42. Gating late entries is destructive: −11.7pp for the last bar,
+−77.3pp for the last two.
+
+**A modelling gap, found on the way and worth closing on its own.**
+`open_delay_minutes = 30` lives only in `schedule/app.py`, so production
+refuses to open in the first half hour while **the engine does not model it
+at all** — the backtest fills from 13:00 UTC on trades production would
+never take. The shipped baseline therefore describes something the live
+system does not do, and the "skip the first bar" arm at +27.9pp is roughly
+production's actual behaviour. Backtest and account currently disagree about
+when trading starts.
+
+**And skipping more of the morning is the strongest new lead**, on the risk
+side especially:
+
+                              CAGR    maxDD   H1 diff   H2 diff
+    baseline                307.6%    44.1%
+    skip first 1 bar        335.5%    44.2%     +32.0     +23.7
+    skip first 2 bars       309.0%    42.0%      -2.3      +5.4
+    skip first 3 bars       371.7%    36.7%     +88.7     +40.5
+    skip first 4 bars       389.1%    35.6%     +80.4     +83.0
+    skip first 5 bars       360.8%    32.2%     +30.9     +78.0
+
+Drawdown falls **monotonically** from 44.1% to 32.2%. Skip-4 is +81.4pp of
+return and −8.5pp of drawdown, balanced across halves, and would take Calmar
+from 6.97 to 10.93.
+
+**Not adopted, and treated as a lead rather than a result.** Skip-4 means no
+entries before 17:00 UTC, the last three hours only — a drastic structural
+restriction found by sweeping. The return response is not monotone and the
+skip-2 dip is unexplained, which is the shape of noise rather than a clean
+effect. A time-of-day filter is also exactly what fits to one 3.65-year
+period. It needs the battery the sizing change got — leverage control,
+bootstrap, universe robustness — before it is more than a lead.
+
 **Capital's 5x cap and higher leverage — the first answer here was wrong and
 is corrected below.** Asked whether a pro account's 10x would help.
 
