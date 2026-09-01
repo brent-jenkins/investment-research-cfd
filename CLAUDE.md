@@ -741,8 +741,55 @@ majors.
 The likely prize is exits more than entries: a position that reverses at
 22:00 currently bleeds until 13:30.
 
-**Not acted on, and it is a project rather than a setting.** Three real
-obstacles, in order of seriousness:
+**MEASURED AND CLOSED, 2026-09-01.** The owner asked for it to be tried,
+with the focus on exits rather than entries — cut losses before they become
+big ones. It fails three ways, and the second is the one that settles it.
+
+*Widening the decision panel destroys the strategy.* On the extended index
+the control — wider panel, dealing restricted to the regular session, which
+is what production does today — returned **−33.0% at −82.6% with cost at
+176.6% of gross**, against a recorded 254.9%. 56% of the out-of-session panel
+is NaN and every bar-counted lookback rescales, exactly as `repository`
+warns. So the panel stays as it is, and the owner's own correction is right:
+the decision view must not change, only the ability to close.
+
+*Exits-only is a bad decision, not merely an expensive one.* Screened as an
+overlay on the unchanged book: for every position held into a night, walk
+the quoted extended bars and close at the first one showing a loss beyond a
+threshold.
+
+    cut at  closed   gross if cut   gross saving       spread          net
+      0.5%   1,936     -3,057,561     +1,148,385   -5,570,277   -4,421,892
+      1.0%   1,223     -4,220,957        -15,011   -4,021,204   -4,036,215
+      2.0%     477     -5,251,530     -1,045,584   -1,949,640   -2,995,224
+      3.0%     238     -5,370,717     -1,164,771   -1,015,471   -2,180,242
+      5.0%      51     -4,824,890       -618,944     -232,594     -851,538
+
+Above about 1% it is worse **with execution free**. Positions down 2% at
+22:00 are on average better off by the next open than if they had been
+closed: the overnight move substantially mean-reverts. Only the tightest cut
+helps gross at all, by 1.1M, and pays 5.6M of spread to do it.
+
+*And in the tail it would not have helped.* The DeepSeek weekend, which is
+the worst week in the record: MU's last quote was Friday 19:00 at 102.99 and
+its first quote after was Monday 09:00 at 95.85, already **−6.93%**. NVDA
+−9.32%, PLTR −5.67%. The gap arrived across a weekend, where no broker
+quotes. Acting at the first available price would also have sold the bottom
+— PLTR ran −8.87% at 10:00 and −3.26% by 14:00 — while spreads that night
+were 20–39bp against 9–17bp in session, so the cost doubles exactly when the
+urge to act is strongest.
+
+This is a screening overlay and nothing was adopted from it, but no engine
+work is warranted: a rule that loses at zero cost does not become profitable
+when charged for. It also leaves the same conclusion the file already
+reached from the other direction — stops are monotonically harmful because
+they convert prospective winners into realised losers, and an overnight stop
+is simply a stop with a wider spread.
+
+Untested and deliberately left so: overnight *profit-taking*, and overnight
+entries. Both are different hypotheses and neither follows from this one.
+
+**The obstacles, kept because they still apply to anyone reopening this:**
 
 * **Mixed calendars are a known killer here.** 57 candidates have extended
   hours and 43 do not. This file already records what happened when
