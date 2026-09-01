@@ -601,3 +601,102 @@ def test_the_engine_and_the_dealing_path_read_the_same_delay():
     # something else had already gone wrong.
     source = inspect.getsource(schedule_app._execution_config)
     assert source.count("ExecutionConfig(") == source.count("open_delay_minutes=getattr")
+
+
+# --------------------------------------------------------------------------- #
+# A screen that cannot answer must stop opening, not fall back
+# --------------------------------------------------------------------------- #
+# traded_universe fell through to market.tickers whenever the screen had
+# nothing usable, and the daemon traded it. That list is a deliberate human
+# choice with follow_screen OFF and something else entirely when the screen
+# was meant to answer and could not: opening from a list somebody set at an
+# unremembered point is inferring it is still right, which is the failure
+# universe/traded.py's own docstring warns about.
+#
+# Owner's call, 2026-09-01: run autonomously, and say so when it cannot.
+
+
+def test_a_deliberate_config_list_is_not_a_screen_failure():
+    """With follow_screen off, market.tickers IS the answer.
+
+    Conflating the two would refuse to trade a perfectly intentional
+    configuration, which is the mirror error and just as wrong.
+    """
+    from cfdinvest.universe.traded import TradedUniverse
+
+    assert not TradedUniverse(names=("MU",), source="config").screen_failed
+    assert not TradedUniverse(names=("MU",), source="screen").screen_failed
+
+
+def test_a_screen_that_could_not_answer_is_flagged():
+    """The two ways it fails, both of which used to trade the fallback."""
+    from cfdinvest.universe.traded import TradedUniverse
+
+    for source in ("config (selections unreadable)",
+                   "config (no selection recorded)"):
+        assert TradedUniverse(names=("MU",), source=source).screen_failed, source
+
+
+def test_the_dealing_path_opens_nothing_when_the_screen_fails():
+    """Structural, and stated as such: there is no functional route into
+    _command_trade_capital without a broker session.
+
+    The assertion is on the pairing -- the openable list must be emptied AND
+    the engine's rows trimmed to what is held. Emptying the list alone would
+    not be enough, because _dealing_tickers widens the priced set from the
+    engine's own intent, so an unheld name would still be priced and opened.
+    """
+    import inspect
+
+    source = inspect.getsource(app._command_trade_capital)
+
+    assert "screen_failed = universe.screen_failed" in source
+    assert "tickers = [] if screen_failed else list(universe.names)" in source
+    # And the intent is trimmed, or the bridge opens from it anyway.
+    trim = source[source.index("if screen_failed:"):]
+    # The FILTER, not merely the set it filters against. A first version of
+    # this asserted that `open_now` appeared, and a mutation removing the
+    # filter while leaving the assignment sailed through it -- the set is
+    # built and then ignored, which is exactly the shape of an inert guard.
+    assert "latest = [r for r in latest" in trim, (
+        "the openable list is emptied but the engine's rows are not trimmed, "
+        "so the bridge would still open a name the screen cannot vouch for"
+    )
+    assert "open_now" in trim
+
+
+def test_a_screen_failure_still_lets_positions_close():
+    """The half that must not break.
+
+    Stopping dead would strand whatever is open -- the failure this project
+    already fixed once, when nine positions sat unclosable on a funded demo
+    account. Closing is gated on what the broker holds, never on the screen.
+    """
+    import inspect
+
+    source = inspect.getsource(app._command_trade_capital)
+    # The early return must not fire on a screen failure, or the pass ends
+    # before anything can be closed.
+    guard = source[source.index("if not tickers and not screen_failed:"):]
+    assert guard.startswith("if not tickers and not screen_failed:"), guard[:80]
+
+    # Held instruments are still priced, which is what makes a close possible.
+    assert "_dealing_tickers(tickers, latest, held)" in source
+
+
+def test_a_screen_failure_raises_a_notification():
+    """Silence is the one unacceptable response.
+
+    The owner asked to be told when the system cannot decide for itself, and
+    a system that quietly narrows to closing-only looks identical to a quiet
+    market.
+    """
+    import inspect
+
+    source = inspect.getsource(app._command_trade_capital)
+    assert "_send_screen_halt" in source
+
+    mail = inspect.getsource(app._send_screen_halt)
+    # It must say what is still happening, or it reads as a full stop.
+    assert "still closed" in mail or "still priced" in mail
+    assert "no new position" in mail.lower()

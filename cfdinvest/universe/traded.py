@@ -48,6 +48,23 @@ class TradedUniverse:
     as_of: str | None = None
     stale: bool = False
 
+    @property
+    def screen_failed(self) -> bool:
+        """The screen was meant to answer and could not.
+
+        Distinct from simply using the configured list. With
+        ``follow_screen`` off, ``market.tickers`` is a deliberate human
+        choice and trading it is correct. With it ON, a fall back to that
+        list means the screen has failed -- and continuing to OPEN positions
+        from a list somebody set at some unremembered point is inferring
+        that it is still the right one, which is precisely what this module
+        exists to stop being done silently.
+
+        Closing is unaffected: what may be closed is whatever the broker
+        says is open, and refusing an exit is never the safe direction.
+        """
+        return self.source.startswith("config (")
+
     def describe(self) -> str:
         age = f", chosen {self.as_of[:10]}" if self.as_of else ""
         warning = " -- STALE" if self.stale else ""

@@ -1166,8 +1166,31 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     from cfdinvest.schedule.market_calendar import describe
 
     account_name = getattr(args, "account", None)
-    tickers = _traded(app_config, account_name)
-    if not tickers:
+
+    # What may be OPENED, and whether the answer can be trusted.
+    #
+    # A screen failure used to fall through to `market.tickers` and carry on
+    # trading it. That list is a deliberate human choice when `follow_screen`
+    # is off, and something else entirely when the screen was meant to answer
+    # and could not: continuing to open positions from a list somebody set at
+    # an unremembered point is inferring it is still right. The owner's call,
+    # 2026-09-01 -- run autonomously and say so when it cannot.
+    #
+    # Refusing to OPEN is the whole of it. Existing positions are still
+    # priced and still closed on their own terms, because what may be closed
+    # is whatever the broker says is open and refusing an exit is never the
+    # safe direction.
+    from cfdinvest.universe.traded import traded_universe
+
+    universe = traded_universe(app_config, account_name)
+    screen_failed = universe.screen_failed
+    tickers = [] if screen_failed else list(universe.names)
+    if screen_failed:
+        logger.warning(
+            "Capital: the screen could not answer (%s); opening nothing this "
+            "pass and closing on the engine's own terms", universe.source,
+        )
+    if not tickers and not screen_failed:
         return EXIT_OK
 
     settings = dealing_module.DealingConfig.from_env()
@@ -1240,6 +1263,23 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
 
     # An exit the engine has already taken has to reach the broker.
     latest = _with_exits(latest, held)
+
+    # With the screen unable to answer, nothing NEW may be opened. The engine
+    # still computed intent -- it ran against whatever universe it had -- so
+    # its rows are trimmed to what the account already holds. Anything else
+    # would be opened on a universe nobody chose.
+    if screen_failed:
+        open_now = {str(getattr(p, "epic", "") or "") for p in (held or ())}
+        before = len(latest)
+        latest = [r for r in latest if str(r.get("ticker") or "") in open_now]
+        if before != len(latest):
+            logger.warning(
+                "Capital: dropped %d intended position(s) the screen cannot "
+                "vouch for; only held instruments may be acted on",
+                before - len(latest),
+            )
+        if not getattr(args, "no_email", False):
+            _send_screen_halt(universe, account, smtp, transport)
 
     # Price the traded list *and* everything actually held. These are not
     # the same set, and treating them as one stranded nine positions on a
@@ -1513,6 +1553,45 @@ def _send_capital_trades(
         )
     except Exception as error:  # noqa: BLE001 - a lost mail is not an outage
         logger.warning("Could not send the Capital trade mail: %s", error)
+
+
+def _send_screen_halt(universe, account, smtp, transport) -> None:
+    """Say that the system is running blind, and what it is still doing.
+
+    Not a bridge halt: the account is not in disagreement with the record,
+    and existing positions are being managed normally. What has failed is
+    the thing that decides what may be opened, so the useful message is
+    "no new positions until this is fixed", not "everything has stopped".
+    """
+    from cfdinvest.schedule import notify
+
+    try:
+        balance = getattr(account, "balance", None)
+        lines = [
+            "The universe screen could not answer, so no new position will "
+            "be opened until it can.",
+            "",
+            f"Source: {universe.source}",
+            f"Last usable selection: {universe.as_of or 'none on record'}",
+            "",
+            "Positions already open are unaffected. They are still priced, "
+            "still marked, and still closed on the engine's own terms -- "
+            "what may be closed is whatever the broker says is open.",
+            "",
+            "This is the system declining to trade a universe nobody chose, "
+            "rather than a fault in dealing. Check that screen-universe is "
+            "running and that its selection is being recorded.",
+        ]
+        if balance is not None:
+            lines += ["", f"Balance: {balance:,.2f} "
+                          f"{getattr(account, 'currency', '') or ''}".rstrip()]
+        notify.send(
+            _plain_message("No tradable universe on the Capital demo account",
+                           lines, smtp),
+            config=smtp, transport=transport,
+        )
+    except Exception as error:  # noqa: BLE001 - a lost mail is not an outage
+        logger.warning("Could not send the screen-halt mail: %s", error)
 
 
 def _send_bridge_halt(report, smtp, transport) -> None:

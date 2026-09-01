@@ -111,16 +111,27 @@ components.render_tiles(st, tiles)
 st.divider()
 st.subheader("Scheduler health")
 
-# What the poller is actually asked to price: the confirmed book *and* the
-# paper book. Counting only confirmed positions had this page reporting
-# "nothing is confirmed open, so there is nothing to price" while the
-# poller was pricing three instruments for the forward record every five
-# minutes -- a row that says a working job has nothing to do is how a table
-# teaches you to stop reading it.
-held = components.confirmed_open_count(data)
-paper_source = data.get("paper")
-paper_value = getattr(paper_source, "value", None) or {}
-held += int((paper_value.get("pooled") or {}).get("open") or 0)
+# What the poller is actually asked to price -- which is the ENGINE's own
+# intended positions, and nothing else.
+#
+# This counted the confirm layer plus the paper book. The confirm layer is
+# empty on this deployment (nothing is confirmed by hand) and the paper book
+# was deleted on 2026-08-30, so the count was 0 + 0 and the table reported
+# "Nothing is open in either book, so there is nothing to price" while the
+# broker held seven positions and the poller was pricing all seven.
+#
+# A row that says a working job has nothing to do is how a table teaches you
+# to stop reading it -- which is the same sentence the previous version of
+# this comment used about a different wrong source. Read what the poller
+# reads instead of guessing at it.
+try:
+    from cfdinvest.persist import intent as _intent
+
+    held = len(_intent.held_tickers(data.get("config")) or ())
+except Exception:  # noqa: BLE001 - a view must not break on this
+    # Absence named: fall back to the confirm layer, which is a real source
+    # even if it is usually empty, rather than silently reporting zero.
+    held = components.confirmed_open_count(data)
 st.caption(
     "Each job's last run is taken from the artefact it wrote where it writes "
     "one, and otherwise from the daemon's own record — the paper book writes "

@@ -101,7 +101,7 @@ def job_report(
     ``None`` means it never has, which is reported as such rather than as a
     failure -- a deployment on its first morning has not failed at anything.
 
-    ``quotes_expected`` is ``False`` when no position is confirmed open. The
+    ``quotes_expected`` is ``False`` when the engine holds nothing. The
     poller has nothing to price then, so silence is correct and reporting it
     overdue would train you to ignore this table.
 
@@ -124,8 +124,8 @@ def job_report(
             if not quotes_expected:
                 rows.append(JobRow(
                     name, schedule, last, None, "pass",
-                    "Nothing is open in either book, so there is nothing "
-                    "to price.",
+                    "The engine holds nothing, so there is nothing to "
+                    "price.",
                 ))
                 continue
             next_due = None if last is None else last + pd.Timedelta(minutes=interval)
