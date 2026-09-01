@@ -14,7 +14,6 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from cfdinvest.schema import TICKER, TIMESTAMP  # noqa: E402
-from cfdinvest.livehelper import t212_instruments
 from cfdinvest.ui import components, explain, theme  # noqa: E402
 
 data = components.page_setup(
@@ -137,6 +136,17 @@ else:
     ordered["_confidence"] = confidences
     ordered = ordered.sort_values("_confidence", ascending=False, na_position="last")
 
+    # Resolved once for the table rather than per row: it reads the traded
+    # universe, and asking it forty times a render is forty reads of the same
+    # selections file. None means "could not tell", which is reported by
+    # saying nothing rather than by marking every row.
+    try:
+        from cfdinvest.universe.traded import traded_universe
+
+        openable = set(traded_universe(data["config"]).names or ())
+    except Exception:  # noqa: BLE001 - a view must not break on this
+        openable = None
+
     header = st.columns([1.1, 0.9, 1.5, 0.7, 3.2])
     for cell, label in zip(header, ("", "", "Confidence", "Size", "Why")):
         cell.caption(f"**{label}**" if label else "")
@@ -189,14 +199,27 @@ else:
             else f":grey[{explain.reason(row.get('reason'))}]"
         )
 
-        # Only where it would stop you acting. Eleven of the configured
-        # instruments have no CFD at all, and that is worth a line; "Apple,
-        # confirmed" on every row is noise.
-        held = t212_instruments.mapping_for(str(ticker))
-        if not held.tradable:
-            why.caption(":orange[Not tradable on Trading 212.]")
-        elif not held.exact:
-            why.caption(f"Trading 212: {held.name} ({held.relationship})")
+        # Whether this instrument is one the daemon may actually OPEN.
+        #
+        # This used to report Trading 212 tradability -- "Not tradable on
+        # Trading 212" -- from the days when a person placed these by hand
+        # there. Orders have gone to Capital automatically since 2026-08-27,
+        # so the line named a broker this page has nothing to do with.
+        #
+        # It is NOT replaced with a Capital equivalent, because there is no
+        # honest one to give: `capital_venue` returns available=True for a
+        # ticker that does not exist, so the field is a default rather than a
+        # verified fact and a green "tradable at Capital" on every row would
+        # be a confident claim about nothing.
+        #
+        # What IS checkable is whether the screen has selected the name. A
+        # signal on an unselected instrument will not be opened however good
+        # it looks, and that is the thing that would stop you acting.
+        if openable is not None and str(ticker) not in openable:
+            why.caption(
+                ":orange[Not in the traded selection — the screen has not "
+                "picked it, so it will not be opened.]"
+            )
 
 st.divider()
 

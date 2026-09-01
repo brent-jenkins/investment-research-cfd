@@ -226,9 +226,52 @@ with st.expander(f"Every check ({len(health.checks)})", expanded=not health.chec
 # --------------------------------------------------------------------------- #
 st.divider()
 st.subheader("Recent log")
-st.caption("The tail, newest last. The Logs page has filtering and history.")
+# There is no Logs page. This caption promised "filtering and history" on one
+# for as long as it has existed, and the app has five: Dashboard, Status,
+# Signals, Broker, Universe. Sending a reader somewhere that does not exist
+# is worse than saying plainly that the tail is all there is.
+st.caption(
+    "The tail of the application log, newest last. Reading is bounded at "
+    "both ends: `sources._tail` seeks to the end of the file and never reads "
+    "more than 4MB however large it grows, and the controls below decide how "
+    "much of that is shown."
+)
 
 errors = data["errors"]
 if not components.render_absent(st, errors, "The log"):
     lines = list(errors.value or [])
-    st.code("\n".join(lines[-40:]) or "(nothing recorded)", language="text")
+    if not lines:
+        st.code("(nothing recorded)", language="text")
+    else:
+        # Paged rather than dumped. The reader already tails safely, but a
+        # few hundred lines in one block is unreadable and the interesting
+        # line is rarely the last one.
+        controls = st.columns([1, 1, 2])
+        window = controls[0].select_slider(
+            "Lines", options=[20, 40, 80, 160, 320], value=40,
+            key="status_log_window",
+        )
+        needle = controls[1].text_input(
+            "Filter", value="", key="status_log_filter",
+            placeholder="e.g. WARNING",
+        )
+        shown = (
+            [line for line in lines if needle.lower() in line.lower()]
+            if needle else lines
+        )
+        page_count = max((len(shown) + window - 1) // window, 1)
+        page = 1
+        if page_count > 1:
+            page = controls[2].slider(
+                "Page (1 is newest)", min_value=1, max_value=page_count,
+                value=1, key="status_log_page",
+            )
+        end = len(shown) - (page - 1) * window
+        block = shown[max(end - window, 0):end]
+        st.code(chr(10).join(block) or "(nothing matched)", language="text")
+        st.caption(
+            f"Showing {len(block)} of {len(shown):,} line(s)"
+            + (f" matching `{needle}`" if needle else "")
+            + f", page {page} of {page_count}. The file holds more than is "
+            "read; this is the tail."
+        )

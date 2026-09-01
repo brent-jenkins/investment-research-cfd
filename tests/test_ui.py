@@ -3389,3 +3389,98 @@ def test_a_source_constructor_really_is_truthy():
         "Source.missing is no longer truthy on an instance -- if it became a "
         "real field, the guard above can be relaxed"
     )
+
+
+def test_the_signals_page_does_not_report_a_broker_it_does_not_use():
+    """M-live: "Not tradable on Trading 212" on a page about a Capital book.
+
+    Orders have gone to Capital automatically since 2026-08-27. The line
+    named a broker this page has nothing to do with, and did so on many rows
+    at once.
+    """
+    source = (Path(__file__).resolve().parents[1] / "cfdinvest" / "ui" /
+              "views" / "02_Signals.py").read_text(encoding="utf-8")
+
+    # Code, not prose. The page carries a comment explaining why the old line
+    # went, and a test that flagged its own explanation could only be fixed
+    # by deleting the explanation -- which is the second time that shape has
+    # come up today.
+    code = " ".join(
+        line for line in source.splitlines() if not line.strip().startswith("#")
+    )
+    assert "Trading 212" not in code
+    assert "t212_instruments" not in code
+
+
+def test_the_signals_page_reports_something_it_can_actually_check():
+    """And does not simply swap one unverified broker claim for another.
+
+    capital_venue returns available=True for a ticker that does not exist,
+    so a "tradable at Capital" badge would be a confident claim about
+    nothing. Selection by the screen is checkable and is the thing that
+    would actually stop a signal being acted on.
+    """
+    source = (Path(__file__).resolve().parents[1] / "cfdinvest" / "ui" /
+              "views" / "02_Signals.py").read_text(encoding="utf-8")
+
+    assert "traded_universe" in source
+    assert "Not in the traded selection" in source
+    # Absence stays absence: if the universe cannot be read, no row is
+    # marked, rather than every row being marked ineligible.
+    assert "openable = None" in source
+    assert "openable is not None and" in source
+
+
+def test_no_page_points_at_a_page_that_does_not_exist():
+    """M-live: the Status page promised "the Logs page has filtering and
+    history". There is no Logs page and never has been.
+
+    Checked against the pages that actually exist rather than against a
+    hard-coded list, so adding one later cannot make this stale in the other
+    direction.
+    """
+    views = Path(__file__).resolve().parents[1] / "cfdinvest" / "ui" / "views"
+    existing = {p.stem.split("_", 1)[-1].lower() for p in views.glob("*.py")}
+
+    offenders = []
+    for page in sorted(views.glob("*.py")):
+        # Code, not prose -- for the third time today. A comment may name the
+        # thing it is explaining the absence of, and a test that flags its own
+        # explanation is fixable only by deleting the explanation.
+        code = " ".join(
+            line for line in page.read_text(encoding="utf-8").splitlines()
+            if not line.strip().startswith("#")
+        )
+        for named in ("Logs page", "Trades page", "Journal page", "Risk page"):
+            if named in code and named.split()[0].lower() not in existing:
+                offenders.append(f"{page.name} -> {named}")
+    assert not offenders, f"pages referred to that do not exist: {offenders}"
+
+
+def test_the_log_view_is_paged_rather_than_dumped():
+    """A few hundred lines in one block is unreadable, and the interesting
+    line is rarely the last one.
+
+    The reader was already safe -- _tail seeks to the end and caps the read
+    at 4MB -- so this is about what is shown, not what is loaded.
+    """
+    source = (Path(__file__).resolve().parents[1] / "cfdinvest" / "ui" /
+              "views" / "01_Status.py").read_text(encoding="utf-8")
+
+    assert "status_log_window" in source
+    assert "status_log_page" in source
+    assert "status_log_filter" in source
+    # And it still says the tail is a tail, so nobody reads a filtered page
+    # as the whole history.
+    assert "this is the tail" in source
+
+
+def test_the_log_reader_never_loads_a_whole_file():
+    """The property the paging rests on, asserted rather than assumed."""
+    import inspect
+
+    from cfdinvest.ui import sources
+
+    tail = inspect.getsource(sources._tail)
+    assert "seek" in tail, "the reader does not seek; it may read from the start"
+    assert "4_000_000" in tail or "4000000" in tail, "no cap on the read window"
