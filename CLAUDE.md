@@ -826,10 +826,41 @@ check the project has — no name breached the 20%-of-gross concentration cap,
 and `max_per_sector = 5` did not bind because the sector map files
 semiconductors and software separately.
 
-Left as a thread rather than pursued. A correlation-based cap is the
-principled version of the sector cap, and the sector cap was measured on
-2026-08-28 to buy nothing it was credited with: a rank-matched control
-ignoring sector entirely beat it, 0.75 against 0.65. The prior is poor.
+**And the correlation thread is closed too, on the sharpest possible
+grounds: the correlation was not there beforehand.** The owner's framing was
+that a static map cannot express something time-varying — semis and software
+are one trade sometimes and separate at others. Both halves measured off the
+engine's own rolling correlations.
+
+The description is exactly right. Semis against software runs a median 0.32
+with a p10 of 0.03 and a p90 of 0.56 — sometimes unrelated, sometimes nearly
+one position. And the sector split is real on average: semis correlate 0.57
+with each other against 0.32 with software, a genuine 0.25 gap, so the
+taxonomy is not wrong, only too slow.
+
+But it is not actionable, and this is the part that settles it:
+
+    pair          24 Jan   median    p90   percentile of own history
+    NVDA/AVGO       0.47     0.64   0.79        21%
+    NVDA/UBER       0.12     0.39   0.64        19%
+    SHOP/UBER       0.26     0.46   0.70        21%
+    PLTR/SHOP       0.65     0.49   0.71        83%
+
+NVDA and AVGO — the pair that fell 11.0% and 11.5% together — sat at **0.47
+against their own median of 0.64, the 21st percentile**. Two of ten pairs
+were in the top fifth. A correlation cap inspecting that book on the Friday
+would have called it well diversified.
+
+A common shock does not reveal existing correlation, it creates it. Any cap
+prices what was visible beforehand, and beforehand there was nothing to
+price. Worse, the two available readings pointed opposite ways that day:
+cross-group correlation was above its median (0.42 against 0.32) while
+semis-within was below its (0.46 against 0.57), so whichever the cap was
+built on it would have said the wrong thing.
+
+The older reason still stands underneath: the sector cap was measured on
+2026-08-28 to buy nothing it was credited with, a rank-matched control
+ignoring sector entirely beating it 0.75 against 0.65.
 
 **The obstacles, kept because they still apply to anyone reopening this:**
 
