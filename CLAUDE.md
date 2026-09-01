@@ -672,6 +672,39 @@ quoting the luckiest half of the distribution.
 rolling three-month windows are negative, so it fires about a tenth of the
 time rather than routinely.
 
+**Month to month the book is wildly varied, and the gains are extremely
+concentrated.** Asked on 2026-09-01 and never measured before — the file
+carried yearly figures and nothing shorter, while a month is the unit a
+person actually checks in on.
+
+    2023          +13.8   +3.1  -10.2   +8.9  +36.2   -2.4   -0.6  +13.9   +0.6  +54.6  +25.8  = +237.7%
+    2024   +18.2   -6.1   +5.1  +18.1   -6.9   +7.2   +3.8   +6.5  +23.0   -1.0   -0.5   +9.5  = +101.1%
+    2025   -35.1  +39.7   +7.6   +2.9   +5.7  +59.3  +44.7  +19.1  +13.6  +18.2  +25.6   -1.1  = +385.8%
+    2026   +25.4   -2.2   -3.8  +20.7  +46.6   -2.9   +9.9   -4.8                             = +111.9%
+
+Best month +59.3%, worst −35.1%, median +7.6%, sd 18.5 against a mean of
+11.8. The interquartile range alone spans −0.8% to +19.9%. **The worst month
+sits inside the best year** — January 2025 lost 35.1% and 2025 returned
+385.8% — which is the single most useful fact here for reading a bad patch.
+
+Concentration is the finding. Total growth over the span is 69.9x; drop the
+best month and it is 43.9x, the best three 19.4x, the best six **7.0x**. Six
+months out of 43 carry roughly nine-tenths of the compounding. That is the
+monthly echo of the trip-level result already recorded — 20% of trips
+produce all the profit — and it means the return depends on being in the
+market when a handful of months arrive rather than on grinding.
+
+It is rarely negative for long: 30 of 43 months positive, the longest run of
+consecutive losing months is **two**, 3 of 41 rolling three-month windows are
+negative (7%) and 1 of 38 six-month windows (3%). So a single down month
+carries no information — nearly a third of them are down — while a negative
+three-month stretch is genuinely unusual, which is what makes
+`review_flat_months = 3` the right horizon.
+
+One path, and the block-bootstrap work says the realised sequence was a mild
+draw, so the true month-to-month spread is likely wider than this. The 2026
+row is eight months.
+
 **The currency pairs now come from Capital too, and that closes the feed
 switch.** They were the last input still taken from yfinance intraday,
 against the standing instruction of one source of truth — and not a small
