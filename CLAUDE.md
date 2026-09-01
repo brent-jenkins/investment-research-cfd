@@ -826,6 +826,86 @@ check the project has — no name breached the 20%-of-gross concentration cap,
 and `max_per_sector = 5` did not bind because the sector map files
 semiconductors and software separately.
 
+**You cannot cut losing trades, and the reason closes that question for
+good.** Asked how to reliably cut losers, since they look like a drag. They
+are one — 2,099 losers cost 23.6M against 2,076 winners earning 38.7M, 61%
+of gross — but they are not cuttable.
+
+    once a trip is already down at bar N
+      bar   down trips   end up losing   mean final   return if held on
+        1        2,015           51.1%       +3,006             +0.13%
+        2        1,420           44.3%       +6,518             +0.10%
+        3        1,212           41.7%       +8,377             +0.14%
+        4          981           38.2%      +11,314             +0.04%
+
+**A position that is currently down has positive expected P&L** — +3,006 at
+bar one, rising to +11,314 by bar four — and a positive return from that
+moment to its own exit at every bar checked. Cutting destroys value wherever
+you could do it. Same conclusion the minute study reached from features.
+
+The drag is also not where it feels. By duration: 1–2 bars loses 5.3M on
+1,621 trips, 3–4 loses 1.7M, 5–7 loses 2.4M, while 8–15 earns 5.9M and 16+
+earns 18.7M. The median loser is already held **two bars** — the engine cuts
+as fast as it can. The 5.3M is the cost of having *opened* those trades, not
+of holding them. The drag is at entry.
+
+**And no confidence band loses money**, which retires an idea and completes a
+retraction. On the decision bar:
+
+    band          n     total P&L      mean   win rate
+    0.21-0.37   836    +2,095,532    +2,507      45.8%
+    0.37-0.42   835    +1,984,586    +2,377      50.9%
+    0.42-0.49   835    +2,946,305    +3,529      49.3%
+    0.49-0.67   835    +3,236,911    +3,877      50.5%
+    0.67-1.00   835    +4,870,056    +5,832      52.0%
+
+The top band earns 2.3x the bottom and **every band is profitable**, so there
+is nothing to cut — which is why raising the entry gate costs money. The
+2026-08-30 figure of "the bottom bucket loses GBP76k at 41.6%" was measured
+on the fill bar; on the decision bar that bucket **earns 2.1M at 45.8%**. The
+retraction was right and the corrected picture is materially different.
+
+**Screened every per-instrument series the lake holds, used or not**, against
+trip P&L on the decision bar (n=4,176, so a standard error near 0.015):
+
+    return, previous 20 bars     +0.0844      bar range (high-low)/close  -0.0601
+    bars since session open      +0.0719      spread (bp)                 -0.0443
+    hour of day (UTC)            +0.0703      realised volatility         -0.0147
+    return, previous bar         +0.0450      volume (tick count)         +0.0102
+    return, previous 5 bars      +0.0318      price level                 -0.0028
+    entry confidence             +0.0250      average pairwise corr       +0.0231
+
+Momentum over 20 bars is the strongest thing in the lake and beats
+confidence, which is consistent with the crude momentum control already
+recorded at 85.2% with no losing year and still not followed up. Confidence's
+reading is attenuated by construction — positions are already sized by it, so
+P&L embeds it — and momentum and hour-of-day carry no such circularity.
+
+**`confidence_sizing_strength = 0.75` is the strongest candidate found and
+passes both controls.** Sizing is the only lever that acts before a trade is
+known to be bad, and the sweep is monotone: 0.0 gives 128.8%, 0.5 gives
+257.6%, 0.75 gives 307.6%, 1.0 gives 325.2%, 1.5 gives 346.5%.
+
+    arm                                CAGR       H1       H2   maxDD    lev
+    strength 0.5 (configured)        257.7%   235.0%   282.3%   41.9%   1.66
+    exposure 1.058x, strength 0.5    272.0%   243.3%   303.3%   41.3%   1.69
+    strength 0.75                    307.7%   301.2%   314.5%   44.1%   1.75
+
+    differential   whole +35.8pp   H1 +57.9pp   H2 +11.3pp
+
+Positive in both halves and both above the 8pp floor, with the
+leverage-matched control taking only 14.3pp of the 50pp, so about 36pp
+belongs to the rule. Calmar 6.15 to 6.98. **Not adopted without the owner's
+decision**, because it is a live parameter and changing it restarts the
+forward test. The honest caution is that the differential decays hard across
+halves, +57.9pp to +11.3pp, and H2 only just clears the floor.
+
+**`confidence_sizing_floor` is inert.** 0.0, 0.10, 0.25 and 0.50 return
+identical results to the decimal. With a non-negative strength and confidence
+at or above the entry bar the multiplier is always at least 1.0, so the floor
+can never bind. It is dead configuration, and this file's own warning about
+inert arms reporting clean nulls applies to it.
+
 **Scaling down into a gap rather than closing was also measured, and it
 fails on arithmetic rather than logic.** The owner's proposal, and the
 best-formed of the family: trim every position proportionally into the
