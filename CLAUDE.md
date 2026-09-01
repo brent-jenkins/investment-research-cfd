@@ -826,6 +826,54 @@ check the project has — no name breached the 20%-of-gross concentration cap,
 and `max_per_sector = 5` did not bind because the sector map files
 semiconductors and software separately.
 
+**Scaling down into a gap rather than closing was also measured, and it
+fails on arithmetic rather than logic.** The owner's proposal, and the
+best-formed of the family: trim every position proportionally into the
+weekend, restore on Monday. It is not selective, so the mean reversion that
+kills every stop does not apply to it, and it is a resize rather than a
+round trip, so it does not reset the time stop or the cooldown.
+
+    weekends only, 183 gaps
+      gap P&L held through          -536,405
+      notional held into gaps    912,015,189
+      one crossing of the spread     996,695   (10.93bp)
+
+      scale to   loss avoided   spread paid          net
+          0.50        268,203      -996,695     -728,492
+          0.00        536,405    -1,993,390   -1,456,985
+
+**The entire weekend gap loss over 3.65 years is smaller than one crossing
+of the spread**, and trimming costs two. Over every gap the average loses
+9.5bp of notional against 22–26bp to trim out and back. Both sides scale
+linearly with the fraction, so no scale factor changes the answer; it loses
+by about 2.3x throughout.
+
+**Conditioning on a signal does not rescue it**, and the way it fails is
+instructive. Ranked by the engine's own volatility estimate — the one input
+here with measured power over magnitude, at +0.274 — the top decile appears
+to pay: mean gap −38.24bp against 26.08bp to trim. It does not survive.
+
+    top decile, 88 gaps: mean −38.24bp, median −16.00bp, cost 26.08bp
+      worst five           −1257, −626, −600, −444, −439
+      excluding the worst  −24.24bp   (now below the 26.08bp cost)
+      excluding worst three −10.38bp
+      gaps that lose at all      55%
+      first half +60.34bp        second half −67.24bp
+
+One observation carries it. Remove the single worst gap and the average loss
+falls below the cost of trimming; only 55% of the "dangerous" decile loses
+anything; and the sign reverses across halves, which is the same test that
+retired `rebalance_threshold`.
+
+**The general form, which is the useful part:** gap losses are not
+distributed across identifiably risky nights, they are concentrated in a few
+unforecastable events. To catch the one that matters you must pay the
+premium on all eighty-eight, and the other eighty-seven do not lose enough
+to cover it. That is why every member of this family fails — the automatic
+pauses, the stops, the correlation cap, the overnight exit and now the
+proportional trim. **The tail is rare, large and unforecastable, so any
+per-gap insurance premium exceeds the average payout.**
+
 **And the correlation thread is closed too, on the sharpest possible
 grounds: the correlation was not there beforehand.** The owner's framing was
 that a static map cannot express something time-varying — semis and software
