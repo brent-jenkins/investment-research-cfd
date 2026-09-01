@@ -705,6 +705,58 @@ One path, and the block-bootstrap work says the realised sequence was a mild
 draw, so the true month-to-month spread is likely wider than this. The 2026
 row is eight months.
 
+**Losses come from gaps; gains come from trading.** Asked what happened in
+the best and worst weeks, and the answer generalises. Read from the engine's
+own per-bar decomposition, whose five components sum to the equity change to
+the pound in every week checked.
+
+    bucket        weeks        total       gap  intraday   spread  slippage
+    worst 10%        19   -8,708,225      83%        3%      10%        3%
+    worst 25%        47  -10,911,932      78%        3%      14%        5%
+    best 25%         47   20,653,333      17%       94%      -8%       -3%
+    best 10%         19   16,008,018      29%       80%      -7%       -2%
+
+(The middle 50% is omitted: its total is near zero, so component shares blow
+up and say nothing.) At the level of individual weeks, 45% of losing weeks
+lost more to gaps than to intraday moves against only 28% of winning weeks
+that gained more from gaps.
+
+The worst week in the record makes it concrete. 25–31 January 2025, −21.0%:
+gap −170,184 of a −175,296 move, while **intraday was positive at +6,815**.
+During the hours the book could act it made money; the whole loss arrived
+between one bar's close and the next bar's open. The best week, 10–16 May
+2025 at +43.1%, was 66% gap and 40% intraday with every position long.
+
+Three things follow.
+
+**The tail risk is structural rather than a signal failure.** Nothing about
+the entry or exit logic went wrong in the worst week. The book was hit while
+it could not react.
+
+**It supplies the missing mechanism for stops being monotonically harmful**,
+which this file records as a measured fact without explaining why. A stop
+cannot protect against a gap through it — the engine carries `gap_through`
+on every trade row. Against gap risk a stop pays its cost and buys nothing.
+
+**Costs bite hardest when losing.** Spread is 10–14% of the loss in bad
+weeks and a −7% drag on gains in good ones, because bad weeks are
+high-turnover weeks.
+
+The same correlated cluster drives both extremes — NVDA, AVGO, MU and PLTR
+held long made the best week and lost the worst — which is the strategy's
+exposure rather than a defect in it.
+
+**One open question, flagged and not acted on.** The obvious response is to
+cut overnight exposure, and that was measured and rejected: flattening
+before every non-trading day cost 10.3pp of CAGR for no drawdown reduction
+and 275 extra round trips. But that was measured on 2026-08-29 on yfinance
+bars at a flat 5bp — the superseded basis — and it was not in the
+five-parameter re-measurement queue. With gaps now shown to carry 83% of
+tail losses and spread charged at 2.3x the figure that rejection assumed, it
+is a legitimate candidate for re-measurement. It is not obviously going to
+help: gaps also supply 29% of the best decile's gains, so removing that
+exposure removes both sides of it.
+
 **Weekly, the same shape harder, and it puts a number on how long a forward
 result takes to mean anything.** 190 complete weeks: 54% positive — a coin
 flip — median +0.6%, quartiles −3.3% to +9.3%, middle 90% spanning −10.9% to
