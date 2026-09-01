@@ -900,6 +900,45 @@ decision**, because it is a live parameter and changing it restarts the
 forward test. The honest caution is that the differential decays hard across
 halves, +57.9pp to +11.3pp, and H2 only just clears the floor.
 
+**Validated further on 2026-09-01, and it survives every test this project
+knows how to run.** Asked whether more could be done locally before deciding.
+Three tests, each able to kill it.
+
+*Every period.* Ahead in **3 of 3 full years** — 2024 +34.5pp, 2025 +32.9pp,
+2026 +15.9pp — and in 10 of 14 quarters, the four exceptions being −4.7,
+−0.2, −0.2 and −8.1. The quarterly edges are small and compound into the
+annual ones, which is what a real per-trade effect looks like.
+
+*Distributions rather than point estimates*, the test that retracted two
+arguments about `rebalance_threshold` in an afternoon:
+
+    arm      ret p10   ret p50    ret p90   DD p50   DD p90
+    0.50       1870%    10518%     51492%    45.0%    58.8%
+    0.75       2887%    17062%     88028%    46.4%    59.9%
+
+0.75 beats 0.50's median return on **63.5%** of resampled paths against a
+50% coin flip, and **even the tenth percentile improves**, 1870% to 2887%.
+Drawdown is modestly worse — p50 +1.4pp, with 56.3% of paths beyond 0.50's
+median — so the gain is not free, but it is small beside the return.
+
+*Not fitted to the universe size.* At targets 8, 10, 12 and 16 the
+difference is +47.4pp, +50.0pp, +32.9pp and +42.7pp: positive everywhere and
+everywhere clear of the floor.
+
+Set beside the change refused two days earlier, which is the useful
+comparison:
+
+                            rebalance 1.0        strength 0.75
+    leverage control     half was exposure     +35.8pp differential
+    split-half            +19.1 then +2.6      +57.9 then +11.3
+    bootstrap return              56.2%                  63.5%
+    bootstrap drawdown     coin flip 48.5%     56.3%, modestly worse
+    every year                  untested                 3 of 3
+    universe robustness         untested                 4 of 4
+
+What remains is irreducible rather than untested: it is one dataset, and
+drawdown is genuinely a little worse.
+
 **`confidence_sizing_floor` is inert.** 0.0, 0.10, 0.25 and 0.50 return
 identical results to the decimal. With a non-negative strength and confidence
 at or above the entry bar the multiplier is always at least 1.0, so the floor
