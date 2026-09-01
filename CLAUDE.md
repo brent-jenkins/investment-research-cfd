@@ -498,6 +498,49 @@ The forward record on the demo account restarts from today for the same
 reason: the account is now trading a different configuration from the one it
 ran on 31 August.
 
+**Capital's 5x share-CFD cap is not binding, so a pro account with 10x
+would change nothing.** Asked whether higher leverage would help.
+
+    gross leverage as shipped
+      mean 1.75x   p50 1.67x   p90 3.47x   p99 3.60x   max 4.15x
+      bars at or above  5x:  0.00%
+      bars at or above 10x:  0.00%
+
+The book never reaches 5x. What binds is **our own `max_leverage = 3.5`**
+together with the per-instrument concentration cap, both well inside the
+broker's limit. Raising the broker's ceiling buys headroom the system does
+not use, and the demo account's size would not qualify for pro terms anyway.
+
+**And more exposure would not help if it were taken.** Sweeping
+`exposure_per_unit_size`, which is available today with no change of
+account:
+
+    exposure  mean lev     CAGR   maxDD  Calmar  p90 DD  P(DD>75%)
+         2.0      1.37   260.4%   35.4%    7.35   51.5%       0.1%
+         4.0      1.75   307.6%   44.1%    6.97   59.9%       0.7%
+         6.0      1.95   315.8%   48.0%    6.58   64.4%       1.7%
+         8.0      2.09   298.4%   50.4%    5.92   67.8%       3.2%
+        12.0      2.22   264.1%   54.6%    4.83   72.4%       6.7%
+
+Return is **hump-shaped rather than linear**: it peaks near 6.0 and falls
+away, so tripling exposure from 4 to 12 *reduces* return to 264% while
+pushing drawdown to 54.6%. The +8.2pp from 4.0 to 6.0 sits on the 8pp floor
+and is not evidence.
+
+Realised leverage is also heavily damped — exposure 2 to 12 moves mean gross
+only 1.37x to 2.22x — because the caps bind long before the nominal setting
+does. Asking for more exposure mostly does not produce it.
+
+**Calmar declines monotonically as exposure rises** (7.35, 6.97, 6.58, 5.92,
+4.83), so the risk-adjusted optimum sits *below* the configured value. The
+genuine choice is exposure 2.0 at 260.4%/−35.4% against 4.0 at
+307.6%/−44.1%: 47pp of return for 8.7pp of drawdown, both outside the noise
+floor. That is a preference about risk appetite rather than a measurement
+saying one is right, and it is left at 4.0 pending the owner's view.
+
+Ruin is not near at any of these — P(drawdown > 90%) is 0.0% except at
+exposure 12.0 where it is 0.1% — precisely because the caps damp the dial.
+
 **The momentum lead is closed on its third appearance, and my own screen was
 what made it look alive.** It surfaced as an 85.2% control arm on
 2026-08-30, again as the strongest series in the lake at +0.0844 earlier
