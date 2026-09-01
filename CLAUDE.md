@@ -498,8 +498,60 @@ The forward record on the demo account restarts from today for the same
 reason: the account is now trading a different configuration from the one it
 ran on 31 August.
 
-**Capital's 5x share-CFD cap is not binding, so a pro account with 10x
-would change nothing.** Asked whether higher leverage would help.
+**Capital's 5x cap and higher leverage — the first answer here was wrong and
+is corrected below.** Asked whether a pro account's 10x would help.
+
+**RETRACTED**: "the 5x cap is not binding, so 10x would change nothing."
+That measured the backtest's MEAN book leverage of 1.75x and concluded there
+was slack. It answered a different question from the one asked. Capital's 5x
+is a *margin factor* — 20% margin per position — while 1.75x is *book
+leverage*, gross notional over equity. They are not the same quantity, and
+the mean is not the peak.
+
+**Measured on the live account, 2026-09-01:**
+
+    balance                4,970.90
+    max_leverage (ours)          3.5     ceiling 17,398
+    actual gross              22,374     4.50x balance, 29% OVER the ceiling
+    margin in use              3,312     66.6% of balance
+    gross-limit refusals in three days:  0
+
+    margin needed for that book   at  5x:  4,475  = 90% of balance
+                                  at 10x:  2,237  = 45% of balance
+
+So the account runs at **4.50x gross with two-thirds of its margin
+committed**, which is not slack. The backtest agrees once the right
+statistic is read: p90 3.47x and max 4.15x against a 1.75x mean.
+
+**The gross ceiling has never fired**, and the mechanism is structural
+rather than a bug. `bridge.plan_orders` shrinks only intents whose action is
+`open` or `resize`; a position sitting at `none` passes through untouched,
+and `rebalance_threshold = 3.0` disables resizing. So the cap bounds *new*
+exposure while a book that drifts above it stays there. That is the same
+deliberate choice as `max_open_positions` — never liquidate into a drawdown
+— but the consequence is that the stated 3.5x is not what actually runs, and
+that is worth knowing rather than assuming.
+
+**10x would help, for survivability rather than return.** It would not let
+the strategy take more risk: at 10x the margin cap permits 5x gross while
+`max_leverage` still binds at 3.5x. What it buys is roughly double the
+buffer before a forced close-out — 45% margin utilisation against 90% for
+the same book. That matters because modelled p90 drawdown is 60%, and being
+closed out partway through a drawdown the strategy would otherwise recover
+from converts a survivable loss into a permanent one.
+
+**This is the one risk in the system that nothing measured has priced**, and
+the reason is plain: the backtest has no margin model. It can hold 4.5x
+gross through a 44% drawdown because no counterparty ever asks it for
+variation margin. A live account can be closed out first. Any figure in this
+file describing drawdown tolerance is therefore an upper bound on what the
+account would actually survive.
+
+*The exposure sweep below stands and is unaffected — it asks whether the
+strategy WANTS more exposure, which is a separate question from whether the
+broker would fund it.*
+
+Asked whether higher leverage would help.
 
     gross leverage as shipped
       mean 1.75x   p50 1.67x   p90 3.47x   p99 3.60x   max 4.15x
