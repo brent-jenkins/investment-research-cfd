@@ -498,6 +498,21 @@ The forward record on the demo account restarts from today for the same
 reason: the account is now trading a different configuration from the one it
 ran on 31 August.
 
+**The mark at the change, recorded now because it is not recoverable later.**
+At 16:55 UTC on 2026-09-01, immediately after the deploy: balance
+**GBP 4,917.79**, being −82.21 against the GBP 5,000 opening (−1.64%), of
+which −291.67 realised and +209.46 unrealised, across 9 open positions.
+
+`CFD_CAPITAL_OPENING_BALANCE` stays at 5,000 and is not touched — it answers
+"if I gave you five thousand, would you make or lose money", which is a
+question about the account rather than about a strategy version. Anything
+asking how *this* configuration has done should measure from 4,917.79, and
+that figure exists nowhere else.
+
+Almost all of the −291.67 realised was accrued before today, much of it
+while the account was still mirroring the shadow book's rule set. It is not
+evidence about the strategy now running.
+
 ### What changed on 2026-08-31
 
 The day the strategy was retuned onto the feed it actually deals on, and the
