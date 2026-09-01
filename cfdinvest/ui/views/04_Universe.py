@@ -33,15 +33,16 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from cfdinvest.config import load_config  # noqa: E402
-from cfdinvest.ui import components  # noqa: E402
+from cfdinvest.ui import components, theme  # noqa: E402
 
-components.page_setup(
+_data = components.page_setup(
     st,
     "Universe",
     icon="🔭",
-    subtitle="What the screening rule would pick, beside what is actually "
-    "traded. Read-only: changing the universe stays a human act.",
+    subtitle="What the screening rule picks, and the history of what it has "
+    "picked. Read-only: the selection is recorded, never edited.",
 )
+mode = _data.get("mode", "dark")
 
 settings = load_config()
 
@@ -122,17 +123,98 @@ try:
             "number: every name eligible but unheld is a candidate to rotate "
             "into, and each rotation pays a round trip."
         )
-        import pandas as _pd
+        # Drawn rather than tabulated, because the decision is a shape: a
+        # curve, a band of sizes indistinguishable from its best, and the one
+        # taken. A table makes the reader recompute all three in their head.
+        #
+        # The band is the rule itself, not decoration -- every size whose
+        # measured CAGR falls inside it is a size the noise floor says is
+        # tied with the peak, and `size_preference` breaks the tie. Seeing
+        # which points sit in the band IS the justification.
+        sizes = sorted(curve)
+        values = [curve[k] for k in sizes]
+        best = max(values)
+        line_colour = theme.colour_for("ok", mode)
+        soft = theme.colour_for("muted", mode)
 
-        frame = _pd.DataFrame(
-            {"universe size": list(curve), "measured CAGR %": list(curve.values())}
-        ).set_index("universe size")
-        frame["within the floor of the best"] = [
-            "yes" if max(curve.values()) - v <= NOISE_FLOOR_PP else ""
-            for v in curve.values()
+        width, height = 720.0, 260.0
+        left, right, top, bottom = 44.0, 16.0, 18.0, 34.0
+        lo = min(min(values), best - NOISE_FLOOR_PP)
+        hi = max(values)
+        span = max(hi - lo, 1e-9)
+        pad = span * 0.12
+        lo, hi = lo - pad, hi + pad
+        span = hi - lo
+
+        def px(size):
+            first, last = sizes[0], sizes[-1]
+            reach = max(last - first, 1e-9)
+            return left + (size - first) / reach * (width - left - right)
+
+        def py(value):
+            return top + (hi - value) / span * (height - top - bottom)
+
+        band_top, band_bottom = py(best), py(best - NOISE_FLOOR_PP)
+        points = " ".join(f"{px(k):.1f},{py(curve[k]):.1f}" for k in sizes)
+
+        parts = [
+            f'<svg viewBox="0 0 {width:.0f} {height:.0f}" width="100%" '
+            f'role="img" aria-label="Measured annual return against universe '
+            f'size, with the band of sizes indistinguishable from the best." '
+            f'style="max-width:100%;height:auto;font:400 11px/1.3 inherit;">',
+            # The decision band, behind everything.
+            f'<rect x="{left:.1f}" y="{band_top:.1f}" '
+            f'width="{width-left-right:.1f}" height="{max(band_bottom-band_top,1):.1f}" '
+            f'fill="{soft}" opacity="0.16"/>',
+            f'<line x1="{left:.1f}" y1="{band_bottom:.1f}" x2="{width-right:.1f}" '
+            f'y2="{band_bottom:.1f}" stroke="{soft}" stroke-width="1" '
+            f'stroke-dasharray="3 3" opacity="0.55"/>',
+            # Baseline.
+            f'<line x1="{left:.1f}" y1="{height-bottom:.1f}" x2="{width-right:.1f}" '
+            f'y2="{height-bottom:.1f}" stroke="{soft}" stroke-width="1" opacity="0.35"/>',
+            f'<polyline points="{points}" fill="none" stroke="{line_colour}" '
+            f'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>',
         ]
-        frame["chosen"] = ["<-" if k == computed else "" for k in curve]
-        st.dataframe(frame, width="stretch")
+        for k in sizes:
+            inside = best - curve[k] <= NOISE_FLOOR_PP
+            chosen = k == computed
+            radius = 6.0 if chosen else 4.0
+            parts.append(
+                f'<circle cx="{px(k):.1f}" cy="{py(curve[k]):.1f}" r="{radius:.1f}" '
+                f'fill="{line_colour if inside else soft}" '
+                f'stroke="{"#0B0C10" if mode == "dark" else "#FFFFFF"}" '
+                f'stroke-width="2">'
+                f"<title>{k} instruments: {curve[k]:.1f}% a year"
+                f'{" -- inside the noise floor of the best" if inside else ""}'
+                f'{" -- CHOSEN" if chosen else ""}</title></circle>'
+            )
+            parts.append(
+                f'<text x="{px(k):.1f}" y="{height-bottom+15:.1f}" fill="{soft}" '
+                f'text-anchor="middle">{k}</text>'
+            )
+        # The chosen point is direct-labelled, so it is never identified by
+        # colour alone.
+        if computed in curve:
+            parts.append(
+                f'<text x="{px(computed):.1f}" y="{py(curve[computed])-13:.1f}" '
+                f'fill="{line_colour}" text-anchor="middle" '
+                f'style="font-weight:700;">holds {computed}</text>'
+            )
+        parts.append(
+            f'<text x="4" y="{band_top-4:.1f}" fill="{soft}">{best:.0f}%</text>'
+        )
+        parts.append(
+            f'<text x="4" y="{band_bottom+11:.1f}" fill="{soft}">'
+            f'{best-NOISE_FLOOR_PP:.0f}%</text>'
+        )
+        parts.append("</svg>")
+        st.markdown("".join(parts), unsafe_allow_html=True)
+        st.caption(
+            f"Measured annual return against universe size. The shaded band "
+            f"is the top {NOISE_FLOOR_PP:g}pp — every size inside it is tied "
+            f"with the best by the noise floor, and `{preference}` breaks the "
+            f"tie. Hover a point for its figure."
+        )
     else:
         st.warning(
             f"No size curve is configured, so the count falls back to the "
@@ -142,77 +224,71 @@ try:
 except Exception as error:  # noqa: BLE001 - a view must not break the page
     st.warning(f"The traded count could not be explained: {error}")
 
-# --- what is traded now ---------------------------------------------------- #
-st.subheader("Traded")
+# --- what is in force, and where it came from ------------------------------ #
+#
+# The list itself has moved into the history table below: a selection and the
+# selections before it are the same kind of thing, and showing the current
+# one twice invited them to disagree -- which they did, because this section
+# read `market.tickers` while the daemon traded the screen.
+#
+# What stays here is the part the table cannot carry: which source answered,
+# and whether it can be trusted.
+st.subheader("In force")
 if traded_source == "config":
     st.caption(
-        "From `market.tickers`, the fallback — either `follow_screen` is off "
-        "or the screen has recorded nothing usable. Changing it is a human "
-        "act at the command line."
+        "From `market.tickers`, the fallback — `follow_screen` is off, so "
+        "this is a deliberate human choice rather than a failure."
     )
 elif traded_source == "unreadable":
-    st.caption(
-        "The source could not be read, so this is `market.tickers` shown as "
-        "a last resort. Treat it as unverified rather than as what is traded."
+    st.error(
+        "The traded universe could not be resolved. Treat the list below as "
+        "unverified rather than as what is being traded."
+    )
+elif traded_source.startswith("config ("):
+    st.error(
+        f"**The screen could not answer** ({traded_source}). The daemon opens "
+        "nothing while this is true, and closes held positions on their own "
+        "terms. `market.tickers` is shown as a reference, not as what is "
+        "traded."
     )
 else:
     st.caption(
-        "From the **screen's daily selection**"
-        + (f", recorded {traded_as_of}" if traded_as_of else "")
+        "From the screen's daily selection"
+        + (f", recorded {str(traded_as_of)[:19]}" if traded_as_of else "")
         + ". Configuration is never rewritten — the selection is recorded as "
-        "an observation and read back, so `market.tickers` stays exactly as a "
-        "person left it and remains the fallback."
+        "an observation and read back."
     )
 if traded_stale:
     st.warning(
-        "That selection is stale. The daemon refuses a selection it cannot "
-        "trust rather than trading a list chosen weeks ago."
-    )
-st.write(", ".join(traded) if traded else "—")
-
-# Shown together deliberately: the gap between them is the thing worth
-# seeing, and this page previously showed only the second while calling it
-# the first.
-configured = list(settings.market.tickers or ())
-if traded_source not in ("config", "unreadable") and set(configured) != set(traded):
-    st.caption(
-        f"`market.tickers` currently holds {len(configured)} name(s) — "
-        + (", ".join(configured) if configured else "none")
-        + " — and is not what is being traded."
+        "That selection is stale. An old decision is still a decision; "
+        "silence about its age is the part that is not acceptable."
     )
 
-if not screens:
-    # Absent is not the same as agreeing. A page that rendered an empty
-    # drift table would read as "nothing has moved", which is a claim
-    # nobody has made.
-    st.info(
-        "No screen has been recorded yet, so there is nothing to compare "
-        "against. The monthly job runs on the first at 03:10 UTC, or "
-        "`cfdinvest-universe screen` runs it now."
-    )
-    st.stop()
+row = st.columns(3)
+row[0].metric("Instruments", len(traded))
+row[1].metric("Source", "screen" if traded_source == "screen" else "fallback")
+row[2].metric(
+    "Recorded", str(traded_as_of)[:10] if traded_as_of else "—"
+)
 
-latest = screens[-1]
-selected = list(latest.get("selected") or ())
-
-# --- the rule's answer against the traded list ----------------------------- #
-st.subheader("Drift")
+# --- where the rule and the account disagree ------------------------------- #
+#
+# Only shown when they DO disagree. With the screen followed they are the
+# same list by construction, so a section permanently reading "no drift" is
+# a section that trains you to skip it -- and the history table below already
+# marks which selection is in force.
+latest = screens[-1] if screens else {}
+selected = [str(t) for t in (latest.get("selected") or ()) if str(t)]
 joined = [t for t in selected if t not in traded]
 left = [t for t in traded if t not in selected]
 
-columns = st.columns(3)
-columns[0].metric("Screened", len(selected))
-columns[1].metric("Would join", len(joined))
-columns[2].metric("Would leave", len(left))
-
-if not joined and not left:
-    st.success("The rule's answer matches what is traded.")
-else:
+if joined or left:
+    st.subheader("Drift")
     st.caption(
-        f"As of {str(latest.get('as_of') or 'an unrecorded date')[:19]}. "
-        "One or two names a month is the normal amount of movement; "
-        "consecutive screens correlate at +0.97 to +0.99, so a small "
-        "difference is usually noise rather than news."
+        f"The latest screen ({str(latest.get('as_of') or 'undated')[:19]}) "
+        "and what is being traded are not the same list. That is expected "
+        "while a selection is being refused — for staleness or a size "
+        "mismatch — and otherwise worth explaining."
     )
     st.dataframe(
         pd.DataFrame(
@@ -240,22 +316,41 @@ st.caption(
     "moved, and one that can be edited afterwards is evidence of nothing."
 )
 
+# Names rather than counts. A count tells you something changed; the point
+# of an append-only record is being able to see WHAT changed, and "3 joined"
+# sends the reader somewhere else to find out which three.
 rows = []
-previous: set[str] = set()
+previous: list[str] = []
+live = set(traded)
 for row in screens:
-    names = set(row.get("selected") or ())
+    names = [str(t) for t in (row.get("selected") or ()) if str(t)]
+    held = set(names)
+    before = set(previous)
     rows.append({
         "as of": str(row.get("as_of") or "?")[:19],
-        "selected": len(names),
-        "joined": len(names - previous) if previous else 0,
-        "left": len(previous - names) if previous else 0,
-        "vs traded": len(names.symmetric_difference(traded)),
+        "n": len(names),
+        "instruments": ", ".join(names),
+        "joined": ", ".join(sorted(held - before)) if previous else "",
+        "left": ", ".join(sorted(before - held)) if previous else "",
+        # Marks the selection the daemon is acting on, so the reader never
+        # has to work out which row is live.
+        "in force": "yes" if held == live and live else "",
     })
     previous = names
 
 st.dataframe(
-    pd.DataFrame(rows[::-1]), hide_index=True, width="stretch"
+    pd.DataFrame(rows[::-1]), hide_index=True, width="stretch",
+    column_config={
+        "instruments": st.column_config.TextColumn(width="large"),
+        "joined": st.column_config.TextColumn(width="medium"),
+        "left": st.column_config.TextColumn(width="medium"),
+    },
 )
+if rows and not any(r["in force"] for r in rows):
+    st.caption(
+        "No recorded screen matches what is being traded, which means the "
+        "fallback is in force — see **In force** above."
+    )
 
 st.caption(
     "The pool is US large caps that are large *now*, so it is drawn with "

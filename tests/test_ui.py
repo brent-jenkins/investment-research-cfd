@@ -3228,3 +3228,61 @@ def test_the_universe_page_distinguishes_its_sources():
     for phrase in ('traded_source == "config"', "the fallback",
                    "traded_stale", "unreadable"):
         assert phrase in source, f"the page cannot express {phrase!r}"
+
+
+def test_the_screens_table_carries_names_not_only_counts():
+    """A count tells you something changed; the point of an append-only
+    record is seeing WHAT changed.
+
+    "3 joined" sends the reader somewhere else to find out which three, and
+    there is nowhere else to go -- the selections file is not on this page.
+    """
+    source = _universe_page_source()
+
+    table = source[source.index("Recorded screens"):]
+    for column in ('"instruments"', '"joined"', '"left"', '"in force"'):
+        assert column in table, f"the history table has no {column} column"
+    # The names themselves, not len().
+    assert '", ".join(names)' in table
+    assert '", ".join(sorted(held - before))' in table
+
+
+def test_the_traded_list_is_not_shown_twice():
+    """It was rendered separately from the history and the two disagreed --
+    the standalone block read market.tickers while the daemon traded the
+    screen. One list, marked in force where it sits."""
+    source = _universe_page_source()
+
+    assert "In force" in source
+    assert '"in force": "yes" if held == live' in source
+    # The old standalone dump of the traded names is gone.
+    assert 'st.write(", ".join(traded)' not in source
+
+
+def test_the_size_curve_is_drawn_with_its_decision_band():
+    """The choice is a shape -- a curve, a band of sizes tied with the best,
+    and the one taken. A table makes the reader recompute all three.
+
+    The band is the rule itself: every size inside it is indistinguishable
+    from the peak at the noise floor, and size_preference breaks the tie.
+    """
+    source = _universe_page_source()
+
+    assert "<svg" in source and "polyline" in source
+    assert "NOISE_FLOOR_PP" in source
+    # The band, and the chosen point labelled rather than identified by
+    # colour alone.
+    assert "band_top" in source and "band_bottom" in source
+    assert 'holds {computed}' in source
+    # Hover carries the figures, so the numbers are not lost with the table.
+    assert "<title>" in source
+
+
+def test_the_chart_is_theme_aware():
+    """It renders on both surfaces. A colour picked for one is unreadable on
+    the other, and this page is read in whichever the operator chose."""
+    source = _universe_page_source()
+
+    assert 'theme.colour_for("ok", mode)' in source
+    assert 'theme.colour_for("muted", mode)' in source
+    assert 'mode == "dark"' in source
