@@ -789,6 +789,48 @@ is simply a stop with a wider spread.
 Untested and deliberately left so: overnight *profit-taking*, and overnight
 entries. Both are different hypotheses and neither follows from this one.
 
+**And the book that took the hit was right, which is worth recording because
+the instinct is to assume otherwise.** Asked what was held into that weekend
+and whether the system chose well.
+
+    name    side    units    notional   conf   Fri->Mon        P&L
+    PLTR    long   7390.5     583,738   0.60      -3.6%    -21,026
+    UBER    long   7096.6     486,647   0.37      -0.1%       -674
+    SHOP    long   4798.8     516,859   0.38      -1.5%     -7,966
+    NVDA    long   2696.1     307,964   0.37     -11.0%    -42,437
+    AVGO    long   1229.5     240,733   0.39     -11.5%    -34,685
+                                                 total    -106,788
+    gross 2,135,941 = 2.56x equity, or −12.8% of the book over one weekend
+
+Every name was in a confirmed uptrend going in — AVGO +8.5% over a
+fortnight and +42.2% over three months, PLTR +17.1% and +76.1%, NVDA +4.7%
+and +1.5%. A trend follower long that complex was doing exactly what it is
+built to do. There was no price information about what was coming, news
+predicts direction at the chance rate, and the book exited in order over the
+following week: UBER Monday, SHOP Tuesday, AVGO Wednesday, NVDA and PLTR by
+Friday. No panic and no doubling down.
+
+**Weekend leverage is not the flaw either.** Over 36,619 gaps, weekend moves
+are 1.08x the median weeknight move and **0.84x at the 99th percentile** —
+p95 3.73% against 3.69%. Risk does not scale with the length of the closure,
+because information arrives in discrete releases rather than continuously.
+So 2.56x into that Friday was ordinary leverage meeting an extraordinary
+weekend, and flattening into weekends is not justified by weekends being
+special. That also disposes of the overnight-flattening re-measurement
+flagged earlier the same day.
+
+**The one criticism that survives is correlation.** NVDA and AVGO fell 11.0%
+and 11.5% together because they are the same trade, and PLTR is adjacent:
+three of five positions were one bet wearing three names. It passed every
+check the project has — no name breached the 20%-of-gross concentration cap,
+and `max_per_sector = 5` did not bind because the sector map files
+semiconductors and software separately.
+
+Left as a thread rather than pursued. A correlation-based cap is the
+principled version of the sector cap, and the sector cap was measured on
+2026-08-28 to buy nothing it was credited with: a rank-matched control
+ignoring sector entirely beat it, 0.75 against 0.65. The prior is poor.
+
 **The obstacles, kept because they still apply to anyone reopening this:**
 
 * **Mixed calendars are a known killer here.** 57 candidates have extended
