@@ -482,7 +482,34 @@ The root `README.md` is out of date — it describes the project as
 
 ### What changed on 2026-09-01
 
-**The shipped baseline is now 307.6%/yr at −44.1%.** `confidence_sizing_
+**The shipped baseline is 327.1%/yr at −45.4%**, after two changes on the
+same day: conviction sizing raised to 0.75, and the engine taught to model
+the opening delay it never had.
+
+**`open_delay_minutes` is now an `ExecutionConfig` field the engine reads.**
+It had lived only in `schedule/app.py` since the bridge was written, so
+production refused to open in the first half hour while the backtest happily
+took those trades — 228 of them, on the opening bar, that the account would
+never have placed. Modelling it is worth **+19.5pp** (307.6% to 327.1%) at
++1.3pp of drawdown, because the trades being removed were the weak ones.
+
+That is a **modelling correction, not a strategy change**: the account's
+behaviour is unchanged, since the daemon was already refusing those opens.
+What changed is that the backtest stopped describing a strategy nobody runs
+— which is the shadow-book failure in miniature, and the reason this is
+worth more than the 19.5pp it happens to be worth.
+
+Applied to entries only, and not shifted by `execution_lag` unlike the rest
+of the entry gate: that mask travels with the signal bar, while this is a
+fact about the bar being dealt on, and the live path asks the same question
+when it places the order rather than when it forms a view. Both
+`ExecutionConfig` constructions in `_execution_config` carry it, including
+the fallback taken when the broker table cannot be read — a fallback that
+dropped it would model a different strategy exactly when something else had
+already gone wrong, and a test asserts the two counts match.
+
+**Earlier note, superseded:** the baseline was 307.6%/−44.1% between the
+sizing change and this one. `confidence_sizing_
 strength` moved from 0.5 to 0.75 on the owner's decision, after it passed
 every control this project runs — the leverage-matched control, an
 independent split-half, per-year and per-quarter cuts, a 4,000-path block

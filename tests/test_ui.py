@@ -3165,3 +3165,66 @@ def test_the_broker_page_answers_the_lifetime_question_or_names_its_absence():
     # And the assumption that makes it valid is stated, not buried.
     assert "no deposits or withdrawals" in source
 
+
+
+# --------------------------------------------------------------------------- #
+# M-live: the Universe page named the fallback and called it the source
+# --------------------------------------------------------------------------- #
+# `follow_screen` went on for the daemon on 2026-08-29 and this page was never
+# updated. It read `settings.market.tickers` and captioned it "From
+# market.tickers ... the monthly screen reports and records, and never edits
+# it" -- so it listed eight instruments while the account held ten, with LLY
+# and ISRG traded and absent from the page entirely. The screen also became
+# daily on the same date.
+#
+# A page that describes the mechanism wrongly is worse than one that omits
+# it, because a reader uses it to decide whether what they see is expected.
+
+
+def _universe_page_source():
+    return (Path(__file__).resolve().parents[1] / "cfdinvest" / "ui" /
+            "views" / "04_Universe.py").read_text(encoding="utf-8")
+
+
+def test_the_universe_page_reads_the_traded_owner_not_the_config():
+    """`universe.traded` is the single owner of "what is traded".
+
+    Asserted on the import and the call rather than on the rendered text,
+    because there is no functional route into a Streamlit page -- but the
+    pairing is what matters: reading the config directly is the defect.
+    """
+    source = _universe_page_source()
+
+    assert "from cfdinvest.universe.traded import traded_universe" in source
+    assert "traded_universe(settings)" in source
+
+    # The fallback may still be read, but only as a fallback -- never as the
+    # headline answer.
+    head = source[:source.index("st.subheader")]
+    assert head.count("settings.market.tickers") <= 1, (
+        "the page reads market.tickers outside the fallback path, which is "
+        "how it came to show eight names while ten were traded"
+    )
+
+
+def test_the_universe_page_does_not_call_the_screen_monthly():
+    """The screen became daily on 2026-08-29.
+
+    Cadence is not decoration here: it tells a reader how stale the list they
+    are looking at could be.
+    """
+    source = _universe_page_source()
+
+    assert "monthly screen" not in source
+    assert "daily selection" in source
+
+
+def test_the_universe_page_distinguishes_its_sources():
+    """"The screen chose this" and "the screen said nothing so here is the
+    fallback" are different statements, and a reader cannot act on the page
+    without knowing which one they are being shown."""
+    source = _universe_page_source()
+
+    for phrase in ('traded_source == "config"', "the fallback",
+                   "traded_stale", "unreadable"):
+        assert phrase in source, f"the page cannot express {phrase!r}"

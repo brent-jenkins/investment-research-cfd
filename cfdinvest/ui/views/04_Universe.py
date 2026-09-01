@@ -44,7 +44,30 @@ components.page_setup(
 )
 
 settings = load_config()
-traded = list(settings.market.tickers or ())
+
+# Read from the owner, not from the config. `market.tickers` is the FALLBACK
+# and stopped being the answer on 2026-08-29, when `follow_screen` was turned
+# on and the daemon began trading the screen's latest recorded selection.
+# This page went on showing the fallback and describing it as the source, so
+# it named eight instruments while the account held ten -- LLY and ISRG were
+# being traded and did not appear here at all.
+#
+# `universe.traded` is the single owner of that question and reports which
+# source answered, how old it is, and whether it is stale, which is exactly
+# what a reader needs to tell "the screen chose this" from "the screen has
+# not run and this is the fallback".
+try:
+    from cfdinvest.universe.traded import traded_universe
+
+    _traded = traded_universe(settings)
+    traded = list(_traded.names or ())
+    traded_source = _traded.source
+    traded_as_of = getattr(_traded, "as_of", None)
+    traded_stale = bool(getattr(_traded, "stale", False))
+except Exception as error:  # noqa: BLE001 - a view must not break the page
+    traded = list(settings.market.tickers or ())
+    traded_source, traded_as_of, traded_stale = "unreadable", None, False
+    st.warning(f"The traded universe could not be resolved: {error}")
 
 try:
     from cfdinvest.universe.screen import load_screens
@@ -121,11 +144,42 @@ except Exception as error:  # noqa: BLE001 - a view must not break the page
 
 # --- what is traded now ---------------------------------------------------- #
 st.subheader("Traded")
-st.caption(
-    "From `market.tickers`. Changing it is a human act at the command line; "
-    "the monthly screen reports and records, and never edits it."
-)
+if traded_source == "config":
+    st.caption(
+        "From `market.tickers`, the fallback — either `follow_screen` is off "
+        "or the screen has recorded nothing usable. Changing it is a human "
+        "act at the command line."
+    )
+elif traded_source == "unreadable":
+    st.caption(
+        "The source could not be read, so this is `market.tickers` shown as "
+        "a last resort. Treat it as unverified rather than as what is traded."
+    )
+else:
+    st.caption(
+        "From the **screen's daily selection**"
+        + (f", recorded {traded_as_of}" if traded_as_of else "")
+        + ". Configuration is never rewritten — the selection is recorded as "
+        "an observation and read back, so `market.tickers` stays exactly as a "
+        "person left it and remains the fallback."
+    )
+if traded_stale:
+    st.warning(
+        "That selection is stale. The daemon refuses a selection it cannot "
+        "trust rather than trading a list chosen weeks ago."
+    )
 st.write(", ".join(traded) if traded else "—")
+
+# Shown together deliberately: the gap between them is the thing worth
+# seeing, and this page previously showed only the second while calling it
+# the first.
+configured = list(settings.market.tickers or ())
+if traded_source not in ("config", "unreadable") and set(configured) != set(traded):
+    st.caption(
+        f"`market.tickers` currently holds {len(configured)} name(s) — "
+        + (", ".join(configured) if configured else "none")
+        + " — and is not what is being traded."
+    )
 
 if not screens:
     # Absent is not the same as agreeing. A page that rendered an empty

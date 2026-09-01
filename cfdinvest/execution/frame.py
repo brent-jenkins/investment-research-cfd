@@ -157,6 +157,30 @@ class ExecutionConfig:
     #: measurement as well as the trading, and the position is genuinely
     #: held through the night.
     dealing_mask: pd.Series | None = None
+    #: Minutes after a session opens during which no NEW position is taken.
+    #:
+    #: The bell is the dearest moment of the day and the cheapest thing to
+    #: skip -- the spread is at its widest and the first prints are noise.
+    #:
+    #: **This existed in production and not in the engine, which is why it is
+    #: here.** ``schedule/app.py`` has applied a 30-minute delay to live
+    #: dealing since the bridge was written, and the backtest modelled none
+    #: of it: it opened trades at 13:00 UTC that the daemon would have
+    #: refused, so the two disagreed about when trading starts. A backtest
+    #: that models a different strategy from the one running is the failure
+    #: this project has already paid for with the shadow book.
+    #:
+    #: Applied to ENTRIES only. A position already held may still be closed
+    #: or resized inside the window -- refusing an exit is never the safe
+    #: direction, and the live path draws the same line.
+    #:
+    #: Measured against the bar index rather than a calendar, because the
+    #: panel is already session-restricted so the first bar of a day IS the
+    #: session's first bar. On hourly bars a 30-minute delay therefore
+    #: refuses exactly the opening bar. That is an approximation of the live
+    #: rule, which compares against wall-clock market hours, and it is the
+    #: closest a bar-resolution model can come.
+    open_delay_minutes: int = 0
     #: Trades smaller than this in units are ignored as noise.
     minimum_trade_units: float = 1e-9
 

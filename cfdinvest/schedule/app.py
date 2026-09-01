@@ -668,6 +668,11 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
             # the broker quoted, and a cost model that changes silently when
             # an unrelated read fails is the harder bug to find.
             use_measured_spreads=getattr(strategy, "use_measured_spreads", False),
+            # And the opening delay, for the same reason: the dealing path
+            # applies it whatever happens here, so a fallback that dropped
+            # it would model a strategy the account does not run -- exactly
+            # the divergence this field was added to close.
+            open_delay_minutes=getattr(strategy, "open_delay_minutes", 0),
         confidence_sizing_strength=getattr(
             strategy, "confidence_sizing_strength", None
         ),
@@ -729,6 +734,9 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
         rebalance_threshold=strategy.rebalance_threshold,
         exposure_per_unit_size=strategy.exposure_per_unit_size,
         reentry_cooldown_days=strategy.reentry_cooldown_days,
+        # The same delay the dealing path applies, so the backtest and
+        # the account agree about when trading starts.
+        open_delay_minutes=getattr(strategy, "open_delay_minutes", 0),
         time_stop_days=strategy.time_stop_days,
         earnings_dates=earnings or None,
         earnings_blackout_days=strategy.earnings_blackout_days,

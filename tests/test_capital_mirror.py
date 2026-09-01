@@ -464,3 +464,140 @@ def test_an_unreadable_run_leaves_the_book_untouched():
     assert "return EXIT_OK" in block, (
         "an unreadable run does not return early, so it can still trade"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The engine and the account must agree about when trading starts
+# --------------------------------------------------------------------------- #
+# open_delay_minutes = 30 lived only in schedule/app.py. The daemon refused
+# to open a position in the first half hour and the engine modelled none of
+# it, so the backtest took trades at 13:00 UTC that production would never
+# place -- and every figure it produced described a strategy nobody ran.
+# That is the shadow-book failure in a smaller costume.
+
+
+def _delay_frames(bars_per_day=4, days=6, delay=30):
+    """A session-restricted hourly panel with a persistent long signal."""
+    import numpy as np
+    import pandas as pd
+
+    stamps = []
+    for day in range(days):
+        base = pd.Timestamp("2026-01-05", tz="UTC") + pd.Timedelta(days=day)
+        stamps += [base + pd.Timedelta(hours=13 + n) for n in range(bars_per_day)]
+    index = pd.DatetimeIndex(stamps)
+    # A price that only ever rises, so a long signal is always profitable and
+    # any refusal to open shows up as a missing position rather than a loss.
+    close = pd.DataFrame({"AAA": np.linspace(100.0, 140.0, len(index))}, index=index)
+    return index, close
+
+
+def test_the_engine_refuses_to_open_inside_the_opening_window():
+    """The reported gap, asserted on what the engine holds.
+
+    The scenario has to go FLAT before each session, or there is no entry
+    for the gate to refuse -- a position carried overnight is simply held,
+    and the first draft of this test asserted against a book that never
+    re-entered. That is the inert-arm failure in test form.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.execution.frame import ExecutionConfig
+    from cfdinvest.preprocessing.frame import AnalysisFrame
+    from cfdinvest.signals.frame import SignalFrame
+
+    bars, days = 4, 4
+    stamps = []
+    for day in range(days):
+        base = pd.Timestamp("2026-01-05", tz="UTC") + pd.Timedelta(days=day)
+        stamps += [base + pd.Timedelta(hours=13 + n) for n in range(bars)]
+    index = pd.DatetimeIndex(stamps)
+    close = pd.DataFrame({"AAA": np.linspace(100.0, 140.0, len(index))},
+                         index=index)
+
+    # Long on the first two bars of each session and flat afterwards, run with
+    # execution_lag = 0 so the fill lands on the bar the signal is on. The
+    # lag is removed deliberately: with it, an entry cannot land on an
+    # opening bar unless a signal happens to turn over exactly at the
+    # previous close, and a test that depends on that coincidence is testing
+    # the coincidence. Two bars rather than one because a signal lasting a
+    # single bar never opens at all -- the control has to actually trade
+    # or the assertion below proves nothing. Here the control opens on
+    # every opening bar and the gate is the only thing that can stop it.
+    want = ["flat"] * len(index)
+    size = [0.0] * len(index)
+    for n in range(len(index)):
+        if (n % bars) in (0, 1):
+            want[n], size[n] = "long", 0.1
+    frame = lambda values: pd.DataFrame({"AAA": values}, index=index)
+    signals = SignalFrame(
+        direction=frame(want), size=frame(size),
+        confidence=frame([0.9] * len(index)), reason=frame([""] * len(index)),
+    )
+    analysis = AnalysisFrame(
+        prices={"close": close, "open": close, "high": close, "low": close},
+        returns=close.pct_change().fillna(0.0),
+    )
+
+    without = run_backtest(signals, analysis,
+                           ExecutionConfig(open_delay_minutes=0, execution_lag=0))
+    within = run_backtest(signals, analysis,
+                          ExecutionConfig(open_delay_minutes=30, execution_lag=0))
+
+    open_bars = index[[stamp.hour == 13 for stamp in index]]
+    held_without = without.positions["AAA"].fillna(0.0).reindex(open_bars)
+    held_within = within.positions["AAA"].fillna(0.0).reindex(open_bars)
+
+    assert (held_without != 0).any(), (
+        "the control never opened on an opening bar, so this proves nothing"
+    )
+    assert (held_within == 0).all(), (
+        f"a position was opened inside the opening window: {dict(held_within)}. "
+        "The live dealing path would have refused it."
+    )
+    # And the delayed run must still trade -- refusing everything would pass
+    # the assertion above while being useless.
+    assert (within.positions["AAA"].fillna(0.0) != 0).any()
+
+
+def test_the_delay_never_blocks_an_exit():
+    """Refusing an exit is never the safe direction.
+
+    The live path draws the same line: inside the opening window a new
+    position is refused while anything already held may still be closed.
+    """
+    import inspect
+
+    from cfdinvest.execution import engine
+
+    source = inspect.getsource(engine)
+    block = source[source.index("delay = int(getattr(config"):]
+    block = block[:block.index("fx_config")]
+    assert "entry_gate" in block, (
+        "the opening window is applied somewhere other than the entry gate, "
+        "so it may be blocking exits as well as entries"
+    )
+
+
+def test_the_engine_and_the_dealing_path_read_the_same_delay():
+    """One owner. The backtest and the account must not disagree about when
+    trading starts, which is the whole reason this field exists."""
+    import inspect
+
+    from cfdinvest.config import load_config
+    from cfdinvest.schedule import app as schedule_app
+
+    config = load_config()
+    execution = schedule_app._execution_config(
+        ["AAPL"], config.strategy, config
+    )
+    assert execution.open_delay_minutes == config.strategy.open_delay_minutes
+
+    # Every ExecutionConfig this function can return must carry it, including
+    # the fallback taken when the broker table cannot be read -- a fallback
+    # that quietly dropped it would model a different strategy exactly when
+    # something else had already gone wrong.
+    source = inspect.getsource(schedule_app._execution_config)
+    assert source.count("ExecutionConfig(") == source.count("open_delay_minutes=getattr")

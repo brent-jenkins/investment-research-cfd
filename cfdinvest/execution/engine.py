@@ -224,6 +224,21 @@ def run_execution(signal_frame, analysis_frame, config):
             index, columns, 1.0,
         ).astype(bool)
 
+    # The opening window, combined with whatever gate is already there.
+    #
+    # Deliberately NOT shifted, unlike the gate above. That mask is derived
+    # from the signal bar and must travel with it; this one is a fact about
+    # the bar being dealt on, and the live path asks the same question at the
+    # moment it places the order rather than at the moment it formed a view.
+    delay = int(getattr(config, "open_delay_minutes", 0) or 0)
+    if delay > 0 and len(index):
+        stamps = pd.DatetimeIndex(index)
+        opens = pd.Series(stamps, index=stamps).groupby(stamps.normalize()).transform("min")
+        elapsed = (stamps - pd.DatetimeIndex(opens)).total_seconds() / 60.0
+        allowed = np.asarray(elapsed >= float(delay), dtype=bool)
+        window = np.repeat(allowed[:, None], len(columns), axis=1)
+        entry_gate = window if entry_gate is None else (entry_gate & window)
+
     # Every price the loop touches is restated in the account currency
     # before anything else sees it, so the state machine, the leverage cap
     # and the equity curve all work in one unit. Rates are 1.0 with FX
