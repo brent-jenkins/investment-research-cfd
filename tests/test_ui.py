@@ -3254,7 +3254,7 @@ def test_the_traded_list_is_not_shown_twice():
     source = _universe_page_source()
 
     assert "In force" in source
-    assert '"in force": "yes" if held == live' in source
+    assert '"in force": "yes" if in_force_at and as_of == in_force_at' in source
     # The old standalone dump of the traded names is gone.
     assert 'st.write(", ".join(traded)' not in source
 
@@ -3286,3 +3286,106 @@ def test_the_chart_is_theme_aware():
     assert 'theme.colour_for("ok", mode)' in source
     assert 'theme.colour_for("muted", mode)' in source
     assert 'mode == "dark"' in source
+
+
+def test_only_one_screen_is_ever_marked_in_force():
+    """M-live: two rows marked "yes" at once.
+
+    The marker compared the row's NAMES against the traded list, which looks
+    equivalent to "is this the one in force" and is not. Consecutive screens
+    correlate +0.97 to +0.99, so picking the same names two days running is
+    the ordinary case -- the owner saw 2026-09-01 and 2026-08-31 both marked,
+    holding the same ten instruments in a different order.
+
+    Exactly one selection is in force: the one traded_universe read, which it
+    reports by timestamp. Matching on that makes a tie impossible by
+    construction rather than by luck.
+    """
+    source = _universe_page_source()
+
+    assert "in_force_at" in source
+    assert 'as_of == in_force_at' in source, (
+        "the in-force marker does not match on the selection's own timestamp"
+    )
+    # The set comparison that produced the duplicate must be gone.
+    assert "held == live" not in source
+    assert "live = set(traded)" not in source
+
+
+def test_the_in_force_marker_is_unique_on_a_real_history():
+    """Functional, on whatever the lake actually holds.
+
+    A structural test would pass on a rule that happens to be written
+    correctly and applied to the wrong field, which is how the first version
+    of this shipped.
+    """
+    from cfdinvest.config import load_config
+    from cfdinvest.universe.screen import load_screens
+    from cfdinvest.universe.traded import traded_universe
+
+    config = load_config()
+    try:
+        universe = traded_universe(config)
+        screens = load_screens(config) or []
+    except Exception:  # noqa: BLE001 - no lake here is not a failure
+        pytest.skip("no recorded screens available")
+    if not screens or not universe.as_of:
+        pytest.skip("nothing recorded to mark")
+
+    at = str(universe.as_of)[:19]
+    marked = [r for r in screens if str(r.get("as_of") or "")[:19] == at]
+
+    assert len(marked) <= 1, (
+        f"{len(marked)} screens share the in-force timestamp, so the marker "
+        "cannot identify one"
+    )
+    # And the old rule really could tie, which is why this changed.
+    by_names = [r for r in screens
+                if set(r.get("selected") or ()) == set(universe.names)]
+    assert len(by_names) >= len(marked)
+
+
+def test_no_page_mistakes_a_source_constructor_for_a_flag():
+    """M-live: the dashboard said "No scheduler record yet" forever.
+
+    `Source.missing` is a classmethod constructor, so
+    `getattr(source, "missing", False)` returns a bound method and is always
+    truthy. The dashboard's "Is it running?" branch fired on every render
+    since it was written, and everything below it -- overdue jobs, the last
+    run -- was unreachable, while thirty run directories sat on disk.
+
+    Checked across every page rather than the one that had it: the same
+    mistake is available anywhere a Source is inspected, and reads as
+    perfectly ordinary defensive code.
+    """
+    views = (Path(__file__).resolve().parents[1] / "cfdinvest" / "ui" / "views")
+    offenders = []
+    for page in sorted(views.glob("*.py")):
+        text = page.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            stripped = line.strip()
+            # Comments may name the pattern -- the one on the dashboard
+            # explains why it was wrong -- and flagging prose would make this
+            # test unfixable except by deleting the explanation.
+            if stripped.startswith("#") or "getattr(" not in stripped:
+                continue
+            if any(f'"{name}"' in stripped for name in ("missing", "broken")):
+                offenders.append(f"{page.name}: {stripped}")
+    assert not offenders, (
+        "a Source constructor is being read as if it were a flag, which is "
+        f"always truthy: {offenders}"
+    )
+
+
+def test_a_source_constructor_really_is_truthy():
+    """The property that makes the bug possible, asserted so the test above
+    cannot be dismissed as paranoia."""
+    from cfdinvest.ui.sources import Source
+
+    populated = Source(value={"anything": True})
+
+    assert populated.ok
+    assert bool(getattr(populated, "missing", False)), (
+        "Source.missing is no longer truthy on an instance -- if it became a "
+        "real field, the guard above can be relaxed"
+    )

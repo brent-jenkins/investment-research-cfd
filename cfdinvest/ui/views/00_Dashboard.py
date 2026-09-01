@@ -145,7 +145,16 @@ else:
 st.subheader("Is it running?")
 
 scheduler = (data or {}).get("scheduler")
-if scheduler is None or getattr(scheduler, "missing", False):
+# `Source.missing` is a CLASSMETHOD CONSTRUCTOR, not a flag. So
+# `getattr(source, "missing", False)` returns a bound method, which is
+# always truthy -- this branch fired on every render since it was written,
+# and everything below it has never once been shown. The dashboard has been
+# reporting "no scheduler record yet" while thirty run directories sat on
+# disk and the Status page listed each job's last run to the minute.
+#
+# `ok` is the property that answers the question: the read succeeded and
+# produced something.
+if scheduler is None or not getattr(scheduler, "ok", False):
     st.caption(
         "No scheduler record yet. The Status page reports each job against "
         "the artefact it writes, which survives a restart where a timestamp "

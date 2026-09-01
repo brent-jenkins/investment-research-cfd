@@ -321,20 +321,27 @@ st.caption(
 # sends the reader somewhere else to find out which three.
 rows = []
 previous: list[str] = []
-live = set(traded)
+
+# Identity, not equality. Marking every row whose names MATCH the traded list
+# looked equivalent and is not: consecutive screens correlate +0.97 to +0.99,
+# so picking the same ten names two days running is the normal case, and set
+# comparison then marked both as in force. Only one is -- the one
+# `traded_universe` actually read -- and it reports which by timestamp.
+in_force_at = str(traded_as_of)[:19] if traded_as_of else None
 for row in screens:
     names = [str(t) for t in (row.get("selected") or ()) if str(t)]
     held = set(names)
     before = set(previous)
+    as_of = str(row.get("as_of") or "?")[:19]
     rows.append({
-        "as of": str(row.get("as_of") or "?")[:19],
+        "as of": as_of,
         "n": len(names),
         "instruments": ", ".join(names),
         "joined": ", ".join(sorted(held - before)) if previous else "",
         "left": ", ".join(sorted(before - held)) if previous else "",
         # Marks the selection the daemon is acting on, so the reader never
         # has to work out which row is live.
-        "in force": "yes" if held == live and live else "",
+        "in force": "yes" if in_force_at and as_of == in_force_at else "",
     })
     previous = names
 
@@ -348,8 +355,9 @@ st.dataframe(
 )
 if rows and not any(r["in force"] for r in rows):
     st.caption(
-        "No recorded screen matches what is being traded, which means the "
-        "fallback is in force — see **In force** above."
+        "No row is marked in force, which means the traded list did not come "
+        "from a recorded screen — see **In force** above for what it came "
+        "from instead."
     )
 
 st.caption(
