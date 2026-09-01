@@ -546,8 +546,39 @@ exit_size = 0.01
 #   2.0       357.9%   -50.7%     7.06      1.977
 #   4.0       371.3%   -53.6%     6.93      2.109
 #
-# 0.5 rather than the peak: return nearly doubles while drawdown barely moves,
-# and the stronger settings buy return with risk rather than earning it.
+# RAISED FROM 0.5 TO 0.75 on 2026-09-01, and the reason 0.5 was chosen is
+# **refuted rather than superseded**. That reason was "the stronger settings
+# buy return with risk rather than earning it", and it was never tested: no
+# leverage control was run above 0.5. Run now, 0.75 EARNS it.
+#
+#   arm                                CAGR       H1       H2   maxDD    lev
+#   strength 0.5                     257.7%   235.0%   282.3%   41.9%   1.66
+#   exposure 1.058x, strength 0.5    272.0%   243.3%   303.3%   41.3%   1.69
+#   strength 0.75                    307.7%   301.2%   314.5%   44.1%   1.75
+#
+#   differential   whole +35.8pp   H1 +57.9pp   H2 +11.3pp
+#
+# Matching the exposure without the conviction buys only 14.3pp of the 50pp,
+# so about 36pp belongs to the rule. Positive in both halves, both clear of
+# the 8pp floor.
+#
+# Validated three further ways, each able to kill it. Ahead in 3 of 3 full
+# years (+34.5, +32.9, +15.9pp) and 10 of 14 quarters. Block-bootstrapped,
+# 0.75 beats 0.5's median return on 63.5% of paths against a 50% coin flip,
+# and its TENTH percentile improves from 1870% to 2887% -- the bad paths get
+# better too. And it is not fitted to the universe size: +47.4, +50.0, +32.9
+# and +42.7pp at targets 8, 10, 12 and 16.
+#
+# Drawdown is genuinely a little worse and that is the price: 41.9% to 44.1%
+# realised, and p50 45.0% to 46.4% resampled with 56.3% of paths beyond 0.5's
+# median. Calmar still improves, 6.15 to 6.98.
+#
+# NOT taken past 0.75 although the sweep keeps rising -- 325.2% at 1.0 and
+# 346.5% at 1.5. Only 0.75 has been through the controls, and drawdown
+# reaches 49.2% by 1.5. Following a monotone curve past the last tested point
+# is the overfitting the noise floor exists to prevent.
+#
+# The original reasoning below still stands and is why any of this is adopted:
 #
 # NOT LEVERAGE, and that distinction is why this is adopted at all. Sizing by
 # conviction lifts mean gross leverage from 1.123 to 1.655. This project once
@@ -565,11 +596,17 @@ exit_size = 0.01
 # The absolute figures are not a forecast. They sit on top of the screen's own
 # +150pp ranking edge over a 3.65-year window, and the demo account is the
 # only thing that can say whether any of it transfers.
-confidence_sizing_strength = 0.5
+confidence_sizing_strength = 0.75
 
 # The smallest multiplier conviction sizing may produce. The gate has already
 # decided a signal is worth taking; this trims it rather than erasing it,
 # which would be a second unmeasured gate wearing a multiplier.
+# INERT, measured 2026-09-01: 0.0, 0.10, 0.25 and 0.50 return identical
+# results to the decimal. With a non-negative strength and confidence at or
+# above the entry bar the multiplier is never below 1.0, so this floor cannot
+# bind. Left in place because it would bind if strength were ever negative or
+# the gate lowered below the confidence used, but it decides nothing today
+# and should not be reasoned about as if it did.
 confidence_sizing_floor = 0.25
 
 # Execution friction beyond the spread, in basis points of price. The spread

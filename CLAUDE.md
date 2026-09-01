@@ -480,6 +480,24 @@ uses the shared root, exactly as before it existed. See
 The root `README.md` is out of date — it describes the project as
 "ingestion layer complete".
 
+### What changed on 2026-09-01
+
+**The shipped baseline is now 307.6%/yr at −44.1%.** `confidence_sizing_
+strength` moved from 0.5 to 0.75 on the owner's decision, after it passed
+every control this project runs — the leverage-matched control, an
+independent split-half, per-year and per-quarter cuts, a 4,000-path block
+bootstrap of both arms, and four universe sizes. The evidence and the
+refuted reason for the old value are recorded under the sizing entry below.
+
+Any figure in this file quoting **254.9%/−41.4% as "the baseline" describes
+the configuration before that change** and is left standing because it was
+correct when measured. The current one is 307.6%/−44.1%, and a harness
+asserting reproduction should assert against that.
+
+The forward record on the demo account restarts from today for the same
+reason: the account is now trading a different configuration from the one it
+ran on 31 August.
+
 ### What changed on 2026-08-31
 
 The day the strategy was retuned onto the feed it actually deals on, and the

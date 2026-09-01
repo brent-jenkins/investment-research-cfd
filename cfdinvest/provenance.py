@@ -256,24 +256,32 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
     ),
     Justification(
         path="execution.confidence_sizing_strength",
-        value=0.5,
+        value=0.75,
         feed=CURRENT_FEED,
         cost_model=CURRENT_COST_MODEL,
-        source="scratchpad/confsize.py, ctrl.py and halves.py: five strengths "
-               "through the engine screen-gated at target 10, a control "
-               "matched on realised leverage by bisection, and an "
-               "independent split-half",
-        figure="off -> 130.5%/-40.3% (Calmar 3.24); 0.5 -> 254.9%/-41.4% "
-               "(6.17); 1.0 -> 319.8%/-47.2%; 2.0 -> 357.9%; 4.0 -> 371.3% "
-               "at -53.6%. 0.5 chosen over the peak because return nearly "
-               "doubles while drawdown barely moves. CONTROL: uniform "
-               "exposure matched on realised leverage (1.659 vs 1.655) "
-               "returns 198.9% at -46.7%, so conviction is worth +56pp and "
-               "5.3pp less drawdown at the same exposure -- the gain is "
-               "allocation, not leverage. HALVES: +106.6pp in the first, "
-               "+151.9pp in the second, Calmar improving in both. Absolute "
-               "figures are not a forecast: they sit on the screen's +150pp "
-               "ranking edge over one 3.65-year window",
+        source="scratchpad/strength.py, strength2.py and validate.py: six "
+               "strengths through the engine screen-gated at target 10, a "
+               "control matched on realised leverage, an independent "
+               "split-half, per-year and per-quarter cuts, a 4,000-path "
+               "block bootstrap of both arms, and four universe sizes",
+        figure="RAISED 0.5 -> 0.75 on 2026-09-01. Sweep: 0.0 -> 128.8%; "
+               "0.25 -> 195.4%; 0.5 -> 257.6%/-41.9%; 0.75 -> 307.6%/-44.1%; "
+               "1.0 -> 325.2%/-47.2%; 1.5 -> 346.5%/-49.2%. The old reason "
+               "for stopping at 0.5 -- that stronger settings buy return "
+               "with risk rather than earning it -- is REFUTED, not "
+               "superseded: no leverage control had been run above 0.5. "
+               "CONTROL: exposure raised 1.058x at strength 0.5 returns "
+               "272.0%, so of 0.75's +50pp only 14.3pp is exposure and "
+               "+35.8pp belongs to the rule. HALVES: +57.9pp then +11.3pp, "
+               "both clear of the 8pp floor. YEARS: ahead 3 of 3 (+34.5, "
+               "+32.9, +15.9pp); QUARTERS 10 of 14. BOOTSTRAP (4,000 paths, "
+               "block 20): beats 0.5's median return on 63.5% of paths and "
+               "its p10 improves 1870% -> 2887%, while drawdown p50 goes "
+               "45.0% -> 46.4% with 56.3% of paths worse -- the gain is not "
+               "free. UNIVERSE: +47.4/+50.0/+32.9/+42.7pp at targets "
+               "8/10/12/16. Not taken past 0.75 although the curve keeps "
+               "rising: only 0.75 has been through the controls. Calmar "
+               "6.15 -> 6.98. Absolute figures are not a forecast",
     ),
     Justification(
         path="execution.confidence_sizing_floor",
