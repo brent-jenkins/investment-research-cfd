@@ -498,6 +498,49 @@ The forward record on the demo account restarts from today for the same
 reason: the account is now trading a different configuration from the one it
 ran on 31 August.
 
+**The momentum lead is closed on its third appearance, and my own screen was
+what made it look alive.** It surfaced as an 85.2% control arm on
+2026-08-30, again as the strongest series in the lake at +0.0844 earlier
+today, and has now been tested properly.
+
+*The correlation was direction leaking in.* +0.0844 was RAW momentum against
+trip P&L, and this book runs both ways, so it conflated "longs do well when
+price has risen" with "shorts do badly when price has risen". Signed by the
+direction the engine actually took it is +0.0376 at best.
+
+    lookback   raw rho  signed rho   agrees    P&L agree   P&L disagree
+           5   +0.0390     +0.0188      62%   19,442,150     +4,948,383
+          10   +0.0663     +0.0200      74%   21,520,275     +2,870,258
+          20   +0.0879     +0.0376      95%   22,707,022     +1,683,510
+          40   +0.0269     +0.0179      89%   22,605,946     +1,515,589
+          65   -0.0005     +0.0082      91%   25,387,548       -903,238
+
+At 20 bars, where the raw signal looked strongest, **momentum agrees with the
+engine 95% of the time** — it describes a trend follower rather than
+extending one, which is the 93.3% figure already in this file arrived at
+independently. And the disagreements are **profitable at four of five
+lookbacks**, so a momentum gate removes money.
+
+*The one candidate was tested rather than dismissed*, because one arm of five
+looking good is what a multiple comparison produces. 65-bar disagreements
+lose 903k, so momentum agreement was expressed as an `entry_gate` and run
+through the engine:
+
+    arm                            CAGR    maxDD   trades       H1       H2
+    baseline                     307.6%    44.1%    4,185   301.2%   314.5%
+    momentum agree, 65 bars      309.4%    43.6%    3,906   250.7%   378.3%
+    momentum agree, 40 bars      318.9%    43.6%    3,851   281.1%   360.8%
+    momentum agree, 20 bars      302.0%    44.4%    4,048   298.8%   305.6%
+
+20 bars is simply worse. The two that look positive on the whole period lose
+badly in the first half and win in the second — 65 bars swings −50.5pp then
++63.8pp — which is a period rather than a parameter, by the same test that
+retired `rebalance_threshold`.
+
+`breakout_lookback = 12` already occupies this ground, and `signals/
+breakout.py` already carries a withdrawn standalone case for it. Momentum
+adds nothing the engine does not have.
+
 **The mark at the change, recorded now because it is not recoverable later.**
 At 16:55 UTC on 2026-09-01, immediately after the deploy: balance
 **GBP 4,917.79**, being −82.21 against the GBP 5,000 opening (−1.64%), of
