@@ -73,6 +73,7 @@ def trading_age_days(newest, now) -> float | None:
             return None
 
 __all__ = [
+    "win_rate_check",
     "TYPES",
     "SEVERITIES",
     "MonitoringThresholds",
@@ -264,6 +265,36 @@ class MonitoringThresholds:
     #: nothing and only asks a person to look, and a threshold nobody ever
     #: reaches is not a safeguard.
     unmodelled_drawdown_fraction: float = 0.60
+
+    #: The win rate the model says to expect, and the terms on which a
+    #: forward reading is allowed to contradict it.
+    #:
+    #: **Pre-registered on 2026-09-03, before the data existed to test it.**
+    #: The live account then had 7 completed trips of which 1 won, which
+    #: looks alarming and is not: at the model's 43.1% that is a 12% outcome,
+    #: and the standard error on a win rate at n=7 is 18.7pp. Setting the
+    #: rule now, rather than the first time a red number appears, is the
+    #: whole point -- a threshold chosen while looking at the result is not a
+    #: test of it.
+    #:
+    #: The band widens with the sample rather than being a fixed number,
+    #: because "below 30%" means something different at 10 trips and at 500.
+    #: Two standard errors below the model rate, and silent until there are
+    #: enough trips for the question to have an answer:
+    #:
+    #:     50 trips   speaks below 29%
+    #:    100 trips   speaks below 33%
+    #:    200 trips   speaks below 36%
+    #:
+    #: A warning, never a pause. Four automatic pauses were tested causally
+    #: on this strategy and all four lost money.
+    model_win_rate: float = 0.431
+    #: Below this many completed trips the check says nothing at all --
+    #: reporting "unmeasured" rather than a reassuring pass.
+    win_rate_min_trips: int = 50
+    #: How many standard errors below the model rate is worth a person's
+    #: attention.
+    win_rate_sigmas: float = 2.0
 
     #: Months of trailing return that may be negative before it is worth
     #: asking whether the strategy still fits the market. A trend follower
@@ -1255,6 +1286,81 @@ def check_system_resources(
                 )
             )
     return issues
+
+
+def win_rate_check(
+    trips=None, thresholds: "MonitoringThresholds | None" = None, now=None,
+) -> list[MonitoringIssue]:
+    """Is the forward win rate below what the model says to expect?
+
+    **This stops nothing**, like every review trigger here. It asks a person
+    to look, on terms fixed before the data existed -- see
+    ``model_win_rate``.
+
+    Silent below ``win_rate_min_trips``, and silent by SAYING SO rather than
+    by passing: at seven trips a 14% win rate and a 60% win rate are both
+    unremarkable, and a green tick on that evidence is a claim nobody has
+    earned. "Not enough trades to say" is the honest reading and it is the
+    one reported.
+
+    Absent or unreadable trips return ``unchecked`` for the same reason.
+    """
+    import math
+
+    settings = thresholds or DEFAULTS
+    moment = _now(now)
+    if trips is None:
+        return [_unreadable("review", "Forward win rate", "no trades readable")]
+
+    completed = [t for t in trips if t and t.get("pnl") is not None]
+    minimum = int(settings.win_rate_min_trips)
+    if len(completed) < minimum:
+        return [
+            MonitoringIssue(
+                type="review",
+                severity="info",
+                message=(
+                    f"{len(completed)} completed trip(s); the win rate is not "
+                    f"measurable below {minimum}. At this sample almost any "
+                    "rate is unremarkable."
+                ),
+                timestamp=moment,
+                details={"trips": len(completed), "minimum": minimum},
+                remedy="Nothing to do. It becomes answerable with more trades.",
+            )
+        ]
+
+    wins = sum(1 for t in completed if float(t["pnl"]) > 0)
+    rate = wins / len(completed)
+    expected = float(settings.model_win_rate)
+    error = math.sqrt(max(expected * (1.0 - expected), 1e-12) / len(completed))
+    floor = expected - float(settings.win_rate_sigmas) * error
+    if rate >= floor:
+        return []
+    return [
+        MonitoringIssue(
+            type="review",
+            severity="warning",
+            message=(
+                f"The forward win rate is {rate:.0%} over {len(completed)} "
+                f"trips, below the {floor:.0%} that {settings.win_rate_sigmas:g} "
+                f"standard errors under the model's {expected:.0%} allows."
+            ),
+            timestamp=moment,
+            details={
+                "trips": len(completed), "wins": wins, "win_rate": rate,
+                "expected": expected, "floor": floor,
+            },
+            remedy=(
+                "Worth looking at rather than acting on. The strategy is "
+                "designed to lose more trips than it wins -- the profit comes "
+                "from winners running -- so check the HOLD durations and the "
+                "exit reasons before the rate: winners cut short is a "
+                "different fault from entries being wrong. Do not pause "
+                "automatically; every automatic pause tested here lost money."
+            ),
+        )
+    ]
 
 
 def review_triggers(

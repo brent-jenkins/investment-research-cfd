@@ -38,7 +38,55 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["intended_positions", "apply_prices", "held_tickers"]
+__all__ = ["intended_positions", "apply_prices", "held_tickers",
+           "exit_reasons"]
+
+
+def exit_reasons(config=None, account: str | None = None) -> dict[str, str]:
+    """Why the engine closed each position it has closed, by instrument.
+
+    The dealing path could see THAT a position had left the engine's book
+    and never why. Every close written to the order store said
+    ``reason=(none recorded)``, so "did the time stop fire or did the signal
+    reverse" was unanswerable from the log that exists to answer it -- the
+    same shape of gap the engine's own ``_trade_reason`` docstring describes
+    having had, where every close claimed to be the signal's doing.
+
+    The engine already records it. ``_trade_reason`` writes one of
+    ``stop_out``, ``take_profit``, ``stop_loss``, ``time_stop`` or ``signal``
+    on every trade row, and this reads the most recent zero-units row per
+    instrument -- the trade that flattened it.
+
+    Never raises and returns ``{}`` on any failure. A missing reason must not
+    stop an order being placed; it is an explanation, not a gate.
+    """
+    from cfdinvest.persist import readers
+
+    try:
+        frames = readers.load_execution_frame(None, config, account)
+        trades = frames.get("trades")
+    except Exception as error:  # noqa: BLE001 - absence is not an outage
+        logger.debug("No run to read exit reasons from: %s", error)
+        return {}
+    if trades is None or getattr(trades, "empty", True):
+        return {}
+    if not {"asset", "units", "reason"} <= set(getattr(trades, "columns", [])):
+        return {}
+
+    found: dict[str, str] = {}
+    try:
+        closes = trades[trades["units"].astype(float) == 0.0]
+        if "timestamp" in closes.columns:
+            closes = closes.sort_values("timestamp")
+        for _, row in closes.iterrows():
+            name = str(row.get("asset") or "")
+            reason = str(row.get("reason") or "").strip()
+            if name and reason:
+                found[name] = reason
+    except Exception as error:  # noqa: BLE001
+        logger.debug("Could not read exit reasons: %s", error)
+        return {}
+    return found
 
 
 def intended_positions(

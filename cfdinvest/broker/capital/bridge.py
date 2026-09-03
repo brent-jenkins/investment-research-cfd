@@ -263,7 +263,15 @@ def plan_orders(
             intents.append(Intent(
                 ticker=ticker, epic=epic, direction=direction,
                 held_units=held_units, target_units=0.0, action="close",
-                reason="the signal is flat" if share == 0 else "below the minimum",
+                # The engine's own word for it -- time_stop, stop_loss,
+                # take_profit, stop_out or signal -- when the row carries
+                # one. "The signal is flat" is true of all of them and
+                # distinguishes none, which is why every close in the order
+                # store read the same.
+                reason=(
+                    str(row.get("reason") or "").strip()
+                    or ("the signal is flat" if share == 0 else "below the minimum")
+                ),
                 price=price, deal_id=str(position.get("deal_id") or ""),
             ))
             continue

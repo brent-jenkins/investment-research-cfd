@@ -1342,3 +1342,95 @@ def test_the_thresholds_sit_outside_the_measured_modelled_median():
     worst_modelled_median = 0.49
     assert DEFAULTS.review_drawdown_fraction > worst_modelled_median
     assert DEFAULTS.unmodelled_drawdown_fraction > worst_modelled_median
+
+
+# --------------------------------------------------------------------------- #
+# The forward win-rate trigger, pre-registered 2026-09-03
+# --------------------------------------------------------------------------- #
+# Fixed BEFORE the data existed to test it. The account then had 7 completed
+# trips of which 1 won, which looks alarming and is not: at the model's 43.1%
+# that is a 12% outcome and the standard error at n=7 is 18.7pp. A threshold
+# chosen while looking at a red number is not a test of it.
+
+
+def _trips(count, wins):
+    return [{"pnl": 1.0 if n < wins else -1.0} for n in range(count)]
+
+
+def test_a_small_sample_is_reported_as_unmeasurable_not_as_a_pass():
+    """Silent by SAYING SO, not by returning nothing.
+
+    At seven trips a 14% win rate and a 60% win rate are equally
+    unremarkable, so a green tick on that evidence is a claim nobody has
+    earned. "Not enough trades to say" is the honest reading -- the same rule
+    as `unchecked` against `pass` everywhere else in this project.
+    """
+    from cfdinvest.monitoring.core import win_rate_check
+
+    issues = win_rate_check(_trips(7, 1))
+
+    assert len(issues) == 1
+    assert issues[0].severity == "info"
+    assert "not measurable" in issues[0].message
+    assert issues[0].details["trips"] == 7
+
+
+def test_the_band_widens_with_the_sample():
+    """"Below 30%" means different things at 10 trips and at 500.
+
+    Two standard errors below the model rate, so the same observed rate can
+    be unremarkable at one sample size and worth attention at another. This
+    is the property, not the constants.
+    """
+    from cfdinvest.monitoring.core import win_rate_check
+
+    # 30% wins: fine at 50 trips, a warning at 100.
+    assert not win_rate_check(_trips(50, 15))
+    flagged = win_rate_check(_trips(100, 30))
+    assert flagged and flagged[0].severity == "warning"
+
+
+def test_a_healthy_rate_says_nothing_at_any_size():
+    from cfdinvest.monitoring.core import win_rate_check
+
+    for count, wins in ((50, 20), (100, 40), (200, 90), (500, 220)):
+        assert not win_rate_check(_trips(count, wins)), (
+            f"{wins}/{count} was flagged and should not be"
+        )
+
+
+def test_unreadable_trades_are_unchecked_rather_than_fine():
+    from cfdinvest.monitoring.core import win_rate_check
+
+    issues = win_rate_check(None)
+
+    assert issues and issues[0].severity == "warning"
+    assert "could not be checked" in issues[0].message
+
+
+def test_the_trigger_never_pauses_and_says_where_to_look_first():
+    """A review trigger, like every other here. And its remedy points at hold
+    durations before the rate: the strategy is DESIGNED to lose more trips
+    than it wins, so a low rate alone is not the fault -- winners being cut
+    short is a different problem from entries being wrong.
+    """
+    from cfdinvest.monitoring.core import win_rate_check
+
+    issues = win_rate_check(_trips(100, 20))
+
+    assert issues[0].severity == "warning", "a review trigger must not be critical"
+    remedy = issues[0].remedy or ""
+    assert "Do not pause" in remedy
+    assert "HOLD durations" in remedy or "hold durations" in remedy
+
+
+def test_the_thresholds_were_fixed_before_the_data():
+    """The numbers are the pre-registration. Changing them after seeing a
+    result is the thing this test exists to make visible in a diff."""
+    from cfdinvest.monitoring.core import MonitoringThresholds
+
+    settings = MonitoringThresholds()
+
+    assert settings.model_win_rate == 0.431
+    assert settings.win_rate_min_trips == 50
+    assert settings.win_rate_sigmas == 2.0

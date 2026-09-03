@@ -1062,7 +1062,7 @@ def _size_engine_rows(rows, prices) -> list[dict]:
     return intent.apply_prices(rows, prices)
 
 
-def _with_exits(rows, held_positions) -> list[dict]:
+def _with_exits(rows, held_positions, app_config=None, account_name=None) -> list[dict]:
     """The engine's positions, plus a flat row for anything it has exited.
 
     ``intended_positions`` reports what is *held*, so an instrument the
@@ -1093,6 +1093,17 @@ def _with_exits(rows, held_positions) -> list[dict]:
     if rows is None:
         raise ValueError("cannot derive exits from an unreadable run")
 
+    # Why the engine closed each one, so the order store records more than
+    # "it went away". Read here rather than in the loop: one read for the
+    # pass instead of one per position.
+    from cfdinvest.persist import intent as intent_module
+
+    try:
+        reasons = intent_module.exit_reasons(app_config, account_name)
+    except Exception as error:  # noqa: BLE001 - an explanation is not a gate
+        logger.debug("No exit reasons available: %s", error)
+        reasons = {}
+
     intended = {str((row or {}).get("ticker") or "") for row in rows}
     exited = []
     for position in held_positions or ():
@@ -1100,10 +1111,12 @@ def _with_exits(rows, held_positions) -> list[dict]:
         if epic and epic not in intended:
             exited.append(epic)
             # Flat rather than sized: the bridge reads direction and share
-            # and plans the close itself, so no rule is re-stated here.
+            # and plans the close itself, so no rule is re-stated here. The
+            # reason rides along and is recorded, never acted on.
             rows.append({
                 "ticker": epic, "direction": "flat", "size": 0.0,
                 "units": 0.0, "confidence": None,
+                "reason": reasons.get(epic, ""),
             })
     if exited:
         logger.info(
@@ -1262,7 +1275,7 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         logger.info("Capital: the engine holds nothing; nothing to mirror")
 
     # An exit the engine has already taken has to reach the broker.
-    latest = _with_exits(latest, held)
+    latest = _with_exits(latest, held, app_config, account_name)
 
     # With the screen unable to answer, nothing NEW may be opened. The engine
     # still computed intent -- it ran against whatever universe it had -- so

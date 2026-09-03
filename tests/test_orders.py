@@ -183,3 +183,106 @@ def test_the_trading_job_runs_after_the_signals_and_only_in_session():
         pd.Timestamp("2026-08-28T22:00:00Z"), history, market_open=False
     )
     assert "trade-capital" not in shut
+
+
+# --------------------------------------------------------------------------- #
+# Why a position was closed, recorded rather than lost
+# --------------------------------------------------------------------------- #
+# M-live: every close in the order store read "reason=(none recorded)", so
+# "did the time stop fire or did the signal reverse" was unanswerable from
+# the log that exists to answer it. The engine writes one of stop_out,
+# take_profit, stop_loss, time_stop or signal on every trade row; nothing
+# carried it to the broker record.
+
+
+def test_the_intents_reason_survives_when_the_broker_gives_none():
+    """record_result wrote the BROKER's reason, which is empty on success.
+
+    That single fallback is why every row said nothing: the bridge's own
+    wording never reached the store either.
+    """
+    import inspect
+
+    from cfdinvest.persist import orders
+
+    source = inspect.getsource(orders.record_result)
+    assert 'getattr(intent, "reason"' in source, (
+        "the intent's reason is discarded, so a close explains nothing"
+    )
+
+
+def test_completed_trips_pairs_opens_with_closes(tmp_path, monkeypatch):
+    """Trips, not orders. The store records orders and "how is it doing" is
+    asked of trips, so the pairing has one owner rather than one per caller.
+    """
+    import json
+
+    from cfdinvest.persist import orders as store
+
+    path = tmp_path / "orders" / "orders.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(store, "_path", lambda config=None, account=None: path)
+
+    rows = [
+        # A short that made money: sold at 100, bought back at 90.
+        {"kind": "result", "action": "open", "epic": "AAA", "ok": True,
+         "status": "OPEN", "error": "", "level": 100.0, "units": 2.0,
+         "direction": "SELL", "at": "2026-09-01T14:00:00+00:00"},
+        {"kind": "result", "action": "close", "epic": "AAA", "ok": True,
+         "status": "CLOSED", "error": "", "level": 90.0, "units": 2.0,
+         "direction": "BUY", "at": "2026-09-01T18:00:00+00:00",
+         "reason": "time_stop"},
+        # A long that lost: bought at 50, sold at 45.
+        {"kind": "result", "action": "open", "epic": "BBB", "ok": True,
+         "status": "OPEN", "error": "", "level": 50.0, "units": 3.0,
+         "direction": "BUY", "at": "2026-09-01T15:00:00+00:00"},
+        {"kind": "result", "action": "close", "epic": "BBB", "ok": True,
+         "status": "CLOSED", "error": "", "level": 45.0, "units": 3.0,
+         "direction": "SELL", "at": "2026-09-02T14:00:00+00:00",
+         "reason": "signal"},
+        # Still open: must not appear as a trip.
+        {"kind": "result", "action": "open", "epic": "CCC", "ok": True,
+         "status": "OPEN", "error": "", "level": 10.0, "units": 1.0,
+         "direction": "BUY", "at": "2026-09-02T15:00:00+00:00"},
+    ]
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+
+    trips = store.completed_trips()
+
+    assert len(trips) == 2, "an unclosed position was counted as a trip"
+    by_name = {t["ticker"]: t for t in trips}
+    # The SHORT made money as the price fell -- sign handled from the open's
+    # own direction, not the close's, which is the opposite by construction.
+    assert by_name["AAA"]["pnl"] == pytest.approx(20.0)
+    assert by_name["BBB"]["pnl"] == pytest.approx(-15.0)
+    assert by_name["AAA"]["reason"] == "time_stop"
+    assert by_name["BBB"]["reason"] == "signal"
+
+
+def test_an_unconfirmed_order_is_not_a_trip(tmp_path, monkeypatch):
+    """A deal reference the broker never turned into a position is not a
+    trade, and counting it would put a phantom in the win rate."""
+    import json
+
+    from cfdinvest.persist import orders as store
+
+    path = tmp_path / "orders" / "orders.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(store, "_path", lambda config=None, account=None: path)
+
+    rows = [
+        {"kind": "result", "action": "open", "epic": "AAA", "ok": False,
+         "status": "REJECTED", "error": "no", "level": 100.0, "units": 2.0,
+         "direction": "SELL", "at": "2026-09-01T14:00:00+00:00"},
+        {"kind": "result", "action": "close", "epic": "AAA", "ok": False,
+         "status": "CLOSED", "error": "POSITION STILL OPEN -- HTTP 403",
+         "level": 90.0, "units": 2.0, "direction": "BUY",
+         "at": "2026-09-01T18:00:00+00:00"},
+    ]
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+
+    assert store.completed_trips() == []

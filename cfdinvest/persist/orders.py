@@ -32,6 +32,7 @@ from typing import Any, Mapping
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "completed_trips",
     "ORDER_DIR",
     "record_plan",
     "record_result",
@@ -108,7 +109,13 @@ def record_result(
         "status": getattr(result, "status", ""),
         "ok": bool(getattr(result, "ok", False)),
         "error": getattr(result, "error", ""),
-        "reason": getattr(result, "reason", ""),
+        # The broker's reason on success is empty, so falling through to the
+        # intent's is what makes a close self-explaining. Recording the
+        # broker's alone is why every row read "(none recorded)".
+        "reason": (
+            str(getattr(result, "reason", "") or "").strip()
+            or str(getattr(intent, "reason", "") or "").strip()
+        ),
     }], config, account)
 
 
@@ -129,6 +136,66 @@ def load_orders(config=None, account: str | None = None) -> list[dict]:
     except OSError as error:
         logger.warning("Order rows unreadable at %s: %s", path, error)
     return rows
+
+
+def completed_trips(config=None, account: str | None = None) -> list[dict]:
+    """Round trips reconstructed from the order store: open paired to close.
+
+    The store records orders, not trips, and the question "how is it doing"
+    is asked of trips. Pairing them here rather than at each call site keeps
+    one answer to what counts as a completed trade.
+
+    P&L is computed from the broker's own confirmed fill levels rather than
+    from the account balance, because the balance also moves with unrealised
+    marks, financing and deposits. It is in the INSTRUMENT's currency and is
+    deliberately not converted: nothing here needs the absolute figure, only
+    the sign, and inventing an exchange rate to make it look like sterling
+    would put a second FX owner in the project.
+
+    FIFO within an instrument. Never raises.
+    """
+    try:
+        rows = [
+            row for row in load_orders(config, account)
+            if row.get("kind") == "result" and _confirmed(row)
+        ]
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not read the order store for trips: %s", error)
+        return []
+    rows.sort(key=lambda r: str(r.get("at") or ""))
+
+    waiting: dict[str, list[dict]] = {}
+    trips: list[dict] = []
+    for row in rows:
+        epic = str(row.get("epic") or "")
+        if not epic:
+            continue
+        action = str(row.get("action") or "")
+        if action == "open":
+            waiting.setdefault(epic, []).append(row)
+        elif action == "close" and waiting.get(epic):
+            opened = waiting[epic].pop(0)
+            try:
+                units = float(opened.get("units") or 0.0)
+                entry = float(opened.get("level") or 0.0)
+                exit_ = float(row.get("level") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if not units or not entry or not exit_:
+                continue
+            side = 1.0 if str(opened.get("direction") or "").upper() == "BUY" else -1.0
+            trips.append({
+                "ticker": epic,
+                "opened_at": opened.get("at"),
+                "closed_at": row.get("at"),
+                "units": units,
+                "entry": entry,
+                "exit": exit_,
+                "pnl": (exit_ - entry) * units * side,
+                # Why the engine let it go, where the record has it.
+                "reason": str(row.get("reason") or ""),
+            })
+    return trips
 
 
 def _confirmed(row: Mapping[str, Any]) -> bool:
