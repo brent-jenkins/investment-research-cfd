@@ -412,3 +412,111 @@ def test_only_the_last_looks_reasons_reach_the_mail(lake):
     reported = orders.last_look_refusals_today(
         [capped, faded], lake, now="2026-09-01T14:00:00+00:00")
     assert [i.ticker for i in reported] == ["AAPL"]
+
+
+# --------------------------------------------------------------------------- #
+# A resize must leave the RECORD describing the position, not the order.
+#
+# The account is in netting mode -- "trades in different direction will close
+# existing trade first", confirmed 2026-09-03 -- so a reduction goes as an
+# opposing order. Trimming a long from 100 to 60 sends SELL 40. Recorded as
+# the order, the record said the position was 40 units SHORT where the
+# account held 60 LONG: wrong in size and inverted in side.
+#
+# reconcile() could not catch it. It compares which epics are held against
+# which are recorded, not how much of each, so the divergence would have been
+# silent.
+#
+# M348 the record taking its size from the order rather than the position
+# M349 the record taking its side from the order, inverting a trim
+# M350 an unreadable fill recorded as a flat position
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class Filled:
+    size: float
+    direction: str = "BUY"
+    level: float = 100.0
+    deal_id: str = "d1"
+    reference: str = "r1"
+    status: str = "OPEN"
+    ok: bool = True
+    error: str = ""
+    reason: str = ""
+
+
+def test_trimming_a_long_records_the_remaining_position(lake):
+    """SELL 40 against 100 long leaves 60 long, not 40 short."""
+    trim = Intent("AAPL", "AAPL", "resize", direction="long",
+                  held_units=100.0, target_units=60.0)
+    orders.record_result(trim, Filled(size=40.0, direction="SELL"), lake,
+                         now="2026-09-03T14:00:00+00:00")
+
+    held = orders.open_orders(lake)["AAPL"]
+    assert held["size"] == pytest.approx(60.0), (
+        f"the record says {held['size']} units where the account holds 60; "
+        "it took the size from the order rather than the position"
+    )
+    assert str(held["direction"]).upper() not in ("SELL", "SHORT"), (
+        f"trimming a long recorded the position as {held['direction']}; the "
+        "opposing order's side was mistaken for the position's"
+    )
+
+
+def test_adding_to_a_long_records_the_larger_position(lake):
+    add = Intent("AAPL", "AAPL", "resize", direction="long",
+                 held_units=100.0, target_units=140.0)
+    orders.record_result(add, Filled(size=40.0, direction="BUY"), lake,
+                         now="2026-09-03T14:00:00+00:00")
+    assert orders.open_orders(lake)["AAPL"]["size"] == pytest.approx(140.0)
+
+
+def test_reducing_a_short_records_it_as_still_short(lake):
+    """Held -100 to -60: a BUY of 40 that leaves a 60-unit short."""
+    trim = Intent("AAPL", "AAPL", "resize", direction="short",
+                  held_units=-100.0, target_units=-60.0)
+    orders.record_result(trim, Filled(size=40.0, direction="BUY"), lake,
+                         now="2026-09-03T14:00:00+00:00")
+
+    held = orders.open_orders(lake)["AAPL"]
+    assert held["size"] == pytest.approx(60.0)
+    assert str(held["direction"]).upper() in ("SELL", "SHORT"), (
+        f"reducing a short recorded it as {held['direction']}; buying back "
+        "40 of a 100-unit short leaves a short, not a long"
+    )
+
+
+def test_a_partial_fill_records_what_actually_happened(lake):
+    """Filled 25 of a 40-unit trim leaves 75, not the 60 that was asked for."""
+    trim = Intent("AAPL", "AAPL", "resize", direction="long",
+                  held_units=100.0, target_units=60.0)
+    orders.record_result(trim, Filled(size=25.0, direction="SELL"), lake,
+                         now="2026-09-03T14:00:00+00:00")
+    assert orders.open_orders(lake)["AAPL"]["size"] == pytest.approx(75.0), (
+        "the record took the intended target rather than the filled size"
+    )
+
+
+def test_an_unreadable_fill_is_not_recorded_as_flat(lake):
+    """Unknown must not read as closed -- that is the dangerous way to be wrong."""
+    add = Intent("AAPL", "AAPL", "open", direction="long",
+                 held_units=0.0, target_units=40.0)
+    orders.record_result(add, Filled(size=None, direction="BUY"), lake,
+                         now="2026-09-03T14:00:00+00:00")
+    held = orders.open_orders(lake).get("AAPL") or {}
+    assert held.get("size") != 0.0, (
+        "an unreadable fill was recorded as a flat position, which reads as "
+        "closed and would hide a live position from reconciliation"
+    )
+
+
+def test_an_open_is_unchanged_by_the_position_fields(lake):
+    """Held is zero on an open, so order and position agree -- as before."""
+    add = Intent("AAPL", "AAPL", "open", direction="long",
+                 held_units=0.0, target_units=40.0)
+    orders.record_result(add, Filled(size=40.0, direction="BUY"), lake,
+                         now="2026-09-03T14:00:00+00:00")
+    held = orders.open_orders(lake)["AAPL"]
+    assert held["size"] == pytest.approx(40.0)
+    assert str(held["direction"]).upper() in ("BUY", "LONG")

@@ -89,6 +89,37 @@ def record_plan(report, config=None, account: str | None = None, *, now=None) ->
     return _append(rows, config, account)
 
 
+def _resulting_position(intent, result):
+    """The position after an order: its magnitude and side.
+
+    Returns ``(None, "")`` when the fill size is unreadable, so an unknown
+    result stays unknown rather than being recorded as a position of zero --
+    which would read as "closed" and is the dangerous way to be wrong.
+    """
+    action = str(getattr(intent, "action", "") or "")
+    if action == "close":
+        return 0.0, ""
+    filled = getattr(result, "size", None)
+    try:
+        size = abs(float(filled))
+    except (TypeError, ValueError):
+        return None, ""
+    try:
+        held = float(getattr(intent, "held_units", 0.0) or 0.0)
+        target = float(getattr(intent, "target_units", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None, ""
+
+    if action == "resize":
+        # The order moved the position by `size` in the direction of travel.
+        # Using the filled size rather than the target means a partial fill
+        # records what actually happened.
+        resulting = held + (size if target > held else -size)
+    else:
+        resulting = size if target >= 0 else -size
+    return abs(resulting), ("SELL" if resulting < 0 else "BUY")
+
+
 def record_result(
     intent, result, config=None, account: str | None = None, *, now=None
 ) -> int:
@@ -98,6 +129,22 @@ def record_result(
     reference alone is not a fill, so an accepted-but-unconfirmed order lands
     here with ``ok`` false and its error intact.
     """
+    # What the ORDER was, and separately what the POSITION now is. They are
+    # the same thing for an open and different for a resize, and recording
+    # only the order was wrong in both fields.
+    #
+    # The account is in netting mode ("trades in different direction will
+    # close existing trade first"), confirmed by the owner on 2026-09-03, so
+    # a reduction goes as an opposing order: trimming a long sends SELL for
+    # the DELTA. Recorded naively that made the record say the position was
+    # now SHORT and 40 units, when the account held 60 units LONG. Wrong in
+    # size and inverted in direction, and `reconcile` could not catch it
+    # because it compares which epics are held, not how much.
+    #
+    # Latent: rebalance_threshold = 3.0 disables resizing, so no resize has
+    # ever been recorded. Fixed here rather than when it is enabled, because
+    # the record is what reconciliation trusts.
+    position_units, position_direction = _resulting_position(intent, result)
     return _append([{
         "at": str(now or ""),
         "kind": "result",
@@ -106,6 +153,11 @@ def record_result(
         "action": intent.action,
         "direction": getattr(result, "direction", "") or intent.direction,
         "units": getattr(result, "size", None),
+        #: The position after this order, not the order itself. Preferred by
+        #: `open_orders`; absent on rows written before 2026-09-03, where the
+        #: order and the position agreed anyway.
+        "position_units": position_units,
+        "position_direction": position_direction,
         "level": getattr(result, "level", None),
         "deal_id": getattr(result, "deal_id", "") or intent.deal_id,
         "reference": getattr(result, "reference", ""),
@@ -260,9 +312,17 @@ def open_orders(config=None, account: str | None = None) -> dict[str, dict[str, 
         if row.get("action") == "close":
             live.pop(epic, None)
         else:
+            # The position, not the order. `units` is what was SENT, which
+            # for a resize is the delta and for a reduction carries the
+            # opposing side; `position_units` is what the account now holds.
+            # Older rows have neither, and for them the two agreed.
+            size = row.get("position_units")
+            direction = row.get("position_direction") or row.get("direction")
+            if size is None:
+                size, direction = row.get("units"), row.get("direction")
             live[epic] = {
-                "size": row.get("units"),
-                "direction": row.get("direction"),
+                "size": size,
+                "direction": direction,
                 "deal_id": row.get("deal_id"),
                 "level": row.get("level"),
             }

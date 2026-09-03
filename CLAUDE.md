@@ -843,13 +843,32 @@ person to lower that threshold would have found it. Fixed to take the side
 from the delta, which also handles shorts -- held −100 reducing to −60 is a
 delta of +40, and buying back is how a short shrinks.
 
-**Capital has no partial close.** `close_position` sends `DELETE /positions/
-{dealId}` with no size, so it shuts the position in full; a reduction has to
-go as an opposing order on the same epic. Whether those net or open a second
-position depends on the account's mode, and that is unverified on the demo
-account -- it must be checked before resizing is enabled, because a
-"reduction" that opens an opposing position doubles the margin instead of
-halving it.
+**Capital has no partial close, and the account is in netting mode.**
+`close_position` sends `DELETE /positions/{dealId}` with no size, so it shuts
+the position in full; a reduction has to go as an opposing order on the same
+epic. The owner confirmed the setting on 2026-09-03: **Normal**, where
+"trades in different direction will close existing trade first", as opposed
+to Hedging where both would stay open and both would pay overnight funding.
+
+That is the answer that unblocks resizing for margin defence -- an opposing
+order genuinely reduces and genuinely releases the margin, rather than
+opening a second position and doubling it. It is a fact about the account
+that nothing in the repository can tell you, which is why it is written here.
+
+**And it exposed two more latent bugs in the same disabled path.** Trimming a
+long from 100 units to 60 sends SELL 40, and `record_result` stored the
+ORDER: `units` from `result.size` and `direction` from `result.direction`. So
+the record would have said the position was **40 units SHORT** where the
+account held **60 LONG** -- wrong in size and inverted in side.
+
+`reconcile` could not have caught it. It compares which epics are held
+against which are recorded, not how much of each, so the divergence would
+have been silent while every downstream reader believed it. The result row
+now carries `position_units` and `position_direction` -- what the account
+holds after the order, computed from the filled size so a partial fill
+records what happened rather than what was asked for -- and `open_orders`
+prefers them, falling back for rows written before today, where the order and
+the position agreed anyway.
 
 **For drift rebalancing it stays rejected**, on the measurement already
 recorded: 0.5 returns 178.9% against 254.9%, and 1.0's apparent +11.5pp is
