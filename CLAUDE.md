@@ -695,6 +695,55 @@ counting a cap's refusal as the gate's.
 10.0 bp". It charges **5.0bp** round trip, retracted in this file on
 2026-08-28 and still standing on the page a person reads before dealing.
 
+**The rule that would have caught all three is now enforced, and it found a
+fourth immediately.** "Measure through the engine" caught none of these,
+because in every case the measuring was fine and the *modelling* was
+incomplete. Some of these rules cannot live in the engine at all — the last
+look needs a live broker quote, which does not exist at backtest decision
+time — so the engine's job is to model them, and nothing obliged it to.
+
+`tests/test_engine_models_dealing.py` now fails the build when a parameter of
+`bridge.plan_orders` has no `ExecutionConfig` counterpart. The check is total
+rather than selective: **every** parameter must be classified, either mapped
+to the engine field that models it or declared not-a-gate with a stated
+reason, so a new parameter of any kind fails until somebody has answered "does
+the engine model this?" — the question nobody asked three times. The mapping
+is resolved against a real `ExecutionConfig`, so a renamed or deleted field
+fails here rather than silently un-modelling a rule the account still applies.
+
+Running it found `max_opens_per_pass = 3` unmodelled. `bridge.plan_orders`
+opens at most three positions per pass and defers the rest by conviction; it
+fired 11 times in the account's first week. `concentration` was flagged by a
+first pass and is a false alarm — the engine models it under a different
+name.
+
+**And it does not matter, which is the useful half of the result.**
+
+    arm                        CAGR    maxDD   trades   vs no budget
+    budget off               467.7%    44.4%    3,219
+    3 per bar                479.1%    44.3%    3,199        +11.5pp
+    6 per bar                465.6%    44.4%    3,218         -2.1pp
+    12 per bar               467.7%    44.4%    3,219         +0.0pp
+
+The reading that matters is the last one. Production runs a dealing pass every
+**fifteen minutes** and the engine bar is an **hour**, so a budget of 3 per
+pass permits up to 12 opens per bar — and at 12 the gate is *exactly* inert,
+identical to no budget on every figure and on all 3,219 trades. Modelling it
+at 3 per bar is roughly four times tighter than the account and its +11.5pp
+rests on 20 trades out of 3,219, inside the 8pp floor and measuring a
+constraint nobody runs.
+
+So the gap was real and the consequence is nil. Recorded at length anyway,
+because the cheap version of this entry — "found another unmodelled gate,
+worth +11.5pp" — is exactly the shape of the wrong numbers this file keeps
+having to retract, and the difference is entirely in noticing that a pass and
+a bar are not the same unit.
+
+`ExecutionConfig.max_opens_per_pass` defaults to `None` and is not wired into
+`_execution_config`, for the same reason `entry_recheck` is not: the daemon's
+live intents come from that config, and applying the budget there would
+throttle opens the bridge is already throttling.
+
 **One thing still outstanding.** The last look's docstring measurement — 9.5% refused, refused
 trips averaging −0.331% against +0.011% kept, t=+4.63 — dates from
 2026-08-27, before the Capital feed switch, the corrected cost model and

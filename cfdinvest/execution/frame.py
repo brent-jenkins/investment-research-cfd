@@ -219,6 +219,29 @@ class ExecutionConfig:
     #: one fires, which is the conservative direction: if the refused trades
     #: are the bad ones, the account does better than this says, not worse.
     entry_recheck: bool = False
+    #: How many NEW positions may be opened on one bar.
+    #:
+    #: The dealing pass opens at most this many and defers the rest to the
+    #: next pass, keeping the highest-conviction ones -- a margin control, so
+    #: that a day on which everything fires at once cannot commit the whole
+    #: balance in one go. ``bridge.plan_orders`` has applied it since the
+    #: account opened, at 3, and it fired 11 times in the first week.
+    #:
+    #: The engine modelled none of it, which is the fourth instance of one
+    #: failure and the one found by asking the question systematically rather
+    #: than by tripping over it. See ``tests/test_engine_models_dealing.py``,
+    #: which now fails the build on a dealing gate with no engine counterpart.
+    #:
+    #: Deferred, not refused. A position not opened this bar is reconsidered
+    #: on the next one, so the modelled effect is a delay rather than a
+    #: rejection -- which is why its impact is expected to be small on hourly
+    #: bars, where a 15-minute deferral usually lands inside the same bar.
+    #: Expected is not measured, and that expectation is what this field
+    #: exists to test.
+    #:
+    #: ``None`` disables it, which is the engine default: it is a modelling
+    #: switch, and a shipped figure cannot move because a new field appeared.
+    max_opens_per_pass: int | None = None
     #: Trades smaller than this in units are ignored as noise.
     minimum_trade_units: float = 1e-9
 

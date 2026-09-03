@@ -582,6 +582,14 @@ def run_execution(signal_frame, analysis_frame, config):
         )
         target_units = _apply_leverage_cap(target_units, reference, equity, config)
 
+        # And the per-pass opening budget, applied last among the sizing
+        # decisions because that is where the dealing path applies it: the
+        # caps above shape the book, and this one decides how much of the
+        # reshaping actually happens on this bar.
+        target_units = _defer_surplus_opens(
+            target_units, units, confidence[bar], config
+        )
+
         stop_out = False
         if config.stop_out_level is not None and equity <= config.stop_out_level * peak_equity:
             stop_out = True
@@ -1056,6 +1064,52 @@ def _apply_position_limit(target_units, new_held, units, config):
     target_units = np.where(keep, target_units, 0.0)
     new_held = np.where(keep, new_held, 0).astype(new_held.dtype)
     return target_units, new_held
+
+
+def _defer_surplus_opens(target_units, units, confidence, config):
+    """Cap how many NEW positions may open on one bar, by conviction.
+
+    ``bridge.plan_orders`` opens at most ``max_opens_per_pass`` positions in
+    a pass and defers the rest, ranked by the confidence the last look read
+    back. It is a margin control rather than a selection rule: a day on which
+    every name fires at once would otherwise commit the whole balance in one
+    go, and the deferred names are reconsidered fifteen minutes later.
+
+    Deferred, not refused, and the distinction matters for what this models.
+    Zeroing the target leaves the position unopened on this bar only; the
+    signal is re-evaluated on the next one and may open then. That is the
+    faithful analogue of waiting for the next pass.
+
+    Opens only. A close is never deferred -- refusing an exit is never the
+    safe direction -- and a resize is an adjustment to something already
+    held, not a new commitment of margin. Both are left alone, which is the
+    line the dealing path draws.
+
+    A reversal is not an open here, for the same reason it is not one there:
+    the bridge splits a flip into a close and an open, and only the flat-to-
+    held transition consumes the budget.
+    """
+    limit = getattr(config, "max_opens_per_pass", None)
+    if limit is None:
+        return target_units
+    limit = int(limit)
+    if limit < 0:
+        return target_units
+
+    opening = (target_units != 0) & (units == 0)
+    if int(opening.sum()) <= limit:
+        return target_units
+
+    # Rank by conviction, and send an absent score to the back rather than
+    # treating it as zero -- "no reading" is not "no confidence", and a nan
+    # sorting high would hand the budget to the least-understood name.
+    scores = np.where(
+        opening, np.nan_to_num(confidence, nan=-np.inf, neginf=-np.inf), -np.inf
+    )
+    keep = np.argsort(-scores, kind="stable")[:limit]
+    allowed = np.zeros(len(target_units), dtype=bool)
+    allowed[keep] = True
+    return np.where(opening & ~allowed, 0.0, target_units)
 
 
 def _apply_concentration_cap(units, reference, equity, config):

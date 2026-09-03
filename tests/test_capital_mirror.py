@@ -867,3 +867,210 @@ def test_the_last_look_is_off_by_default_and_changes_nothing_when_off():
     assert defaulted.positions["AAA"].fillna(0.0).equals(
         explicit.positions["AAA"].fillna(0.0)
     )
+
+
+# --------------------------------------------------------------------------- #
+# The per-pass opening budget.
+#
+# bridge.plan_orders has opened at most `max_opens_per_pass` positions since
+# the account opened, deferring the rest by conviction. It fired 11 times in
+# the first week and the engine modelled none of it -- the fourth instance of
+# one failure, and the first found by asking the question systematically
+# rather than by tripping over it.
+#
+# Mutations checked, each reintroduced and confirmed to fail:
+#   M329 the budget ignored, so every signal opens at once
+#   M330 the budget applied to closes, stranding positions
+#   M331 the budget applied to resizes, freezing existing positions
+#   M332 the survivors chosen arbitrarily rather than by conviction
+#   M333 an absent confidence sorting high, handing the budget to the least
+#        understood name
+# --------------------------------------------------------------------------- #
+
+
+def _budget_frames(directions_by_asset, confidences_by_asset, bars=4):
+    """A panel of several instruments that all fire on the same bar."""
+    import numpy as np
+    import pandas as pd
+
+    from cfdinvest.preprocessing.frame import AnalysisFrame
+    from cfdinvest.signals.frame import SignalFrame
+
+    assets = list(directions_by_asset)
+    index = pd.DatetimeIndex([
+        pd.Timestamp("2026-01-05 13:00", tz="UTC") + pd.Timedelta(hours=n)
+        for n in range(bars)
+    ])
+    close = pd.DataFrame(
+        {a: np.linspace(100.0, 100.0 + 2.0 * bars, bars) for a in assets},
+        index=index,
+    )
+    direction = pd.DataFrame(
+        {a: list(directions_by_asset[a]) for a in assets}, index=index)
+    size = pd.DataFrame(
+        {a: [0.0 if d == "flat" else 0.1 for d in directions_by_asset[a]]
+         for a in assets}, index=index)
+    confidence = pd.DataFrame(
+        {a: list(confidences_by_asset[a]) for a in assets}, index=index)
+    signals = SignalFrame(
+        direction=direction, size=size, confidence=confidence,
+        reason=pd.DataFrame({a: [""] * bars for a in assets}, index=index),
+    )
+    analysis = AnalysisFrame(
+        prices={"close": close, "open": close, "high": close, "low": close},
+        returns=close.pct_change().fillna(0.0),
+    )
+    return index, signals, analysis
+
+
+def test_only_the_budgeted_number_of_positions_open_on_one_bar():
+    """Five signals, a budget of two: three must wait."""
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    assets = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+    scores = {"AAA": 0.9, "BBB": 0.8, "CCC": 0.7, "DDD": 0.6, "EEE": 0.5}
+    index, signals, analysis = _budget_frames(
+        {a: ["long"] * 4 for a in assets},
+        {a: [scores[a]] * 4 for a in assets},
+    )
+
+    unlimited = run_backtest(signals, analysis, ExecutionConfig(
+        execution_lag=0, max_opens_per_pass=None))
+    budgeted = run_backtest(signals, analysis, ExecutionConfig(
+        execution_lag=0, max_opens_per_pass=2))
+
+    first = index[0]
+    opened_free = (unlimited.positions.loc[first].fillna(0.0) != 0).sum()
+    opened_capped = (budgeted.positions.loc[first].fillna(0.0) != 0).sum()
+
+    assert opened_free == 5, (
+        f"the control opened {opened_free} of 5, so the budget has nothing to cut"
+    )
+    assert opened_capped == 2, (
+        f"{opened_capped} positions opened on one bar against a budget of 2"
+    )
+
+
+def test_the_budget_keeps_the_highest_conviction_names():
+    """The dealing path ranks the survivors by confidence, and so must this."""
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    assets = ["AAA", "BBB", "CCC", "DDD"]
+    # Deliberately not in column order, so a rule that simply takes the first
+    # two columns cannot pass.
+    scores = {"AAA": 0.4, "BBB": 0.95, "CCC": 0.5, "DDD": 0.9}
+    index, signals, analysis = _budget_frames(
+        {a: ["long"] * 4 for a in assets},
+        {a: [scores[a]] * 4 for a in assets},
+    )
+
+    result = run_backtest(signals, analysis, ExecutionConfig(
+        execution_lag=0, max_opens_per_pass=2))
+    held = result.positions.loc[index[0]].fillna(0.0)
+    opened = {a for a in assets if held[a] != 0}
+
+    assert opened == {"BBB", "DDD"}, (
+        f"the budget kept {sorted(opened)} where conviction ranks BBB and DDD "
+        "highest; it is choosing arbitrarily rather than by confidence"
+    )
+
+
+def test_a_deferred_open_is_reconsidered_rather_than_lost():
+    """Deferred, not refused: the next bar is the next pass."""
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    assets = ["AAA", "BBB"]
+    # AAA wins the budget on bar 0 and goes flat afterwards; BBB is refused on
+    # bar 0 and should get in once the budget frees up.
+    index, signals, analysis = _budget_frames(
+        {"AAA": ["long", "flat", "flat", "flat"],
+         "BBB": ["long", "long", "long", "long"]},
+        {"AAA": [0.9] * 4, "BBB": [0.5] * 4},
+    )
+
+    result = run_backtest(signals, analysis, ExecutionConfig(
+        execution_lag=0, max_opens_per_pass=1))
+    held = result.positions["BBB"].fillna(0.0)
+
+    assert float(held.iloc[0]) == 0.0, "BBB should have lost the budget on bar 0"
+    assert (held != 0).any(), (
+        "BBB was never opened at all: a deferred open has been turned into a "
+        "permanent refusal, which is not what the dealing path does"
+    )
+
+
+def test_the_budget_never_defers_a_close():
+    """Refusing an exit is never the safe direction."""
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    assets = ["AAA", "BBB", "CCC"]
+    # All three open on bar 0 with the budget wide, then all three go flat.
+    index, signals, analysis = _budget_frames(
+        {a: ["long", "long", "flat", "flat"] for a in assets},
+        {a: [0.9] * 4 for a in assets},
+    )
+
+    result = run_backtest(signals, analysis, ExecutionConfig(
+        execution_lag=0, max_opens_per_pass=1))
+    final = result.positions.iloc[-1].fillna(0.0)
+
+    assert (final == 0).all(), (
+        f"positions were still held at the end: {dict(final)}. The opening "
+        "budget has leaked into the exit path and stranded them."
+    )
+
+
+def test_the_budget_is_off_by_default():
+    """A new field cannot move a shipped figure."""
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    assert ExecutionConfig().max_opens_per_pass is None
+
+    assets = ["AAA", "BBB", "CCC"]
+    _, signals, analysis = _budget_frames(
+        {a: ["long"] * 4 for a in assets},
+        {a: [0.9] * 4 for a in assets},
+    )
+    defaulted = run_backtest(signals, analysis, ExecutionConfig(execution_lag=0))
+    explicit = run_backtest(signals, analysis, ExecutionConfig(
+        execution_lag=0, max_opens_per_pass=None))
+    assert defaulted.positions.fillna(0.0).equals(explicit.positions.fillna(0.0))
+
+
+def test_an_absent_confidence_does_not_win_the_opening_budget():
+    """Tested on the helper directly, because the engine cannot reach it.
+
+    ``entry_confidence`` is 0.35 and a nan fails that comparison, so a name
+    with no score never opens and never competes for the budget. The guard is
+    defence in depth against a future caller with a lower bar -- and an
+    untestable guard is exactly the kind this project has shipped inert
+    before, so it is asserted where it can be.
+
+    "No reading" is not "no confidence": a nan sorting high would hand the
+    budget to the least-understood name in the book.
+    """
+    import numpy as np
+
+    from cfdinvest.execution.engine import _defer_surplus_opens
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    config = ExecutionConfig(max_opens_per_pass=1)
+    target = np.array([10.0, 10.0])
+    held = np.array([0.0, 0.0])
+
+    # The scored name must win over the unscored one, whichever way round.
+    kept = _defer_surplus_opens(target.copy(), held, np.array([0.5, np.nan]),
+                                config)
+    assert kept[0] != 0 and kept[1] == 0, (
+        f"an absent confidence took the budget from a scored name: {kept}"
+    )
+    flipped = _defer_surplus_opens(target.copy(), held, np.array([np.nan, 0.5]),
+                                   config)
+    assert flipped[1] != 0 and flipped[0] == 0, (
+        f"the result depends on column order rather than on score: {flipped}"
+    )
