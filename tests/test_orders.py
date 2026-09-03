@@ -286,3 +286,129 @@ def test_an_unconfirmed_order_is_not_a_trip(tmp_path, monkeypatch):
             handle.write(json.dumps(row) + "\n")
 
     assert store.completed_trips() == []
+
+
+# --------------------------------------------------------------------------- #
+# The last look, surfaced.
+#
+# `advisor/livecheck.py` refuses an open when the signal no longer stands at
+# the moment of dealing. It blocked roughly a fifth of candidate opens over
+# the account's first week and nothing reported it: the dealing mail is
+# suppressed when a pass places nothing, so a pass where the gate refused
+# everything sent no mail at all.
+#
+# M321 refusals counted per row, so a name refused twice reads as two
+# M322 no record at all reported as a gate that refused nothing
+# M323 the same refusal mailed every fifteen minutes until it clears
+# M324 a limit's refusal counted as the last look's
+# --------------------------------------------------------------------------- #
+
+
+def _plan(rows):
+    """A report-shaped object carrying intents, as record_plan expects."""
+    @dataclass(frozen=True)
+    class Report:
+        intents: tuple
+        halted: bool = False
+        halt_reason: str = ""
+        balance: float | None = 5_000.0
+
+    return Report(intents=tuple(rows))
+
+
+def test_refusals_are_counted_per_instrument_day_not_per_pass(lake):
+    """The dealing pass runs every fifteen minutes and records every intent.
+
+    A name refused at 14:00 and again at 14:15 is one decision described
+    twice. Counting rows roughly triples the rate, which would make a gate
+    that fired once look like a gate firing constantly.
+    """
+    refusal = Intent("AAPL", "AAPL", "refused", reason="no longer a signal")
+    for stamp in ("2026-09-01T14:00:00+00:00", "2026-09-01T14:15:00+00:00",
+                  "2026-09-01T14:30:00+00:00"):
+        orders.record_plan(_plan([refusal]), lake, now=stamp)
+
+    summary = orders.refusal_summary(lake, days=3650)
+    assert summary["checked"] is True
+    assert summary["blocked"] == 1, (
+        f"three passes describing one refusal counted as {summary['blocked']}"
+    )
+    assert summary["considered"] == 1
+    assert summary["reasons"] == {"no longer a signal": 1}
+
+
+def test_a_refusal_that_later_opens_is_not_counted_as_blocked(lake):
+    """Refused at 14:00, cleared at 14:30: the gate delayed it, not blocked it."""
+    orders.record_plan(
+        _plan([Intent("AAPL", "AAPL", "refused",
+                      reason="no longer clears the bar")]),
+        lake, now="2026-09-01T14:00:00+00:00",
+    )
+    orders.record_plan(
+        _plan([Intent("AAPL", "AAPL", "open")]),
+        lake, now="2026-09-01T14:30:00+00:00",
+    )
+
+    summary = orders.refusal_summary(lake, days=3650)
+    assert summary["blocked"] == 0
+    assert summary["opened_anyway"] == 1
+    assert summary["considered"] == 1
+
+
+def test_no_order_record_is_unchecked_rather_than_a_quiet_gate(lake):
+    """Absence named. "Never dealt" and "refused nothing" are different."""
+    summary = orders.refusal_summary(lake)
+    assert summary["checked"] is False
+    assert summary["blocked"] == 0
+    # And the moment there is a record, the same reading becomes a real zero.
+    orders.record_plan(_plan([Intent("AAPL", "AAPL", "open")]), lake,
+                       now="2026-09-01T14:00:00+00:00")
+    after = orders.refusal_summary(lake, days=3650)
+    assert after["checked"] is True
+    assert after["blocked"] == 0
+
+
+def test_a_limit_refusal_is_not_the_last_look(lake):
+    """Only the gate's own reasons count, or the panel measures the caps."""
+    for reason in ("outside the exchange session", "within the opening window",
+                   "no price", "capped by the per-instrument limit"):
+        orders.record_plan(
+            _plan([Intent("AAPL", "AAPL", "refused", reason=reason)]),
+            lake, now="2026-09-01T14:00:00+00:00",
+        )
+    summary = orders.refusal_summary(lake, days=3650)
+    assert summary["blocked"] == 0, (
+        f"a limit's refusal was attributed to the last look: {summary['reasons']}"
+    )
+    assert summary["reasons"] == {}
+
+
+def test_the_same_refusal_is_reported_once_a_day_not_once_a_pass(lake):
+    """The mail must not repeat a name every fifteen minutes until it clears."""
+    refusal = Intent("AAPL", "AAPL", "refused", reason="no longer a signal")
+
+    first = orders.last_look_refusals_today(
+        [refusal], lake, now="2026-09-01T14:00:00+00:00")
+    assert [i.ticker for i in first] == ["AAPL"], (
+        "the first refusal of the day was not reported"
+    )
+
+    orders.record_plan(_plan([refusal]), lake, now="2026-09-01T14:00:00+00:00")
+    again = orders.last_look_refusals_today(
+        [refusal], lake, now="2026-09-01T14:15:00+00:00")
+    assert again == [], "the same refusal was reported twice in one day"
+
+    # A new day is news again -- the position it would have opened is a
+    # different position.
+    tomorrow = orders.last_look_refusals_today(
+        [refusal], lake, now="2026-09-02T14:00:00+00:00")
+    assert [i.ticker for i in tomorrow] == ["AAPL"]
+
+
+def test_only_the_last_looks_reasons_reach_the_mail(lake):
+    """A cap doing its job is not news; the gate changing its mind is."""
+    capped = Intent("MSFT", "MSFT", "refused", reason="no price")
+    faded = Intent("AAPL", "AAPL", "refused", reason="no longer clears the bar")
+    reported = orders.last_look_refusals_today(
+        [capped, faded], lake, now="2026-09-01T14:00:00+00:00")
+    assert [i.ticker for i in reported] == ["AAPL"]

@@ -1436,7 +1436,7 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         if not getattr(args, "no_email", False):
             _send_capital_trades(
                 outcomes, refused_intents, account, settings.broker.environment,
-                smtp, transport,
+                smtp, transport, app_config, account_name, now=now,
             )
 
     refused = len(refused_intents)
@@ -1489,7 +1489,8 @@ def _plain_message(subject: str, lines, smtp=None):
 
 
 def _send_capital_trades(
-    outcomes, refused, account, environment, smtp, transport
+    outcomes, refused, account, environment, smtp, transport,
+    app_config=None, account_name=None, now=None,
 ) -> None:
     """What the account did this pass. Never raises.
 
@@ -1551,7 +1552,35 @@ def _send_capital_trades(
             lines += ["", f"Balance: {balance:,.2f} "
                           f"{getattr(account, 'currency', '') or ''}".rstrip()]
 
-        if not done and not failed:
+        # A pass that places nothing is usually a quiet pass and mailing it
+        # would be noise. It is NOT quiet when the last look refused an open:
+        # the account decided not to trade on fresh information, and that is
+        # the decision worth hearing about. That gate ran for a week blocking
+        # roughly a fifth of candidate opens and this branch is why nobody
+        # saw it -- a pass where it refused everything sent no mail at all.
+        #
+        # Reported once per instrument per day rather than every fifteen
+        # minutes, from the order store rather than from state held here.
+        blocked = []
+        try:
+            from cfdinvest.persist import orders as order_store
+
+            blocked = order_store.last_look_refusals_today(
+                refused, app_config, account_name, now=now
+            )
+        except Exception as error:  # noqa: BLE001 - a mail is not an outage
+            logger.warning("Could not read today's refusals: %s", error)
+
+        if blocked:
+            lines += ["", "Refused before opening -- the signal no longer stood "
+                          "when the order was about to go in:"]
+            for intent in blocked:
+                lines.append(
+                    f"  {intent.ticker:6s} {intent.direction or '':5s} "
+                    f"{intent.reason}"
+                )
+
+        if not done and not failed and not blocked:
             logger.info(
                 "Capital: %d refused and nothing placed; no mail sent", len(refused)
             )
@@ -1559,6 +1588,7 @@ def _send_capital_trades(
         subject = (
             f"{len(done)} done, {len(failed)} failed "
             f"on the Capital {where} account"
+            + (f", {len(blocked)} refused before opening" if blocked else "")
         )
         notify.send(
             _plain_message(subject, lines, smtp),

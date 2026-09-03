@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "completed_trips",
+    "LAST_LOOK_REASONS",
+    "last_look_refusals_today",
+    "refusal_summary",
     "ORDER_DIR",
     "record_plan",
     "record_result",
@@ -264,3 +267,153 @@ def open_orders(config=None, account: str | None = None) -> dict[str, dict[str, 
                 "level": row.get("level"),
             }
     return live
+
+#: The refusals that come from the last look, as opposed to a limit.
+#:
+#: One owner. ``advisor.livecheck.holds`` produces these strings and this is
+#: the only place that says which of the bridge's refusals mean "the decision
+#: no longer stands" rather than "a cap was in the way". A second copy would
+#: drift, and the day it drifted the page would report a different gate from
+#: the email.
+#:
+#: ``not re-checked`` belongs here and is the important one: it is what the
+#: gate returns when it could not compute an opinion at all, and the bridge
+#: treats it as a refusal because unchecked is not approved. A run where it
+#: dominates is a broken check, not a selective one, and the two must be
+#: distinguishable on sight.
+LAST_LOOK_REASONS = frozenset({
+    "no longer a signal",
+    "no longer clears the bar",
+    "direction reversed since the signal",
+    "not re-checked",
+})
+
+
+def refusal_summary(
+    config=None, account: str | None = None, *, days: int = 7, now=None
+) -> dict:
+    """What the last look refused, collapsed to instrument-days.
+
+    The dealing pass runs every fifteen minutes and records one row per
+    intent, so a name refused at 14:00, again at 14:15 and opened at 14:30
+    is three rows describing one decision. Counting rows triples the refusal
+    rate and makes a gate that fired once look like a gate firing constantly.
+    Collapsed here, once, so the page and the mail cannot disagree about it.
+
+    Absence is named rather than inferred. ``checked`` is False when there is
+    no order record at all -- a system that has never dealt and a system whose
+    gate never fires are different statements, and only one of them is
+    reassuring. A returned zero means the gate ran and refused nothing.
+    """
+    rows = load_orders(config, account)
+    summary = {
+        "checked": bool(rows),
+        "days": int(days),
+        "considered": 0,
+        "blocked": 0,
+        "opened_anyway": 0,
+        "reasons": {},
+        "recent": [],
+    }
+    if not rows:
+        return summary
+
+    cutoff = None
+    if days and days > 0:
+        try:
+            import pandas as pd
+
+            end = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
+            if end.tz is None:
+                end = end.tz_localize("UTC")
+            cutoff = (end - pd.Timedelta(days=int(days))).isoformat()
+        except Exception:  # noqa: BLE001 - a bad clock must not blank the panel
+            cutoff = None
+
+    opened: set[tuple[str, str]] = set()
+    refused: dict[tuple[str, str], set[str]] = {}
+    for row in rows:
+        if str(row.get("kind") or "") != "plan":
+            continue
+        stamp = str(row.get("at") or "")
+        if cutoff and stamp and stamp < cutoff:
+            continue
+        ticker = str(row.get("ticker") or "")
+        if not ticker:
+            continue
+        key = (stamp[:10], ticker)
+        action = str(row.get("action") or "")
+        if action == "open":
+            opened.add(key)
+        elif action == "refused":
+            why = str(row.get("reason") or "")
+            if why in LAST_LOOK_REASONS:
+                refused.setdefault(key, set()).add(why)
+
+    blocked = set(refused) - opened
+    summary["considered"] = len(set(opened) | set(refused))
+    summary["blocked"] = len(blocked)
+    summary["opened_anyway"] = len(set(refused) & opened)
+    counts: dict[str, int] = {}
+    for key, reasons in refused.items():
+        for why in reasons:
+            counts[why] = counts.get(why, 0) + 1
+    summary["reasons"] = dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+    summary["recent"] = sorted(
+        (
+            {
+                "day": day, "ticker": ticker,
+                "reason": ", ".join(sorted(reasons)),
+                "opened_anyway": (day, ticker) in opened,
+            }
+            for (day, ticker), reasons in refused.items()
+        ),
+        key=lambda entry: (entry["day"], entry["ticker"]),
+        reverse=True,
+    )
+    return summary
+
+
+def last_look_refusals_today(
+    intents, config=None, account: str | None = None, *, now=None
+) -> list:
+    """Of this pass's last-look refusals, the ones not already reported today.
+
+    The dealing mail is suppressed when a pass places nothing, which is right
+    for a quiet pass and wrong for a pass where the gate refused everything:
+    the account decided not to trade, and that is the decision worth hearing
+    about. Reporting it every fifteen minutes would be noise, so a name is
+    mailed the first time it is refused on a given day and not again.
+
+    Reads the store rather than holding state, because the store is already
+    the record and a second one would be a second thing to keep true.
+    """
+    fresh = [
+        intent for intent in intents or ()
+        if str(getattr(intent, "reason", "") or "") in LAST_LOOK_REASONS
+    ]
+    if not fresh:
+        return []
+    try:
+        import pandas as pd
+
+        stamp = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
+        today = str(stamp.date())
+    except Exception:  # noqa: BLE001 - an unusable clock reports everything
+        return fresh
+
+    seen: set[tuple[str, str]] = set()
+    for row in load_orders(config, account):
+        if str(row.get("kind") or "") != "plan":
+            continue
+        if str(row.get("at") or "")[:10] != today:
+            continue
+        if str(row.get("action") or "") != "refused":
+            continue
+        why = str(row.get("reason") or "")
+        if why in LAST_LOOK_REASONS:
+            seen.add((str(row.get("ticker") or ""), why))
+    return [
+        intent for intent in fresh
+        if (str(intent.ticker), str(intent.reason or "")) not in seen
+    ]

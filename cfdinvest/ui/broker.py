@@ -20,7 +20,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["read_broker", "performance_since_opening"]
+__all__ = ["read_broker", "performance_since_opening", "last_look"]
 
 
 def performance_since_opening(account, opening_balance) -> dict[str, Any]:
@@ -161,3 +161,29 @@ def read_broker(config=None) -> dict[str, Any]:
         logger.warning("Could not read the broker: %s", error)
         out["error"] = f"{type(error).__name__}: {error}"
     return out
+
+
+def last_look(config=None, account=None, *, days: int = 7) -> dict[str, Any]:
+    """What the pre-open re-check refused, for the Broker page.
+
+    A thin pass-through to ``persist.orders.refusal_summary``, which owns the
+    collapsing and the definition of which refusals belong to the gate. The
+    wrapper exists so the page reads its data the way it reads everything
+    else, and so a failure here renders a panel saying so rather than
+    blanking the page.
+
+    On failure it reports ``checked=False`` -- unchecked -- rather than a
+    zero. A gate that could not be read and a gate that refused nothing are
+    different statements.
+    """
+    try:
+        from cfdinvest.persist import orders
+
+        return orders.refusal_summary(config, account, days=days)
+    except Exception as error:  # noqa: BLE001 - a page must render
+        logger.warning("Could not read the last look: %s", error)
+        return {
+            "checked": False, "days": days, "considered": 0, "blocked": 0,
+            "opened_anyway": 0, "reasons": {}, "recent": [],
+            "error": f"{type(error).__name__}: {error}",
+        }

@@ -228,7 +228,12 @@ else:
              f"{priced.loc[priced['Spread bp'].idxmax(), 'Instrument']}"
              f" {priced['Spread bp'].max():.1f} bp", "",
              "warning" if priced["Spread bp"].max() > 10.0 else "pass"),
-            ("Assumed by the model", "10.0 bp", "round trip, every instrument",
+            # 10.0 bp here was wrong and is retracted: `resolve_spreads`
+            # and DEFAULT_SPREAD_BPS both document half-spreads and
+            # `effective_fill_price` halves them again, so the fall-through
+            # charges 5.0bp round trip. Verified twice on 2026-08-28,
+            # through the fill price and through the cost accounting.
+            ("Assumed by the model", "5.0 bp", "round trip, every instrument",
              "unchecked"),
         ])
     st.dataframe(
@@ -241,3 +246,94 @@ else:
         "a reading taken now, with the market shut, describes trading the "
         "app deliberately does not do.",
     )
+
+# --------------------------------------------------------------------------- #
+# The last look
+# --------------------------------------------------------------------------- #
+st.divider()
+st.subheader("Refused before opening")
+st.caption(
+    "Before an order is placed the signal is recomputed against the broker's "
+    "live quote, and the open is refused if the direction no longer matches "
+    "or confidence no longer clears the entry bar. It is the most "
+    "consequential filter in the dealing path and it ran for a week with "
+    "nothing reporting it — a pass that refuses everything and places nothing "
+    "sends no mail, so a gate blocking a fifth of candidate opens was "
+    "invisible."
+)
+
+_refusals = broker_source.last_look(data.get("config"), data.get("account"))
+
+if not _refusals.get("checked"):
+    # Absence named. No record at all is not the same as a gate that never
+    # fired, and only one of those is reassuring.
+    components.render_note(
+        st,
+        "No order record yet, so the last look is **unchecked** rather than "
+        "quiet. It reports here once the account has dealt.",
+        tone="warn",
+    )
+else:
+    _considered = int(_refusals.get("considered") or 0)
+    _blocked = int(_refusals.get("blocked") or 0)
+    _share = (_blocked / _considered) if _considered else None
+    # A gate that refuses nothing is as suspect as one that refuses
+    # everything: the first has probably stopped computing, and the second is
+    # returning "not re-checked", which the bridge treats as a refusal.
+    _level = (
+        "unchecked" if _share is None
+        else "warning" if (_share > 0.6 or _share == 0.0)
+        else "pass"
+    )
+    components.render_tiles(st, [
+        ("Blocked", f"{_blocked}",
+         f"of {_considered} instrument-day(s) that reached the check", _level),
+        ("Refusal rate",
+         components.DASH if _share is None else f"{100 * _share:.0f}%",
+         f"last {int(_refusals.get('days') or 0)} days", _level),
+        ("Opened later anyway", f"{int(_refusals.get('opened_anyway') or 0)}",
+         "refused, then cleared on a later pass the same day", "pass"),
+    ])
+
+    _reasons = dict(_refusals.get("reasons") or {})
+    if _reasons:
+        st.caption(
+            "By reason: "
+            + ", ".join(f"**{count}** {reason}"
+                        for reason, count in _reasons.items())
+        )
+        if "not re-checked" in _reasons:
+            components.render_note(
+                st,
+                "**`not re-checked` is present.** That is the gate failing to "
+                "form an opinion rather than declining a trade — the bridge "
+                "refuses it because unchecked is never approved, but a run "
+                "where it appears is a broken check, not a selective one.",
+                tone="warn",
+            )
+
+    _recent = list(_refusals.get("recent") or ())
+    if _recent:
+        components.render_frame(st, pd.DataFrame([
+            {
+                "Day": entry.get("day", ""),
+                "Instrument": entry.get("ticker", ""),
+                "Why": entry.get("reason", ""),
+                "Opened later": "yes" if entry.get("opened_anyway") else "no",
+            }
+            for entry in _recent
+        ]))
+    else:
+        components.render_note(
+            st,
+            "The check ran and refused nothing in this window. Every signal "
+            "that reached it still stood at the moment of dealing.",
+        )
+
+components.render_note(
+    st,
+    "Counted as instrument-days, not as rows. The dealing pass runs every "
+    "fifteen minutes and records one row per intent, so a name refused twice "
+    "before it opens is three rows describing one decision — counting rows "
+    "would roughly triple the rate.",
+)

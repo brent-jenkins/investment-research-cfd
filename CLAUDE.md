@@ -667,10 +667,35 @@ The honest research baseline for the system as it actually deals is
 **467.7% at −44.4%**. The shipped configuration is unchanged and the account's
 behaviour is unchanged; what changed is knowing which number describes it.
 
-**Two things the account should have and does not.** The last look records
-its refusals in `orders.jsonl` and surfaces them nowhere, so a gate that
-blocks a fifth of candidate opens is invisible to the dashboard, the daily
-email and this file. And its docstring's measurement — 9.5% refused, refused
+**The gate is now visible, and finding out why it was not is the useful
+part.** The dealing mail was never missing the refusals — it has always
+carried a "Not opened" line grouped by reason. It was suppressed: the mail
+returns early when a pass places nothing, so a pass where the last look
+refused everything sent no mail at all. A gate blocking a fifth of candidate
+opens was invisible because of a branch written to keep quiet passes quiet.
+
+`persist.orders` now owns the reading. `LAST_LOOK_REASONS` is the single
+definition of which of the bridge's refusals belong to the gate rather than
+to a cap — `not re-checked` included, because that is the gate failing to
+form an opinion rather than declining a trade, and a run where it dominates
+is a broken check that must be distinguishable on sight.
+`refusal_summary` collapses passes to instrument-days and reproduces the
+manual query on the live record exactly (29 considered, 6 blocked, 1 opened
+later). `last_look_refusals_today` reports a name the first time it is
+refused on a given day and not again, read from the store rather than from
+state, so the mail cannot repeat every fifteen minutes.
+
+The Broker page carries a **Refused before opening** panel, and the mail now
+sends when the gate blocked something new even if nothing was placed. Four
+mutations checked: counting rows instead of instrument-days, reporting no
+record as a quiet gate, reporting every pass instead of once a day, and
+counting a cap's refusal as the gate's.
+
+**Superseded on the same page:** the spread tile read "Assumed by the model
+10.0 bp". It charges **5.0bp** round trip, retracted in this file on
+2026-08-28 and still standing on the page a person reads before dealing.
+
+**One thing still outstanding.** The last look's docstring measurement — 9.5% refused, refused
 trips averaging −0.331% against +0.011% kept, t=+4.63 — dates from
 2026-08-27, before the Capital feed switch, the corrected cost model and
 conviction sizing. Direction and existence stand; the magnitudes are on a
