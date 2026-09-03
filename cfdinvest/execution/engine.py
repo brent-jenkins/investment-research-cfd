@@ -239,6 +239,25 @@ def run_execution(signal_frame, analysis_frame, config):
         window = np.repeat(allowed[:, None], len(columns), axis=1)
         entry_gate = window if entry_gate is None else (entry_gate & window)
 
+    # The last look, modelled. Also unshifted, and for the same reason: the
+    # question is whether the decision still stands on the bar being dealt
+    # on, which is what `advisor.livecheck` asks the broker's own quote
+    # before it places the order.
+    #
+    # Compared against the LAGGED direction rather than recomputed, because
+    # the lagged array is the decision the engine is acting on. Agreement
+    # means the signal survived the bar; disagreement means it faded to flat
+    # or turned over, which live reports as two different refusals and both
+    # of which refuse.
+    if bool(getattr(config, "entry_recheck", False)):
+        fresh_direction = _as_labels(signal_frame.direction, index, columns)
+        fresh_confidence = _as_matrix(
+            signal_frame.confidence, index, columns, 0.0
+        )
+        bar = float(getattr(config.thresholds, "entry_confidence", 0.0) or 0.0)
+        still = (fresh_direction == direction) & (fresh_confidence >= bar)
+        entry_gate = still if entry_gate is None else (entry_gate & still)
+
     # Every price the loop touches is restated in the account currency
     # before anything else sees it, so the state machine, the leverage cap
     # and the equity curve all work in one unit. Rates are 1.0 with FX

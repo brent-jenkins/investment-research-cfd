@@ -700,3 +700,170 @@ def test_a_screen_failure_raises_a_notification():
     # It must say what is still happening, or it reads as a full stop.
     assert "still closed" in mail or "still priced" in mail
     assert "no new position" in mail.lower()
+
+
+# --------------------------------------------------------------------------- #
+# The last look, which production has done since 2026-08-27 and the engine
+# modelled not at all.
+#
+# `advisor/livecheck.py` recomputes the signal against the broker's live
+# quote before an order is placed and refuses the open if the direction no
+# longer matches or confidence no longer clears the bar. It is wired in as
+# `bridge.plan_orders(recheck=True)` and it bites: over the account's first
+# week, collapsed to instrument-days, it blocked 6 of 29 candidate opens.
+#
+# The engine took every one of them. Same defect as open_delay_minutes above,
+# and it went unnoticed for a week because nothing in the repository recorded
+# that the gate existed.
+#
+# Mutations checked, each reintroduced as a bug and confirmed to fail:
+#   * dropping the direction test           -> the fade case opens
+#   * dropping the confidence test          -> the faded-confidence case opens
+#   * comparing fresh against fresh         -> nothing is ever refused
+#   * ANDing the mask into the exit path    -> the held position cannot close
+#   * shifting the mask by execution_lag    -> refuses the wrong bar, and the
+#                                              control stops trading
+# --------------------------------------------------------------------------- #
+
+
+def _recheck_frames(directions, confidences):
+    """A single-instrument hourly panel with a rising price.
+
+    The price only rises, so a refusal shows up as an absent position rather
+    than as a loss, and an assertion on holdings cannot be satisfied by the
+    trade merely going badly.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from cfdinvest.preprocessing.frame import AnalysisFrame
+    from cfdinvest.signals.frame import SignalFrame
+
+    index = pd.DatetimeIndex([
+        pd.Timestamp("2026-01-05 13:00", tz="UTC") + pd.Timedelta(hours=n)
+        for n in range(len(directions))
+    ])
+    close = pd.DataFrame(
+        {"AAA": np.linspace(100.0, 100.0 + 2.0 * len(index), len(index))},
+        index=index,
+    )
+    frame = lambda values: pd.DataFrame({"AAA": values}, index=index)
+    signals = SignalFrame(
+        direction=frame(list(directions)),
+        size=frame([0.0 if d == "flat" else 0.1 for d in directions]),
+        confidence=frame(list(confidences)),
+        reason=frame([""] * len(index)),
+    )
+    analysis = AnalysisFrame(
+        prices={"close": close, "open": close, "high": close, "low": close},
+        returns=close.pct_change().fillna(0.0),
+    )
+    return index, signals, analysis
+
+
+def test_the_engine_refuses_an_entry_whose_signal_faded_before_the_fill():
+    """The live gate's "no longer a signal" refusal, on what the engine holds.
+
+    execution_lag is 1, so the decision comes from the previous bar. A signal
+    that is long on bar 0 and flat on bar 1 gets filled on bar 1 by an engine
+    that never looks again -- which is exactly the trade livecheck refuses.
+    """
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    # Long, then faded to flat, then long again for long enough to trade.
+    directions = ["long", "flat", "long", "long", "long", "long"]
+    index, signals, analysis = _recheck_frames(directions, [0.9] * 6)
+
+    without = run_backtest(signals, analysis,
+                           ExecutionConfig(entry_recheck=False, execution_lag=1))
+    with_check = run_backtest(signals, analysis,
+                              ExecutionConfig(entry_recheck=True, execution_lag=1))
+
+    faded = index[1]
+    assert float(without.positions["AAA"].fillna(0.0).loc[faded]) != 0.0, (
+        "the control never opened on the faded bar, so this test proves nothing"
+    )
+    assert float(with_check.positions["AAA"].fillna(0.0).loc[faded]) == 0.0, (
+        "an entry was opened on a bar whose signal had already faded to flat; "
+        "the live dealing path refuses this as 'no longer a signal'"
+    )
+    # Refusing everything would also satisfy the line above.
+    held = with_check.positions["AAA"].fillna(0.0)
+    assert (held != 0).any(), "the re-checked run never traded at all"
+
+
+def test_the_engine_refuses_an_entry_whose_confidence_fell_below_the_bar():
+    """The live gate's other refusal, "no longer clears the bar"."""
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.execution.frame import ExecutionConfig
+    from cfdinvest.execution.frame import HysteresisThresholds
+
+    directions = ["long"] * 6
+    # Confidence collapses on bar 1 only, so the decision from bar 0 is filled
+    # into a bar where the score no longer clears the entry bar.
+    confidences = [0.9, 0.10, 0.9, 0.9, 0.9, 0.9]
+    index, signals, analysis = _recheck_frames(directions, confidences)
+    thresholds = HysteresisThresholds(entry_confidence=0.35)
+
+    without = run_backtest(signals, analysis, ExecutionConfig(
+        entry_recheck=False, execution_lag=1, thresholds=thresholds))
+    with_check = run_backtest(signals, analysis, ExecutionConfig(
+        entry_recheck=True, execution_lag=1, thresholds=thresholds))
+
+    weak = index[1]
+    assert float(without.positions["AAA"].fillna(0.0).loc[weak]) != 0.0, (
+        "the control never opened on the low-confidence bar"
+    )
+    assert float(with_check.positions["AAA"].fillna(0.0).loc[weak]) == 0.0, (
+        "an entry was opened on a bar where confidence had fallen below the "
+        "entry bar; the live path refuses this as 'no longer clears the bar'"
+    )
+
+
+def test_the_last_look_gates_entries_and_never_exits():
+    """A position already held must still be able to close.
+
+    Refusing an exit is never the safe direction, and the live path draws the
+    same line -- ``holds`` is consulted only where the bridge is opening.
+    """
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    # Long enough to open and be held, then flat -- which both ends the signal
+    # and, under the re-check, would refuse a fresh entry on the same bars.
+    directions = ["long", "long", "long", "flat", "flat", "flat"]
+    index, signals, analysis = _recheck_frames(directions, [0.9] * 6)
+
+    result = run_backtest(signals, analysis,
+                          ExecutionConfig(entry_recheck=True, execution_lag=1))
+    held = result.positions["AAA"].fillna(0.0)
+
+    assert (held != 0).any(), "nothing was ever opened, so there is no exit to test"
+    assert float(held.iloc[-1]) == 0.0, (
+        "the position was still open at the end: the re-check has leaked into "
+        "the exit path, which would strand positions the way the stranded "
+        "demo-account names were stranded"
+    )
+
+
+def test_the_last_look_is_off_by_default_and_changes_nothing_when_off():
+    """A modelling switch that is off by default cannot move a shipped figure.
+
+    Asserted on the property rather than the constant: two runs, one with the
+    field defaulted and one with it explicitly False, must agree exactly.
+    """
+    from cfdinvest.execution import run_backtest
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    assert ExecutionConfig().entry_recheck is False
+
+    directions = ["long", "flat", "long", "long", "long", "long"]
+    _, signals, analysis = _recheck_frames(directions, [0.9] * 6)
+
+    defaulted = run_backtest(signals, analysis, ExecutionConfig(execution_lag=1))
+    explicit = run_backtest(signals, analysis,
+                            ExecutionConfig(entry_recheck=False, execution_lag=1))
+    assert defaulted.positions["AAA"].fillna(0.0).equals(
+        explicit.positions["AAA"].fillna(0.0)
+    )

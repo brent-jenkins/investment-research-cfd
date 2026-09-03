@@ -572,6 +572,110 @@ engine.
 85% of refits. It predicts, modestly, on the correct bar. It is simply not
 the best thing available, which is what the retracted figure claimed.
 
+**The morning filter is closed, and the thing that closed it was a live gate
+nothing had written down.** The owner's question did it: if entries pile up
+at the boundary bar rather than disappearing, surely some of them should have
+been abandoned because conditions changed — a last check before dealing.
+
+That check already existed. `advisor/livecheck.py`, added 2026-08-27 and
+wired in as `bridge.plan_orders(recheck=True)`, recomputes the signal against
+the broker's live quote standing in as the bar in progress and refuses the
+open if the direction no longer matches or confidence no longer clears
+`entry_confidence`. It is fail-closed: an instrument absent from the readings
+is refused as *not re-checked*, so a broken check opens nothing rather than
+approving silently.
+
+**The engine modelled none of it, and this file had no record it existed.**
+Third time now — `open_delay_minutes` on 2026-09-01, and the shadow book
+before that.
+
+**It bites, and nothing surfaces that it does.** Read off the account's own
+order records over its first week, collapsed from 15-minute passes to
+instrument-days, because raw rows triple-count a name refused twice before
+it opens:
+
+    instrument-days that opened                        23
+    instrument-days the last look refused               7
+      of those, opened later the same day               1
+      blocked outright                                  6   = 20.7%
+
+    reasons: no longer clears the bar 7, no longer a signal 3
+
+No email, no dashboard row, no log line — which is why it looked like nothing
+was being rejected. 29 instrument-days fixes nothing about the rate; it
+establishes that the gate fires.
+
+**Modelled in the engine, it is worth +140.6pp — and it absorbs the morning
+filter entirely.** `ExecutionConfig.entry_recheck` refuses an entry whose
+direction no longer matches the decision or whose confidence no longer clears
+the bar on the bar being dealt on. Unshifted, entries only, for the same
+reason as the opening delay.
+
+                              CAGR    maxDD   trades   Calmar
+    recheck off, delay 30   327.1%    45.4%    3,957     7.21
+    recheck on,  delay 30   467.7%    44.4%    3,219    10.53
+
+The gate removes **18.7%** of entries in the model against **20.7%** measured
+live — and the model *should* refuse slightly less, because live builds a
+provisional bar carrying the quote as open, high, low and close while the
+engine compares against a completed bar with a real range. A flat provisional
+bar dilutes momentum. The two agreeing to two points from opposite directions
+of an argument made before the numbers were seen is the strongest
+corroboration available here.
+
+    delay   recheck off   recheck on   gain, off   gain, on   absorbed
+      120        365.8%       471.2%     +38.7pp     +3.5pp        91%
+      240        409.1%       461.3%     +82.1pp     -6.3pp       108%
+      300        427.1%       479.8%    +100.0pp    +12.1pp        88%
+
+**88% to 108% absorbed, and every residual is inside the 8pp noise floor.**
+So the morning filter was measuring the last look through a keyhole. Refusing
+the first N bars only takes signals that persisted through the session; the
+last look only takes signals that still stand at the moment of dealing.
+**They are one effect**, and the clock is the crude version of it.
+
+`open_delay_minutes` stays at 30 and the morning filter is **not adopted**.
+It also explains the thing that could not be explained on 2026-09-03: why
+entering a trend five hours later performed better. It was never the later
+price. It was the confirmation.
+
+**What was built, and what was deliberately not.** `entry_recheck` exists on
+`ExecutionConfig`, defaults to **False**, is applied by the engine, and is
+tested with four cases mutation-checked four ways — dropping the direction
+test, dropping the confidence test, comparing the fresh signal against
+itself, and making the mask inert all fail the suite.
+
+It is **not** wired into `_execution_config`, and that was a reversal made
+after wiring it. `_engine_rows` reads the persisted run, so the daemon's live
+intents come from the same `_backtest_config` a research run uses. Setting
+`entry_recheck` there would apply the engine's filter to live intents and
+then the bridge's own live-quote check on top — two sequential filters where
+production has one, making the account materially more selective than it is
+today. Worse, in the live run the engine's version would compare the last two
+*completed* bars, which corresponds to nothing the bridge does.
+
+So the field models the combined live system correctly **in a backtest** and
+would misdescribe it in the daemon. Turning it on in production is a separate,
+deliberate decision about what the account does, not a modelling correction,
+and it is not taken here.
+
+**Consequences for every figure in this file.** Anything measured with
+`entry_recheck` off — which is everything above this entry, including the
+327.1% baseline — describes a book taking about a fifth more entries than the
+account takes, and by the gate's own measurement those are the losing ones.
+The honest research baseline for the system as it actually deals is
+**467.7% at −44.4%**. The shipped configuration is unchanged and the account's
+behaviour is unchanged; what changed is knowing which number describes it.
+
+**Two things the account should have and does not.** The last look records
+its refusals in `orders.jsonl` and surfaces them nowhere, so a gate that
+blocks a fifth of candidate opens is invisible to the dashboard, the daily
+email and this file. And its docstring's measurement — 9.5% refused, refused
+trips averaging −0.331% against +0.011% kept, t=+4.63 — dates from
+2026-08-27, before the Capital feed switch, the corrected cost model and
+conviction sizing. Direction and existence stand; the magnitudes are on a
+superseded basis and should not be quoted as current.
+
 ### What changed on 2026-09-01
 
 **The shipped baseline is 327.1%/yr at −45.4%**, after two changes on the

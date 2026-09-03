@@ -181,6 +181,44 @@ class ExecutionConfig:
     #: rule, which compares against wall-clock market hours, and it is the
     #: closest a bar-resolution model can come.
     open_delay_minutes: int = 0
+    #: Re-check the decision against the bar being dealt on before opening.
+    #:
+    #: The engine decides on the last bar that *closed* and fills on the
+    #: next. Live, those are separated by however long the daemon's pass
+    #: takes, and at a session open they are a night apart -- the price
+    #: being filled at already contains an earnings release, a downgrade, a
+    #: sector move. The decision is not wrong; it is answering a question
+    #: about a world that has since changed.
+    #:
+    #: ``advisor/livecheck.py`` has done exactly this on the live account
+    #: since 2026-08-27, wired in as ``bridge.plan_orders(recheck=True)``:
+    #: it recomputes the signal with the live quote standing in as the bar
+    #: in progress and refuses the open if the direction no longer matches
+    #: or confidence no longer clears ``entry_confidence``. **The engine
+    #: modelled none of it**, so the backtest was again describing a
+    #: strategy the account does not run -- the same defect as
+    #: ``open_delay_minutes``, and undetected for a week because nothing
+    #: recorded that the gate existed.
+    #:
+    #: Measured on the account over its first week: collapsed to
+    #: instrument-days, the live gate blocked 6 of 29 candidate opens
+    #: outright, 20.7%, on reasons "no longer clears the bar" and "no longer
+    #: a signal". A sample that small fixes nothing about the rate; it
+    #: establishes that the gate bites.
+    #:
+    #: Applied to ENTRIES only, and deliberately NOT shifted -- like
+    #: ``open_delay_minutes`` this is a fact about the bar being dealt on,
+    #: and the live path asks it when it places the order rather than when
+    #: it formed a view.
+    #:
+    #: **The one place this approximates.** Live builds a provisional bar
+    #: carrying the quote as open, high, low and close; the engine compares
+    #: against the completed bar, which has a real range. A flat provisional
+    #: bar dilutes momentum, so live refuses *more* often than this models.
+    #: The modelled gate is therefore a lower bound on how often the real
+    #: one fires, which is the conservative direction: if the refused trades
+    #: are the bad ones, the account does better than this says, not worse.
+    entry_recheck: bool = False
     #: Trades smaller than this in units are ignored as noise.
     minimum_trade_units: float = 1e-9
 
