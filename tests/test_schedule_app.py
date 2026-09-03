@@ -602,3 +602,79 @@ def test_a_faded_signal_and_a_reversed_one_are_told_apart():
 # M257 the mail carrying every arm's events
 # M258 the arm named in the mail rather than read from the entry bar
 # --------------------------------------------------------------------------- #
+
+
+# --------------------------------------------------------------------------- #
+# A resize must reduce when asked to reduce.
+#
+# The side was taken from target_units, which is correct only while a
+# position grows. Trimming a long from 100 to 60 has a positive target, so it
+# sent BUY 40 and took the position to 140 -- doubling down in the exact
+# circumstance somebody had asked it to cut. Latent because
+# rebalance_threshold = 3.0 disables resizing, and armed for whoever lowered
+# it.
+#
+# M346 the side taken from the target rather than the delta
+# M347 a short reduced by selling more of it
+# --------------------------------------------------------------------------- #
+
+
+def _resize_side(target_units, held_units, action="resize"):
+    """The side and size the dealing pass would send for one intent.
+
+    Mirrors the expression in ``_command_trade_capital`` rather than calling
+    it, because reaching that line needs a broker session. The test below
+    asserts the two stay in step, so this cannot drift into testing itself.
+    """
+    delta = target_units - held_units if action == "resize" else target_units
+    return ("BUY" if delta > 0 else "SELL"), abs(delta)
+
+
+def test_trimming_a_long_sells_rather_than_buying():
+    side, size = _resize_side(target_units=60.0, held_units=100.0)
+    assert (side, size) == ("SELL", 40.0), (
+        f"trimming a long from 100 to 60 sent {side} {size}; taking the side "
+        "from the target rather than the delta doubles the position down"
+    )
+
+
+def test_adding_to_a_long_buys():
+    assert _resize_side(target_units=140.0, held_units=100.0) == ("BUY", 40.0)
+
+
+def test_reducing_a_short_buys_it_back():
+    """Signed units: held -100 to -60 is a delta of +40, which is a BUY."""
+    side, size = _resize_side(target_units=-60.0, held_units=-100.0)
+    assert (side, size) == ("BUY", 40.0), (
+        f"reducing a short from -100 to -60 sent {side} {size}; buying back "
+        "is how a short shrinks"
+    )
+
+
+def test_adding_to_a_short_sells():
+    assert _resize_side(target_units=-140.0, held_units=-100.0) == ("SELL", 40.0)
+
+
+def test_an_open_is_unaffected_by_the_delta_rule():
+    """Held is zero on an open, so delta and target agree -- opens never broke."""
+    assert _resize_side(140.0, 0.0, action="open") == ("BUY", 140.0)
+    assert _resize_side(-140.0, 0.0, action="open") == ("SELL", 140.0)
+
+
+def test_the_dealing_pass_uses_the_delta_for_the_side():
+    """The helper above must describe the code, not a wish about it.
+
+    A mirror test that drifts is worse than none: it would keep passing while
+    the thing it claims to check went wrong.
+    """
+    import inspect
+
+    from cfdinvest.schedule import app as schedule_app
+
+    source = inspect.getsource(schedule_app._command_trade_capital)
+    assert '"BUY" if delta > 0 else "SELL"' in source, (
+        "the dealing pass no longer takes the side from the delta"
+    )
+    assert '"BUY" if intent.target_units > 0' not in source, (
+        "the dealing pass has drifted back to taking the side from the target"
+    )

@@ -829,6 +829,49 @@ that was written into `config.toml` as an illustration, the account would
 have stopped opening positions entirely and the cause would have looked like
 a margin problem rather than an arithmetic one.
 
+**Resizing is implemented, disabled, and was broken.** Asked whether open
+positions can be resized, and whether it would help under a margin squeeze.
+
+The `resize` action exists end to end -- the bridge produces the intent, the
+dealing pass places it -- and `rebalance_threshold = 3.0` disables it, so no
+resize intent has ever reached the account. Which is fortunate, because the
+side came from `target_units` where the size came from the delta. Trimming a
+long from 100 units to 60 has a positive target, so it sent **BUY 40** and
+took the position to **140**: doubling down in the exact circumstance
+somebody had asked it to cut. Armed behind a config flag, and the first
+person to lower that threshold would have found it. Fixed to take the side
+from the delta, which also handles shorts -- held −100 reducing to −60 is a
+delta of +40, and buying back is how a short shrinks.
+
+**Capital has no partial close.** `close_position` sends `DELETE /positions/
+{dealId}` with no size, so it shuts the position in full; a reduction has to
+go as an opposing order on the same epic. Whether those net or open a second
+position depends on the account's mode, and that is unverified on the demo
+account -- it must be checked before resizing is enabled, because a
+"reduction" that opens an opposing position doubles the margin instead of
+halving it.
+
+**For drift rebalancing it stays rejected**, on the measurement already
+recorded: 0.5 returns 178.9% against 254.9%, and 1.0's apparent +11.5pp is
+about half exposure with the remainder failing the split (+19.1pp then
++2.6pp). Turnover is what got dearer when spread was measured properly.
+
+**For margin deleveraging the question is genuinely open, and the reason is
+uncomfortable.** Every test this project holds against reducing into stress
+-- the four automatic pauses, the stops, the weekend flattening, the overnight
+exits, the proportional trim -- was run in a backtest with **no margin model
+and no close-out**. They measured return in a world where the harm
+deleveraging prevents cannot happen. "It costs money to reduce" is true and
+does not answer "would the account have survived".
+
+The trim tests are also the wrong shape for this. They paid a premium on
+every gap to catch a rare one, and lost by about 2.3x. A margin-triggered
+reduction fires only when utilisation actually breaches, is not restored
+automatically, and pays spread on the delta rather than on the whole book --
+so the "insurance premium exceeds the average payout" argument does not
+transfer. It needs its own measurement, and that needs a close-out model the
+engine does not have.
+
 **One thing still outstanding.** The last look's docstring measurement — 9.5% refused, refused
 trips averaging −0.331% against +0.011% kept, t=+4.63 — dates from
 2026-08-27, before the Capital feed switch, the corrected cost model and

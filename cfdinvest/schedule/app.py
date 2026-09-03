@@ -1473,11 +1473,30 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
             result = dealing_module.close_position(intent.deal_id, session, settings)
             closed += 1 if result.ok else 0
         else:
+            # The side comes from the DELTA, not from the target.
+            #
+            # It came from the target until 2026-09-03, which is correct only
+            # while a position is growing. Trimming a long from 100 units to
+            # 60 has a positive target, so it sent BUY 40 and took the
+            # position to 140 -- doubling down in the exact circumstance
+            # somebody had asked it to reduce.
+            #
+            # Latent rather than live: rebalance_threshold is 3.0, which
+            # disables resizing entirely, so no resize intent has ever been
+            # produced on the account. It was armed behind a config flag, and
+            # the first person to lower that threshold would have found it.
+            #
+            # Signed units make this work for shorts too. Held -100 reducing
+            # to -60 gives a delta of +40, which is a BUY, and that is right:
+            # buying back is how a short shrinks.
+            delta = (
+                intent.target_units - intent.held_units
+                if intent.action == "resize" else intent.target_units
+            )
             result = dealing_module.place_position(
                 intent.epic,
-                "BUY" if intent.target_units > 0 else "SELL",
-                abs(intent.target_units - intent.held_units)
-                if intent.action == "resize" else abs(intent.target_units),
+                "BUY" if delta > 0 else "SELL",
+                abs(delta),
                 session, settings,
             )
             if result.ok:
