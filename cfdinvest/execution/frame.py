@@ -242,6 +242,36 @@ class ExecutionConfig:
     #: ``None`` disables it, which is the engine default: it is a modelling
     #: switch, and a shipped figure cannot move because a new field appeared.
     max_opens_per_pass: int | None = None
+    #: Margin required per unit of notional, per instrument.
+    #:
+    #: Capital publishes a ``marginFactor`` -- 0.20 for a 5x instrument -- and
+    #: varies it: tiered by position size, raised in volatile conditions and
+    #: around events. A per-instrument mapping rather than a constant because
+    #: the interesting case is precisely the one a constant cannot express,
+    #: a factor rising on some names and not others.
+    #:
+    #: Absent instruments fall back to ``default_margin_factor``. A missing
+    #: factor is NOT treated as zero: an instrument requiring no margin would
+    #: size without limit, which is the opposite of the safe direction.
+    margin_factors: dict[str, float] | None = None
+    #: The factor used where none is supplied. 0.20 is the FCA retail
+    #: requirement for individual equities -- the 5x that Capital applies by
+    #: default -- so the fallback is a real number rather than a guess.
+    default_margin_factor: float = 0.20
+    #: The most of the account's equity that committed margin may consume.
+    #:
+    #: ``None`` disables it, which is the engine default and every recorded
+    #: figure in this project: there was no margin model at all until now, so
+    #: every drawdown figure here is an upper bound on what a funded account
+    #: would actually survive. It could hold 4.5x gross through a 44%
+    #: drawdown because no counterparty ever asked it for variation margin.
+    #:
+    #: This is the crude version of that missing model -- it caps how much
+    #: margin the book may commit, and does not simulate a close-out. It
+    #: therefore answers "would the account have had room" and still does not
+    #: answer "would it have been liquidated", which needs the broker's
+    #: close-out level and a path simulation.
+    max_margin_usage: float | None = None
     #: Trades smaller than this in units are ignored as noise.
     minimum_trade_units: float = 1e-9
 

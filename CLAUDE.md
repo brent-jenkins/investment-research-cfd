@@ -744,6 +744,65 @@ a bar are not the same unit.
 live intents come from that config, and applying the budget there would
 throttle opens the bridge is already throttling.
 
+**Margin is now read, recorded and bounded — and it was none of those.**
+The owner asked whether Capital's variable margin is covered. It was not, in
+three separate ways:
+
+* `marginFactor` is fetched per instrument on every dealing pass and was
+  **discarded** — written into a snapshot row and never used.
+* The dealing path sizes from `balance`, while `available` (what is left
+  after committed margin) sat unread beside it on the same object.
+* `max_margin_usage_pct = 0.50` exists but belongs to `livehelper`, the
+  *manual* helper. Nothing enforced it on the automated path. Utilisation was
+  **66.6%** on 2026-09-01 and **44.2%** on 2026-09-03, so the account had
+  been past that limit with nothing to notice.
+
+Capital varies its factors — tiered by position size, raised in volatile
+conditions and around events — so a factor can rise **under a position that
+is already open**, increasing required margin without the book changing at
+all. Nothing in the app could see that happen.
+
+**The series had to start before the question could be asked.** The API
+serves a current value with no history, so a change that happened yesterday
+is gone; `persist/margin.py` records factors when they move plus a daily
+heartbeat, and account utilisation every pass. The heartbeat is the point —
+without it a gap means "unchanged" or "unobserved" and only one is evidence.
+`factor_changes` is the direct answer to whether the broker moves it, and
+`usage_summary` reports the sample alongside, because an empty list after a
+short run is not an answer. A factor that moves also logs a warning: it is
+the mechanism that can force a close.
+
+**The guard fails closed.** `plan_orders` gains `available` and
+`max_margin_usage`; an open whose margin would breach the ceiling is refused,
+and so is one where headroom is unreadable or the broker quotes no factor. A
+margin guard that disables itself when a field is missing reads as protection
+while providing none — which is this project's own inert-gate failure wearing
+a different hat. Closes are never refused: a book short of margin is exactly
+the one that most needs to reduce.
+
+**The engine has a margin model at last, and it is deliberately crude.**
+`margin_factors` (per instrument, because the case a constant cannot express
+is a factor rising on semiconductors and not on staples), `default_margin_
+factor = 0.20` (the FCA retail requirement, a real number rather than a
+guess), and `max_margin_usage`. A missing factor falls back rather than to
+zero: zero means "requires no margin", which sizes without limit — absence
+treated as permission.
+
+It bounds what the book may **commit** and does not simulate a **close-out**,
+so it answers "would the account have had room" and still not "would it have
+been liquidated". That needs the broker's close-out level and a path
+simulation. Every drawdown figure in this file therefore remains an upper
+bound on what a funded account would survive.
+
+**`max_margin_usage` is unset**, and turning it on changes what the account
+does — at 0.50 it would have refused opens on 2026-09-01. Deliberately not
+inherited from `RiskLimits.max_margin_usage_pct`, because that number belongs
+to the manual helper and one number answering two questions is how this
+project has been caught before.
+
+The new enforcement check earned itself immediately: it failed on `available`
+and `max_margin_usage` the moment they were added, before either was wired.
+
 **One thing still outstanding.** The last look's docstring measurement — 9.5% refused, refused
 trips averaging −0.331% against +0.011% kept, t=+4.63 — dates from
 2026-08-27, before the Capital feed switch, the corrected cost model and

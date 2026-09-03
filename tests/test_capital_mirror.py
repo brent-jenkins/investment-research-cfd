@@ -1074,3 +1074,99 @@ def test_an_absent_confidence_does_not_win_the_opening_budget():
     assert flipped[1] != 0 and flipped[0] == 0, (
         f"the result depends on column order rather than on score: {flipped}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The margin model the engine never had.
+#
+# CLAUDE.md records this as the one risk nothing measured had priced: the
+# backtest can hold 4.5x gross through a 44% drawdown because no counterparty
+# ever asks it for variation margin, while a live account is closed out
+# first. This is the crude version -- it bounds what the book may commit and
+# does not simulate a close-out.
+#
+# M342 a missing margin factor treated as zero, sizing without limit
+# M343 the cap measured against gross rather than against required margin
+# M344 the cap applied when not configured, moving every recorded figure
+# --------------------------------------------------------------------------- #
+
+
+def test_the_margin_cap_scales_the_book_to_fit():
+    """Required margin above the ceiling shrinks the book proportionally."""
+    import numpy as np
+
+    from cfdinvest.execution.engine import _apply_margin_cap
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    # 100 units at 100 with a 0.20 factor needs 2,000 of margin against
+    # equity of 1,000; a 0.50 ceiling permits 500, so a quarter of the book.
+    config = ExecutionConfig(max_margin_usage=0.50, default_margin_factor=0.20)
+    capped = _apply_margin_cap(
+        np.array([100.0]), np.array([100.0]), 1_000.0, ["AAA"], config)
+    assert capped[0] == pytest.approx(25.0), (
+        f"expected the book scaled to 25 units, got {capped[0]}"
+    )
+
+
+def test_a_missing_margin_factor_falls_back_rather_than_to_zero():
+    """Zero would mean "needs no margin", which sizes without limit.
+
+    Absence treated as permission is the failure this project names in every
+    other layer, and here it would be the difference between a bounded book
+    and an unbounded one.
+    """
+    import numpy as np
+
+    from cfdinvest.execution.engine import _apply_margin_cap
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    config = ExecutionConfig(
+        max_margin_usage=0.50, default_margin_factor=0.20,
+        margin_factors={"BBB": 0.20},        # AAA deliberately absent
+    )
+    capped = _apply_margin_cap(
+        np.array([100.0]), np.array([100.0]), 1_000.0, ["AAA"], config)
+    assert capped[0] != pytest.approx(100.0), (
+        "an instrument with no quoted factor was left uncapped, so a missing "
+        "reading sized without limit"
+    )
+    assert capped[0] == pytest.approx(25.0)
+
+
+def test_a_per_instrument_factor_beats_the_fallback():
+    """The case a constant cannot express: one name dearer than another.
+
+    A broker raising its requirement on semiconductors and not on staples is
+    exactly the scenario worth testing, and a single number cannot state it.
+    """
+    import numpy as np
+
+    from cfdinvest.execution.engine import _apply_margin_cap
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    config = ExecutionConfig(
+        max_margin_usage=0.50, default_margin_factor=0.20,
+        margin_factors={"AAA": 0.40},
+    )
+    # 100 units at 100 with a 0.40 factor needs 4,000; 500 is permitted.
+    capped = _apply_margin_cap(
+        np.array([100.0]), np.array([100.0]), 1_000.0, ["AAA"], config)
+    assert capped[0] == pytest.approx(12.5), (
+        f"the per-instrument factor was ignored: {capped[0]}"
+    )
+
+
+def test_the_margin_cap_is_off_by_default():
+    """Every figure this project holds was measured without it."""
+    import numpy as np
+
+    from cfdinvest.execution.engine import _apply_margin_cap
+    from cfdinvest.execution.frame import ExecutionConfig
+
+    assert ExecutionConfig().max_margin_usage is None
+    untouched = _apply_margin_cap(
+        np.array([100.0]), np.array([100.0]), 1.0, ["AAA"], ExecutionConfig())
+    assert untouched[0] == pytest.approx(100.0), (
+        "the margin cap applied without being configured, which would move "
+        "every recorded figure in the project"
+    )

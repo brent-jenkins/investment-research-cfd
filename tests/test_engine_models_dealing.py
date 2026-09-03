@@ -59,6 +59,7 @@ MODELLED_BY = {
     "exposure_per_unit_size": "exposure_per_unit_size",
     "limits": "concentration",
     "max_opens_per_pass": "max_opens_per_pass",
+    "max_margin_usage": "max_margin_usage",
 }
 
 #: Parameters that carry data rather than apply a rule. Each states why, so
@@ -72,6 +73,11 @@ NOT_A_GATE = {
     "placed": "the app's own record, for reconciliation against the account",
     "fx_rate": "the account-currency conversion, modelled in execution.fx",
     "rechecked": "the last look's readings; the gate itself is `recheck`",
+    "available": (
+        "margin headroom read from the broker. Data, not a rule: the "
+        "ceiling that uses it is `max_margin_usage`, and the engine's "
+        "equivalent is equity, which it already has."
+    ),
     "session_open": (
         "the exchange calendar. Deliberately not modelled: the engine's panel "
         "is already session-restricted, so every bar it sees is one the "

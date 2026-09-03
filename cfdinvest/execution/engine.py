@@ -590,6 +590,14 @@ def run_execution(signal_frame, analysis_frame, config):
             target_units, units, confidence[bar], config
         )
 
+        # And the margin the book would commit. Applied after the leverage
+        # cap because they answer different questions: leverage bounds the
+        # exposure we choose to take, margin bounds what the counterparty
+        # will fund, and the second can tighten without the first moving.
+        target_units = _apply_margin_cap(
+            target_units, reference, equity, columns, config
+        )
+
         stop_out = False
         if config.stop_out_level is not None and equity <= config.stop_out_level * peak_equity:
             stop_out = True
@@ -1064,6 +1072,49 @@ def _apply_position_limit(target_units, new_held, units, config):
     target_units = np.where(keep, target_units, 0.0)
     new_held = np.where(keep, new_held, 0).astype(new_held.dtype)
     return target_units, new_held
+
+
+def _apply_margin_cap(target_units, reference, equity, columns, config):
+    """Scale the book so committed margin stays inside its ceiling.
+
+    The engine had no margin model at all, which CLAUDE.md records as the one
+    risk nothing measured had priced: a backtest can hold 4.5x gross through
+    a 44% drawdown because no counterparty ever asks it for variation margin,
+    while a live account is closed out first. This is the crude version --
+    it bounds what the book may commit and does not simulate a close-out.
+
+    Per instrument, because that is the case a constant cannot express. A
+    broker raising its factor on semiconductors and not on staples is exactly
+    the scenario worth testing, and a single number cannot state it.
+
+    A missing factor falls back to ``default_margin_factor`` rather than to
+    zero. Zero would mean "requires no margin", which sizes without limit --
+    absence treated as permission, which is the failure this project names
+    in every other layer.
+
+    Scales rather than refuses, matching ``_apply_leverage_cap`` directly
+    above it: the book is shrunk to fit, and a position already held is not
+    liquidated by this function.
+    """
+    ceiling = getattr(config, "max_margin_usage", None)
+    if ceiling is None:
+        return target_units
+    ceiling = float(ceiling)
+    if ceiling <= 0 or equity <= 0:
+        return target_units
+
+    factors = getattr(config, "margin_factors", None) or {}
+    fallback = float(getattr(config, "default_margin_factor", 0.20) or 0.0)
+    per_asset = np.array(
+        [float(factors.get(str(name), fallback)) for name in columns],
+        dtype="float64",
+    )
+    price = np.abs(np.nan_to_num(reference))
+    required = float(np.sum(np.abs(target_units) * price * per_asset))
+    allowed = ceiling * float(equity)
+    if required <= allowed or required <= 0:
+        return target_units
+    return target_units * (allowed / required)
 
 
 def _defer_surplus_opens(target_units, units, confidence, config):

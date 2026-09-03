@@ -144,6 +144,8 @@ def plan_orders(
     entry_confidence: float = 0.35,
     open_allowed: Mapping[str, bool] | None = None,
     max_opens_per_pass: int | None = None,
+    available: float | None = None,
+    max_margin_usage: float | None = None,
 ) -> BridgeReport:
     """Decide what to place. Pure: it reads and returns, and places nothing.
 
@@ -176,6 +178,27 @@ def plan_orders(
     open_now = dict(session_open or {})
     intents: list[Intent] = []
     gross = 0.0
+
+    # Margin already committed, and the headroom left. `available` is what
+    # remains after committed margin, so the difference is what the book is
+    # currently using -- the number that decides whether a drawdown is
+    # survivable or terminal, and the one nothing here has ever read.
+    #
+    # Capital varies its margin factors: tiered by size, raised in volatile
+    # conditions and around events. A factor rising under an open position
+    # increases required margin without the book changing at all, so the
+    # headroom has to be read each pass rather than inferred from what we
+    # committed when we opened.
+    margin_used = None
+    if max_margin_usage is not None and balance and available is not None:
+        try:
+            margin_used = float(balance) - float(available)
+        except (TypeError, ValueError):
+            margin_used = None
+    margin_ceiling = (
+        float(max_margin_usage) * float(balance)
+        if max_margin_usage is not None and balance else None
+    )
 
     for row in signals or ():
         ticker = str(row.get("ticker") or "")
@@ -300,6 +323,36 @@ def plan_orders(
                 if not still:
                     intents.append(refuse(why))
                     continue
+
+            # The margin this open would commit, against what is left.
+            #
+            # Fails closed, like the last look above it: a ceiling that is
+            # configured but silently skipped because a field was missing is
+            # the inert-gate failure this project keeps finding, and a margin
+            # guard that disables itself is worse than none because it reads
+            # as protection. "Not checked" is not "within the limit".
+            if max_margin_usage is not None:
+                if margin_used is None:
+                    intents.append(refuse(
+                        "margin headroom could not be read, and an unchecked "
+                        "margin limit is not a satisfied one"
+                    ))
+                    continue
+                factor = getattr(market, "margin_factor", None)
+                if factor is None:
+                    intents.append(refuse(
+                        "the broker did not quote a margin factor for this "
+                        "instrument, so the margin it needs is unknown"
+                    ))
+                    continue
+                needed = abs(target) * price * float(fx_rate or 1.0) * float(factor)
+                if margin_ceiling is not None and margin_used + needed > margin_ceiling:
+                    intents.append(refuse(
+                        f"margin: {needed:,.0f} more would take usage past "
+                        f"{100 * float(max_margin_usage):.0f}% of balance"
+                    ))
+                    continue
+                margin_used += needed
 
             gross += abs(target) * price * float(fx_rate or 1.0)
             intents.append(Intent(

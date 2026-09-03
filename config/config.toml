@@ -735,6 +735,31 @@ open_delay_minutes = 30
 # strategy believes in now.
 max_opens_per_pass = 3            # 50% of the balance as margin, not 100%
 
+# The most of the balance that committed margin may consume, or unset to not
+# check it. OFF, and turning it on changes what the account does.
+#
+# Capital publishes a marginFactor per instrument and varies it: tiered by
+# position size, raised in volatile conditions and around events. A factor
+# rising under an open position increases required margin without the book
+# changing at all, and nothing here read that figure until 2026-09-03 -- it
+# was fetched from the day the account opened and discarded.
+#
+# Measured on the demo account: 44.2% utilisation on 2026-09-03 and 66.6% on
+# 2026-09-01, so 0.50 would have refused opens on the second of those. Pick
+# the number deliberately: this is the only thing standing between a raised
+# margin factor and a forced close-out, and the engine cannot price the risk
+# -- it has no close-out model, so every drawdown figure in CLAUDE.md is an
+# upper bound on what a funded account would survive.
+#
+# Deliberately not inherited from RiskLimits.max_margin_usage_pct (0.50),
+# which belongs to the manual helper: one number answering two questions is
+# how this project has been caught before.
+#
+# The gate fails CLOSED. An unreadable headroom or an instrument with no
+# quoted factor refuses the open rather than proceeding, because a margin
+# guard that disables itself reads as protection while providing none.
+# max_margin_usage = 0.80
+
 # Notional per unit of signal size, as a multiple of equity. Raising this is
 # gearing rather than edge -- efficiency peaks around 4 and degrades after.
 exposure_per_unit_size = 4.0  # was 1.0; efficiency peaks here and degrades after

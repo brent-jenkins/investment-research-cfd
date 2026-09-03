@@ -437,3 +437,144 @@ def test_the_gate_never_refuses_an_exit():
         [signal("AAPL", size=0.10)], positions, recheck=True, rechecked={},
     )
     assert only(resizing, "AAPL").action == "resize"
+
+
+# --------------------------------------------------------------------------- #
+# The margin ceiling.
+#
+# Capital publishes a marginFactor per instrument and varies it -- tiered by
+# size, raised in volatile conditions and around events -- so a factor can
+# rise under a position that is already open and increase what the book needs
+# without the book changing at all. The app fetched the figure from the day
+# the account opened and discarded it, and sized from `balance` while
+# `available` (what is left after committed margin) sat unread beside it.
+#
+# Measured on the demo account: 44.2% utilisation on 2026-09-03, 66.6% on
+# 2026-09-01. There was no ceiling on either.
+#
+# M338 the ceiling skipped when headroom is missing, reading as protection
+# M339 a missing margin factor treated as needing no margin
+# M340 the ceiling measured against balance rather than remaining headroom
+# M341 the ceiling refusing closes as well as opens
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class MarginMarket:
+    epic: str
+    bid: float
+    offer: float
+    min_deal_size: float = 0.1
+    margin_factor: float | None = 0.20
+
+
+MARGIN_MARKETS = {
+    "AAPL": MarginMarket("AAPL", 99.0, 100.0, 0.1),
+    "MSFT": MarginMarket("MSFT", 199.0, 200.0, 0.1),
+}
+
+
+def margin_plan(signals, positions=None, **kwargs):
+    kwargs.setdefault("balance", 5_000.0)
+    kwargs.setdefault("limits", LIMITS)
+    kwargs.setdefault("exposure_per_unit_size", 4.0)
+    kwargs.setdefault("rebalance_threshold", 0.25)
+    kwargs.setdefault("session_open", {t: True for t in MARGIN_MARKETS})
+    kwargs.setdefault("recheck", False)
+    return bridge.plan_orders(
+        signals, MARGIN_MARKETS, positions or {},
+        placed=positions or {}, **kwargs,
+    )
+
+
+def test_an_open_that_would_breach_the_margin_ceiling_is_refused():
+    """The guard doing its job: headroom nearly gone, so nothing new opens."""
+    report = margin_plan(
+        [signal("AAPL", size=0.05)],
+        available=200.0,            # 4,800 already committed of 5,000
+        max_margin_usage=0.50,
+    )
+    intent = only(report, "AAPL")
+    assert intent.action == "refused", (
+        f"an open was allowed at 96% margin usage: {intent.action}"
+    )
+    assert "margin" in intent.reason.lower()
+
+
+def test_an_open_within_the_ceiling_still_proceeds():
+    """A guard that refuses everything is not a guard."""
+    report = margin_plan(
+        [signal("AAPL", size=0.05)],
+        available=5_000.0,          # nothing committed
+        max_margin_usage=0.50,
+    )
+    assert only(report, "AAPL").action == "open", (
+        "the ceiling refused an open with the whole balance free"
+    )
+
+
+def test_unreadable_headroom_refuses_rather_than_proceeds():
+    """Fails closed, like the last look.
+
+    A margin guard that silently disables itself when a field is missing is
+    worse than no guard, because it reads as protection while providing none.
+    """
+    report = margin_plan(
+        [signal("AAPL", size=0.05)],
+        available=None,
+        max_margin_usage=0.50,
+    )
+    intent = only(report, "AAPL")
+    assert intent.action == "refused", (
+        "an unreadable margin headroom let an open through"
+    )
+    assert "could not be read" in intent.reason
+
+
+def test_a_missing_margin_factor_refuses_rather_than_assuming_none():
+    """An instrument with no quoted factor needs an unknown amount of margin."""
+    markets = dict(MARGIN_MARKETS)
+    markets["AAPL"] = MarginMarket("AAPL", 99.0, 100.0, 0.1, margin_factor=None)
+    report = bridge.plan_orders(
+        [signal("AAPL", size=0.05)], markets, {}, placed={},
+        balance=5_000.0, limits=LIMITS, exposure_per_unit_size=4.0,
+        rebalance_threshold=0.25, session_open={"AAPL": True}, recheck=False,
+        available=5_000.0, max_margin_usage=0.50,
+    )
+    intent = only(report, "AAPL")
+    assert intent.action == "refused", (
+        "a missing margin factor was treated as requiring no margin"
+    )
+    assert "margin factor" in intent.reason
+
+
+def test_the_ceiling_is_off_unless_configured():
+    """Every recorded figure predates this, so it cannot default to on."""
+    report = margin_plan(
+        [signal("AAPL", size=0.05)],
+        available=None,             # would fail closed if the gate were on
+    )
+    assert only(report, "AAPL").action == "open", (
+        "the margin ceiling applied without being configured, which would "
+        "change what the account does on an upgrade"
+    )
+
+
+def test_the_margin_ceiling_never_refuses_a_close():
+    """Refusing an exit is never the safe direction -- least of all here.
+
+    A book short of margin is precisely the one that most needs to be able
+    to reduce.
+    """
+    held = {"AAPL": {"size": 10.0, "direction": "BUY", "dealId": "d1"}}
+    report = margin_plan(
+        [signal("AAPL", direction="flat", size=0.0)],
+        positions=held,
+        available=0.0,              # no headroom whatsoever
+        max_margin_usage=0.50,
+    )
+    intent = only(report, "AAPL")
+    assert intent.action == "close", (
+        f"a close was blocked by the margin ceiling: {intent.action} "
+        f"({intent.reason})"
+    )

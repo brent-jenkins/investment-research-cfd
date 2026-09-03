@@ -417,6 +417,22 @@ class StrategyConfig:
     #: book is already warm, because a warm book rarely opens more than one
     #: or two at a time.
     max_opens_per_pass: int | None = 3
+    #: The most of the balance that committed margin may consume, or ``None``
+    #: to not check it.
+    #:
+    #: Off by default and deliberately not inherited from
+    #: ``RiskLimits.max_margin_usage_pct``, which is 0.50 and belongs to the
+    #: manual helper -- borrowing it would silently change hand-trading
+    #: advice as well, and one number answering two questions is how this
+    #: project has been caught before.
+    #:
+    #: Turning it on changes what the account does. Measured on the demo
+    #: account: 44.2% utilisation on 2026-09-03 and 66.6% on 2026-09-01, so a
+    #: ceiling of 0.50 would have refused opens on the second of those. The
+    #: gate fails CLOSED -- an unreadable headroom or a missing margin factor
+    #: refuses rather than proceeds -- because a margin guard that disables
+    #: itself reads as protection while providing none.
+    max_margin_usage: float | None = None
     #: Notional per unit of signal size, as a multiple of equity.
     exposure_per_unit_size: float = 1.0
     #: Days either side of a reporting date to hold no position. ``0`` off.

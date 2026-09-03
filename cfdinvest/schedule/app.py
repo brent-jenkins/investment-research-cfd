@@ -1315,12 +1315,65 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
             len(stranded), ", ".join(stranded),
         )
 
+    # One timestamp for the whole pass, so every row it writes -- margin
+    # readings, the plan, the results -- carries the same moment and can
+    # be joined afterwards.
+    now = pd.Timestamp.now(tz="UTC")
+
     markets = {
         m.ticker: m
         for m in capital.fetch_market_details(
             dealing_tickers, session, settings.broker
         )
     }
+
+    # Record what the broker requires and how much of the account it is
+    # using. Both are current values with no history served by the API, so a
+    # change that happened yesterday is already gone -- the series has to be
+    # running before the question can be asked, which is why this writes
+    # before anything reads it.
+    #
+    # Factors only when they move, plus a daily heartbeat, so that
+    # "unchanged" stays distinguishable from "unobserved". The usage row goes
+    # every pass because it is small and it is the number that decides
+    # whether a drawdown is survivable.
+    try:
+        from cfdinvest.persist import margin as margin_store
+
+        known = margin_store.latest_factors(app_config, account_name)
+        seen_at = {
+            str(row.get("ticker") or ""): str(row.get("at") or "")
+            for row in margin_store.load_margin(app_config, account_name)
+            if str(row.get("kind") or "") == "factor"
+        }
+        rows = margin_store.changed_factors(
+            {t: getattr(m, "margin_factor", None) for t, m in markets.items()},
+            known, now=now, last_seen=seen_at,
+        )
+        used = None
+        if account.balance is not None and account.available is not None:
+            used = float(account.balance) - float(account.available)
+        rows.append({
+            "at": str(now), "kind": "usage",
+            "balance": account.balance, "available": account.available,
+            "used": used, "currency": getattr(account, "currency", ""),
+            "positions": len(positions),
+        })
+        margin_store.record_margin(rows, app_config, account_name)
+        moved = [r for r in rows if r.get("changed")]
+        if moved:
+            # Worth a log line of its own: a factor moving under an open
+            # position is the mechanism that can force a close, and it is
+            # the thing this series exists to catch.
+            logger.warning(
+                "Capital: margin factor changed on %s",
+                ", ".join(
+                    f"{r['ticker']} {r.get('previous')}->{r['margin_factor']}"
+                    for r in moved
+                ),
+            )
+    except Exception as error:  # noqa: BLE001 - a lost reading is not an outage
+        logger.warning("Could not record margin readings: %s", error)
 
     # Now that the instruments are priced, turn the engine's units into the
     # share of balance the bridge sizes from. Done here rather than earlier
@@ -1336,7 +1389,6 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         for name, detail in markets.items()
     })
 
-    now = pd.Timestamp.now(tz="UTC")
     try:
         calendar = describe(dealing_tickers, now)
         session_open = {
@@ -1397,6 +1449,13 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         open_allowed=open_allowed,
         max_opens_per_pass=app_config.strategy.max_opens_per_pass,
         entry_confidence=app_config.strategy.entry_confidence,
+        # What is left after committed margin, and the ceiling on it. The
+        # broker varies its margin factors under open positions, so headroom
+        # is read each pass rather than inferred from what we committed.
+        available=account.available,
+        max_margin_usage=getattr(
+            app_config.strategy, "max_margin_usage", None
+        ),
     )
 
     order_store.record_plan(report, app_config, account_name, now=now)
