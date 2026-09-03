@@ -845,11 +845,35 @@ def _target_units(held, size_row, reference, equity, config, tradable):
 def _size_by_confidence(target_units, confidence, config):
     """Scale a position by how much conviction stands behind it.
 
-    Confidence is the best predictor of outcome this project has -- +0.248
-    rank correlation against realised trip P&L, where a purpose-built model
-    on sixteen features managed +0.129 -- and until now it was used only as
-    a *gate*: clear 0.35 or do not trade. Everything above the bar was sized
-    identically, which throws away the ordering the score carries.
+    Until 2026-08-30 confidence was used only as a *gate*: clear 0.35 or do
+    not trade. Everything above the bar was sized identically, which throws
+    away the ordering the score carries.
+
+    **RETRACTED 2026-09-03**: "confidence is the best predictor of outcome
+    this project has -- +0.248 rank correlation against realised trip P&L,
+    where a purpose-built model on sixteen features managed +0.129." Both
+    numbers were read on the fill bar rather than the decision bar the engine
+    gates on, which is the error retracted on 2026-08-30. On the decision bar
+    confidence reads +0.023; a walk-forward sixteen-feature model reads
+    +0.0777. The model is roughly four times better, not half as good.
+
+    Sizing by confidence still earns its place -- it was adopted on engine
+    arms with a leverage-matched control, not on that correlation -- but the
+    reason it is confidence rather than a fitted model is now an empirical
+    finding rather than an assumption, and the finding cuts both ways:
+
+      * No band of the model's estimate is unprofitable out of sample. The
+        bottom fifth still earns +1.6M at a 42.7% win rate, so there is
+        nothing for a filter to remove, which is the same wall every
+        selection idea in this project has hit.
+      * The model's skill is at WIN RATE, and in this book win rate runs
+        *against* mean P&L above the bottom band: its bands earn +2,359,
+        +10,404, +10,005, +9,750, +9,339 while win rate climbs 42.7% to
+        53.4%. Twenty per cent of trips produce all the profit here, so a
+        model trained to be right more often trades the fat tail away.
+
+    That is the argument for sizing on a score the strategy already produces
+    rather than on a classifier fitted to outcomes.
 
     The multiplier is linear in confidence above the entry bar, centred so
     that a position exactly at the bar is unchanged:

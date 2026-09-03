@@ -480,6 +480,98 @@ uses the shared root, exactly as before it existed. See
 The root `README.md` is out of date — it describes the project as
 "ingestion layer complete".
 
+### What changed on 2026-09-03
+
+**A stale figure was justifying a live parameter, and correcting it reversed
+the claim.** `config.py`, `execution/engine.py` and `config/config.toml` all
+said confidence scores **+0.248** rank correlation against realised trip P&L
+where "a purpose-built sixteen-feature model managed +0.129" — quoted to
+explain why sizing follows the score the strategy already produces rather
+than a model fitted to outcomes.
+
+Both numbers were read on the **fill bar**, which is the basis retracted on
+2026-08-30. `execution_lag` is 1, so the engine gates on the previous bar's
+value, and the gap is not small:
+
+    confidence against trip P&L    decision bar (correct)   +0.023
+                                   fill bar (retracted)     +0.160
+
+Sevenfold. The figure had survived the 2026-08-30 retraction because that
+retraction was written about *buckets and thresholds* and these two
+correlations lived in a docstring nobody re-read — which is precisely the
+failure the retraction rule exists to prevent, appearing again in the same
+file that states it.
+
+**Rebuilt properly, the model beats confidence rather than halving it.**
+Sixteen features on the decision bar, directional ones signed by the side
+the engine actually took, walk-forward with the model refitted each quarter
+on everything before it and every prediction made from information the
+daemon would genuinely have had. Two quarters skipped and said to be
+skipped, for a training set under 400 trips; 3,419 trips scored.
+
+    walk-forward, no lookahead      vs P&L   vs return   vs win
+    16-feature model               +0.0777     +0.0698   +0.0767
+    confidence alone               +0.0202     +0.0145   +0.0415
+
+So the claim was not mis-scaled, it was **backwards**: the model is roughly
+four times better against P&L, not half as good.
+
+**It changes nothing, and the reasons are the interesting part.**
+
+*Nothing to filter.* No band of the model's estimate loses money out of
+sample. The bottom fifth earns **+1.6M at a 42.7% win rate**:
+
+    band       n   mean p    total P&L   mean P&L   win rate
+       1     684    0.415   +1,613,641     +2,359      42.7%
+       2     684    0.468   +7,116,477    +10,404      46.3%
+       3     683    0.501   +6,833,517    +10,005      49.8%
+       4     684    0.538   +6,669,275     +9,750      52.0%
+       5     684    0.599   +6,387,677     +9,339      53.4%
+
+This is the same wall every selection idea in this project has hit, reached
+by a new route: a better *ranking* is only worth having if some subset is
+unprofitable, and none is. It is why raising the entry gate costs money.
+
+*And its skill points the wrong way.* Win rate climbs monotonically 42.7% to
+53.4% while **mean P&L falls** from +10,404 to +9,339 across bands two to
+five. The model was trained to predict whether a trip wins, and in this book
+win rate runs against money above the bottom band — 20% of trips produce all
+the profit, so a model that is right more often trades the fat tail away.
+That is now the stated reason sizing follows confidence rather than a fitted
+classifier, replacing an assumption with a measurement.
+
+**A two-half screen said the opposite, and was wrong for an instructive
+reason.** Splitting the trips in half and testing each on a model trained
+on the other showed a bottom band **losing −155,385**, which read as the
+first losing entry subset this project has found. Half of that construction
+is lookahead — H1 trips scored by a model trained on H2 is training on the
+future — and the losing band did not survive the walk-forward. Recorded
+because the two-half split is the obvious thing to reach for and it
+manufactured exactly the finding being looked for.
+
+**The most useful thing to come out of it is independent confirmation of a
+lead already recorded.** `hours into session` is the strongest feature in
+the model and the most stable — the largest mean coefficient across the walk
+and the same sign in **100%** of quarterly refits, alongside `from 12-bar
+high` and `signal size`. That is the "skip the first N bars" morning filter
+of 2026-09-01, found by a completely different method: there it was a sweep
+returning +81.4pp at skip-4 with −8.5pp of drawdown, here it is what a
+classifier leans on hardest when asked which entries work.
+
+Two independent routes to one effect is materially better evidence than the
+sweep alone, and it does not clear the filter for adoption. The sweep's
+objections stand: the return response is not monotone, the skip-2 dip is
+unexplained, and a time-of-day rule is exactly what fits to one 3.65-year
+period. What has changed is that it is now the **best-supported untested
+idea in the project**, and it needs the battery the sizing change got —
+leverage control, block bootstrap, per-year and per-quarter cuts, universe
+robustness — expressed as `ExecutionConfig` settings and applied by the
+engine.
+
+`confidence` itself is a mid-ranking feature in that model, sign-stable in
+85% of refits. It predicts, modestly, on the correct bar. It is simply not
+the best thing available, which is what the retracted figure claimed.
+
 ### What changed on 2026-09-01
 
 **The shipped baseline is 327.1%/yr at −45.4%**, after two changes on the

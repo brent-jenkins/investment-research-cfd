@@ -530,11 +530,20 @@ exit_size = 0.01
 
 # How strongly position size follows conviction above the entry bar.
 #
-# Confidence is the best predictor of outcome this book has -- +0.248 rank
-# correlation against realised trip P&L, where a purpose-built sixteen-feature
-# model managed +0.129 -- and until now it was used only as a gate. Everything
-# clearing 0.35 was sized identically, whether it scored 0.36 or 0.95, so the
-# ordering the score carries was thrown away at the moment of acting on it.
+# Until 2026-08-30 confidence was used only as a gate. Everything clearing
+# 0.35 was sized identically, whether it scored 0.36 or 0.95, so the ordering
+# the score carries was thrown away at the moment of acting on it.
+#
+# RETRACTED 2026-09-03: "confidence is the best predictor of outcome this book
+# has -- +0.248 rank correlation against realised trip P&L, where a
+# purpose-built sixteen-feature model managed +0.129." Both were read on the
+# fill bar, not the decision bar the engine gates on. Corrected: confidence
+# +0.023, and a walk-forward sixteen-feature model +0.0777 -- the model is
+# about four times better, not half as good. The value below is unaffected;
+# it was set from engine arms with a leverage-matched control, not from that
+# correlation. No band of the model loses money, so it cannot filter, and its
+# skill is at win rate, which runs against mean P&L in this book. See
+# execution/engine.py: _size_by_confidence.
 #
 # Measured through the engine, screen-gated at target 10, Capital bars,
 # measured spreads:

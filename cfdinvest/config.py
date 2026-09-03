@@ -306,12 +306,33 @@ class StrategyConfig:
 
     #: How strongly position size follows conviction above the entry bar.
     #:
-    #: Confidence is the best predictor of outcome this book has -- +0.248
-    #: rank correlation against realised trip P&L, where a purpose-built
-    #: sixteen-feature model managed +0.129 -- and until 2026-08-30 it was
-    #: used only as a gate. Everything that cleared 0.35 was sized
-    #: identically, whether it scored 0.36 or 0.95, so the ordering the score
-    #: carries was discarded at the moment of acting on it.
+    #: Until 2026-08-30 confidence was used only as a gate: everything that
+    #: cleared 0.35 was sized identically, whether it scored 0.36 or 0.95, so
+    #: the ordering the score carries was discarded at the moment of acting
+    #: on it. Sizing by it is worth the table below.
+    #:
+    #: **RETRACTED 2026-09-03**: "confidence is the best predictor of outcome
+    #: this book has -- +0.248 rank correlation against realised trip P&L,
+    #: where a purpose-built sixteen-feature model managed +0.129". Both
+    #: figures were read on the FILL bar, the basis retracted on 2026-08-30.
+    #: ``execution_lag`` is 1, so the engine gates on the previous bar's
+    #: value; measured there confidence reads **+0.023** against +0.160 on
+    #: the fill bar, a sevenfold difference.
+    #:
+    #: Rebuilt on the decision bar, walk-forward, refitting each quarter on
+    #: everything before it, the sixteen-feature model **beats confidence**
+    #: rather than halving it -- +0.0777 against +0.0202 versus trip P&L, and
+    #: +0.0767 against +0.0415 versus whether the trip won. So the claim was
+    #: not merely mis-scaled, it was backwards.
+    #:
+    #: It does not change this parameter, and that is worth being explicit
+    #: about: the value below was set from arms measured through the engine
+    #: and controlled for leverage, not from the correlation. A stale figure
+    #: was quoted in its justification; the justification does not rest on
+    #: it. What the model *cannot* do is filter -- no band of it loses money
+    #: out of sample -- so the estimate belongs in sizing, which is here.
+    #: See ``_size_by_confidence`` for why more skill at win rate is not
+    #: obviously worth having in a book that earns from a fat tail.
     #:
     #: Measured through the engine, screen-gated at target 10, Capital bars,
     #: measured spreads:
