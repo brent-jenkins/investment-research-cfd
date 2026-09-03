@@ -461,11 +461,26 @@ def test_the_gate_never_refuses_an_exit():
 
 @dataclass(frozen=True)
 class MarginMarket:
+    """A market carrying the margin figure in the unit the BROKER uses.
+
+    20.0, not 0.20. The first version of these tests used the fraction and
+    passed a gate that multiplied a notional by twenty -- it would have
+    demanded twenty times the position in margin and refused every open on
+    the live account. Read back off the demo account on 2026-09-03: every one
+    of the eight instruments returns marginFactor 20.0, being 20% and 5x.
+    """
+
     epic: str
     bid: float
     offer: float
     min_deal_size: float = 0.1
-    margin_factor: float | None = 0.20
+    margin_factor: float | None = 20.0
+
+    @property
+    def margin_fraction(self) -> float | None:
+        if self.margin_factor is None:
+            return None
+        return float(self.margin_factor) / 100.0
 
 
 MARGIN_MARKETS = {
@@ -577,4 +592,23 @@ def test_the_margin_ceiling_never_refuses_a_close():
     assert intent.action == "close", (
         f"a close was blocked by the margin ceiling: {intent.action} "
         f"({intent.reason})"
+    )
+
+
+def test_the_margin_figure_is_converted_from_the_brokers_percentage():
+    """20.0 means 20%, and multiplying a notional by it is 100x wrong.
+
+    Asserted on the real client type rather than the local fake, so the fake
+    cannot drift into agreeing with a bug. Read off the demo account on
+    2026-09-03: all eight instruments return marginFactor 20.0.
+    """
+    from cfdinvest.broker.capital.client import CapitalMarket
+
+    market = CapitalMarket(epic="MU", ticker="MU", margin_factor=20.0)
+    assert market.margin_fraction == pytest.approx(0.20), (
+        "the broker's percentage was not converted to a fraction; a notional "
+        "multiplied by 20.0 demands twenty times the position in margin"
+    )
+    assert CapitalMarket(epic="X", ticker="X").margin_fraction is None, (
+        "an unquoted requirement became a number rather than staying absent"
     )

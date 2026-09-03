@@ -242,7 +242,11 @@ class ExecutionConfig:
     #: ``None`` disables it, which is the engine default: it is a modelling
     #: switch, and a shipped figure cannot move because a new field appeared.
     max_opens_per_pass: int | None = None
-    #: Margin required per unit of notional, per instrument.
+    #: Margin required per unit of notional, per instrument, as a FRACTION.
+    #:
+    #: 0.20, not 20.0. Capital's API states the figure as a percentage and
+    #: ``CapitalMarket.margin_fraction`` is what converts it; a caller passing
+    #: the raw broker number here would demand a hundred times the margin.
     #:
     #: Capital publishes a ``marginFactor`` -- 0.20 for a 5x instrument -- and
     #: varies it: tiered by position size, raised in volatile conditions and

@@ -338,7 +338,9 @@ def plan_orders(
                         "margin limit is not a satisfied one"
                     ))
                     continue
-                factor = getattr(market, "margin_factor", None)
+                # The FRACTION, not the percentage the broker states. These
+                # differ by 100x and the wrong one refuses every open.
+                factor = getattr(market, "margin_fraction", None)
                 if factor is None:
                     intents.append(refuse(
                         "the broker did not quote a margin factor for this "

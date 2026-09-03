@@ -234,7 +234,11 @@ class CapitalMarket:
     currency: str = ""
     min_deal_size: float | None = None
     instrument_type: str = ""
-    #: Margin as a percentage of exposure -- 20 means 5x leverage.
+    #: Margin as a PERCENTAGE of exposure -- 20 means 20%, which is 5x
+    #: leverage. Read `margin_fraction` rather than this wherever the figure
+    #: is multiplied by a notional: the two differ by 100x, and a consumer
+    #: that guesses wrong is out by two orders of magnitude in the direction
+    #: that refuses every trade.
     margin_factor: float | None = None
     #: Overnight funding per side, as the broker states it. The unit is not
     #: documented; see the note in ``persist.spreads``.
@@ -242,6 +246,28 @@ class CapitalMarket:
     funding_short: float | None = None
     tradable: bool | None = None
     fetched_at: str = ""
+
+    @property
+    def margin_fraction(self) -> float | None:
+        """``margin_factor`` as a fraction of notional: 20.0 becomes 0.20.
+
+        The conversion lives here so it happens once. It was got wrong the
+        first time it was consumed -- the margin ceiling multiplied a notional
+        by 20.0 instead of 0.20 and would have demanded twenty times the
+        position in margin, refusing every open on an account that looked
+        fine. The tests passed because they were written with the same wrong
+        unit, which is what a correctly-implemented wrong measurement looks
+        like.
+
+        ``None`` stays ``None``: an unquoted requirement is unknown, and the
+        margin gate refuses rather than assuming.
+        """
+        if self.margin_factor is None:
+            return None
+        try:
+            return float(self.margin_factor) / 100.0
+        except (TypeError, ValueError):
+            return None
     error: str = ""
 
     @property

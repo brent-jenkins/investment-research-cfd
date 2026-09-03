@@ -803,6 +803,32 @@ project has been caught before.
 The new enforcement check earned itself immediately: it failed on `available`
 and `max_margin_usage` the moment they were added, before either was wired.
 
+**A units bug, found by reading the account rather than the code.** Capital
+returns `marginFactor` as a **percentage** — every one of the eight
+instruments reads **20.0**, being 20% and 5x — and `CapitalMarket` documented
+that from the start. Both consumers written on 2026-09-03 treated it as a
+fraction, so the ceiling would have multiplied a notional by 20.0 instead of
+0.20, demanded twenty times the position in margin, and **refused every open**
+on an account showing 44% utilisation.
+
+The tests passed, because they were written with the same wrong unit. That is
+the third form of this project's oldest failure: a correctly-implemented
+wrong measurement, checked against a fixture that agrees with it. It surfaced
+only because the account was queried directly to see whether every instrument
+quotes a factor at all — the check was about *coverage* and the units fell
+out of it.
+
+Converted once, at the boundary: `CapitalMarket.margin_fraction`. No consumer
+holds the percentage, the fake in the tests carries the broker's own unit,
+and a test asserts the conversion against the real client type so the fake
+cannot drift back into agreeing with a bug. `None` stays `None` — an unquoted
+requirement is unknown, and the gate refuses rather than assuming.
+
+It cost nothing because the ceiling is unset. Had it been set to the 0.80
+that was written into `config.toml` as an illustration, the account would
+have stopped opening positions entirely and the cause would have looked like
+a margin problem rather than an arithmetic one.
+
 **One thing still outstanding.** The last look's docstring measurement — 9.5% refused, refused
 trips averaging −0.331% against +0.011% kept, t=+4.63 — dates from
 2026-08-27, before the Capital feed switch, the corrected cost model and
