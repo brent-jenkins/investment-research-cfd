@@ -1273,8 +1273,20 @@ deployed and verified on the box.
                 its open. tests/test_no_intrabar_lookahead.py guards it.
     gate        entry_confidence 0.75, was 0.35
     universe    25 names from the screen, was 10
+    dealing     DAY TRADING. Opens from 30 minutes after the open, stops
+                opening 60 minutes before the close, and flattens everything
+                at the bell. It carried 94% of its entries overnight before.
     book        FLAT. 4,780.79 GBP, no margin in use, no open positions
     forward     restarts Monday from 4,780.79
+
+**The overnight carry was never a decision.** ``time_stop_days`` of 0.29 is
+6.96 hours against a session of about six hours of bars, so a position opened
+in the first openable hour could not reach its stop before the close -- it
+reached it at the next session, past the gap. That parameter was fitted on
+the flawed engine, so nobody ever chose the exposure that cost the AMAT
+trade. Flattening is worth +55.4pp with drawdown roughly halved, on LESS
+leverage, and every earlier test of it lost only because it competed with an
+exit that could see the fill bar.
 
 The 25 names are the first genuinely diversified book this project has
 traded: MU, INTC, AMD, PLTR, LRCX, TSLA, CAT, LLY, BKNG, ISRG, NKE, LULU,
