@@ -296,13 +296,28 @@ def test_the_traded_count_is_computed_from_the_curve_not_asserted():
         "cannot exercise the choice this test exists for"
     )
 
-    assert resolve_target(config, 8) == max(band), (
+    # A fallback above the band, so the VIABILITY CEILING does not bind and
+    # this tests the curve alone. With no balance recorded the ceiling falls
+    # back to the held count, which is correct -- an uncomputable input must
+    # not expand the book -- and would otherwise mask what is under test.
+    held = max(band) + 10
+    assert resolve_target(config, held) == max(band), (
         f"returns-first did not take the band's top; band was {band}"
     )
 
     Uni.size_preference = "smallest"
-    assert resolve_target(config, 8) == min(band), (
+    assert resolve_target(config, held) == min(band), (
         f"risk-first did not take the band's bottom; band was {band}"
+    )
+
+    # And the ceiling DOES bind when it is below the band: an account holding
+    # four names is not expanded to ten because a curve says ten measured
+    # well, when nothing is known about what it can size.
+    Uni.size_preference = "largest"
+    assert resolve_target(config, 4) == 4, (
+        "the curve raised the target above the held count while the "
+        "viability ceiling was uncomputable, which is absence read as "
+        "permission"
     )
 
     # An explicit target overrides the computation, and no curve falls back

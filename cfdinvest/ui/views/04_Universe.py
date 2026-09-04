@@ -44,7 +44,16 @@ _data = components.page_setup(
 )
 mode = _data.get("mode", "dark")
 
-settings = load_config()
+# The config the rest of the app is reading, not a fresh load.
+#
+# This called `load_config()` directly until 2026-09-04, which bypassed the
+# shared source every other page uses. Two consequences: with
+# CFD_ACCOUNT_MODE set it could describe a different account from the one the
+# page is showing, and in tests it read the developer's real data root -- so
+# the Universe test was asserting against live selections rather than the
+# synthetic lake, and passed only while the two happened to agree about how
+# many names a selection holds.
+settings = _data.get("config") or load_config()
 
 # Read from the owner, not from the config. `market.tickers` is the FALLBACK
 # and stopped being the answer on 2026-08-29, when `follow_screen` was turned

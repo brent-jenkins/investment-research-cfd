@@ -1168,7 +1168,21 @@ candidates = [
 #
 # Pinned meanwhile so the size curve can be recorded truthfully without
 # silently changing what the account holds.
-target = 10
+# Unset: the size curve chooses, bounded by two ceilings.
+#
+# `universe.max_target` (70) stops the curve selecting the whole candidate
+# pool -- it peaks at 70 and is still worth 209.7% at 100, a gap inside the
+# 9.3pp floor, so "largest within the floor" would otherwise take everything.
+#
+# The VIABILITY ceiling then binds below that on a small account: computed by
+# `universe._viability_ceiling` from the balance recorded in persist.margin
+# and the minimum deal sizes in persist.spreads, requiring every slot to be
+# worth several minimum tickets. That is what stops the book holding 70
+# positions of 136 against a 0.1-unit minimum worth 100-114 on the dear
+# names, and it rises on its own as the balance does.
+#
+# Pin an explicit value here only to override both.
+# target = 25
 
 # Sector map for the concentration cap. Without it the cap cannot bind, and
 # the screen reports that it was not applied rather than silently skipping.

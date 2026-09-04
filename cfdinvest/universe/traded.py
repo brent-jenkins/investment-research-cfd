@@ -177,6 +177,78 @@ def _is_stale(as_of: str) -> bool:
         return True
 
 
+def _viability_ceiling(app_config, fallback: int) -> tuple[int | None, str]:
+    """How many slots this balance can actually size, from observations.
+
+    The resolver used to pass ``ceiling=None`` with a comment saying the
+    dealing path should supply it, because that is the only layer holding a
+    balance. It never did, so the curve chose alone and a size the account
+    could not deal was as eligible as one it could.
+
+    Both inputs are already recorded, so nothing has to be passed down and
+    nothing reaches a network from here: ``persist.margin`` writes the
+    balance on every dealing pass, and ``persist.spreads`` writes
+    ``min_deal_size`` beside a bid and an offer. This reads them.
+
+    Returns ``(None, reason)`` when it cannot be computed, and the reason is
+    logged rather than swallowed -- an uncomputed ceiling and a generous one
+    are different states, and only one of them should read as permission.
+
+    Capped by ``universe.max_target``. The curve peaks at 70 and is still
+    worth 209.7% at 100, a gap inside the 9.3pp floor, so "largest within the
+    floor" would otherwise select the entire candidate pool.
+
+    **An uncomputable ceiling falls back to what is held now, not to the
+    maximum.** The first version returned the cap when it could not read a
+    balance, so a missing input read as permission to hold seventy names --
+    which is this project's most-named failure appearing in the guard written
+    to prevent a different one. Not knowing how much the account can size is
+    a reason to keep the book where it is.
+    """
+    cap = getattr(app_config.universe, "max_target", None)
+    cap = int(cap) if cap else None
+    try:
+        from cfdinvest.persist import margin as margin_store
+        from cfdinvest.persist import spreads as spread_store
+        from cfdinvest.risk.capacity import minimum_tickets, position_capacity
+    except Exception as error:  # noqa: BLE001 - a resolver must not explode
+        return fallback, f"capacity layer unavailable ({error})"
+
+    balance = None
+    try:
+        usage = [row for row in margin_store.load_margin(app_config)
+                 if str(row.get("kind") or "") == "usage" and row.get("balance")]
+        if usage:
+            balance = float(usage[-1]["balance"])
+    except Exception as error:  # noqa: BLE001
+        return fallback, f"balance unreadable ({error})"
+    if not balance:
+        return fallback, ("no balance recorded yet; margin readings start "
+                          "on the first dealing pass")
+
+    try:
+        tickets = minimum_tickets(spread_store.load_spreads(app_config))
+    except Exception as error:  # noqa: BLE001
+        return fallback, f"minimum deal sizes unreadable ({error})"
+    if not tickets:
+        return fallback, "no minimum deal sizes recorded"
+
+    strategy = getattr(app_config, "strategy", None)
+    capacity = position_capacity(
+        balance, tickets,
+        max_leverage=getattr(strategy, "max_leverage", None),
+        max_instrument_concentration=getattr(
+            strategy, "max_instrument_concentration", None),
+        universe_size=cap,
+    )
+    if capacity.slots is None:
+        return fallback, f"not computed ({capacity.note})"
+    return int(capacity.slots), (
+        f"balance {balance:,.0f}, {len(tickets)} minimum sizes, "
+        f"bound by {capacity.binding}"
+    )
+
+
 def resolve_target(app_config, fallback: int) -> int:
     """How many to hold, derived rather than asserted.
 
@@ -207,8 +279,12 @@ def resolve_target(app_config, fallback: int) -> int:
         logger.info("No size curve configured; holding the traded count (%d)", fallback)
         return fallback
 
-    ceiling = None      # the balance ceiling is applied by the dealing path,
-                        # which is the only layer that knows the balance
+    ceiling, why = _viability_ceiling(app_config, fallback)
+    if ceiling is None:
+        logger.info("No viability ceiling (%s); the curve decides alone", why)
+    else:
+        logger.info("Viability ceiling %d slots (%s)", ceiling, why)
+
     chosen = operating_size(
         curve, ceiling=ceiling,
         prefer=str(getattr(app_config.universe, "size_preference", "largest")),

@@ -599,6 +599,17 @@ class UniverseConfig:
     #: -- see ``risk.capacity.operating_size``. Set it only to pin the
     #: answer deliberately.
     target: int | None = None
+    #: The most names to hold, whatever the return curve says.
+    #:
+    #: The curve peaks at 70 and is still worth 209.7% at 100, a difference
+    #: inside the 9.3pp noise floor -- so "largest within the floor" would
+    #: pick the whole candidate pool. This is the deliberate stop.
+    #:
+    #: Distinct from the VIABILITY ceiling, which is computed from the
+    #: balance and the broker's minimum deal sizes and will usually bind
+    #: first on a small account. This one bounds the ambition; that one
+    #: bounds the arithmetic.
+    max_target: int | None = 70
 
     #: Measured CAGR against universe size, from which the traded count is
     #: derived. Data rather than configuration: it is the output of a sweep
