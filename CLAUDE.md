@@ -1071,6 +1071,72 @@ reverted -- 459.60 at the open back to about 453.7 -- which is why one
 position over three nights argues both ways and the aggregate is what
 decides.
 
+
+**Decay from the peak, confidence delta and flatness: all null, and one of
+them points the wrong way.** The owner asked whether a combination of the
+three signals anything usable. Screened over **4,211 positions held into a
+session close**, with the outcome being the OVERNIGHT LEG ALONE -- that close
+to the next session's open, signed by the side held -- rather than trip P&L,
+which would contain the gain being measured.
+
+    feature            rho vs the overnight leg
+    decay_share                +0.0380      n=3,159
+    decay_from_peak            +0.0303
+    conf_delta3                +0.0234
+    flat3                      +0.0217
+    gain                       -0.0114
+    conf_decay                 +0.0038
+    move3                      -0.0043
+    conf                       +0.0067
+
+Nothing above 0.04 on a standard error near 0.016. The mean overnight leg is
+-0.0092% and the median -0.0468%, so holding overnight does cost a little,
+which was the premise -- but no candidate sorts it.
+
+**Decay from the peak points the OPPOSITE way to the intuition.** Positions
+that have given nothing back do *worse* overnight than positions that have
+already come off their high:
+
+    decay_share      n     mean gap   share losing
+    band 1 (none)  1,264    -0.1061%      52.8%
+    band 2           631    +0.0006%      51.7%
+    band 3           632    +0.1113%      46.8%
+    band 4           632    +0.0508%      49.2%
+
+A position still at its peak is the extended, crowded one, and it is the one
+that reverts. A position that has already given back has already reverted.
+That is the reverse of "bank it before it fades" and it is worth keeping,
+because the intuition is strong and wrong.
+
+`conf_delta3` is the only one pointing the right way, and it is really "rising
+confidence is good" rather than "falling confidence is bad": bands 1-4 sit
+between -0.031% and -0.048% and only band 5 differs at +0.111%.
+
+**And the arithmetic settles it regardless of ranking.** The worst band loses
+**0.106%** overnight against **22-26bp** to exit and re-enter. Even perfectly
+selected, the premium exceeds the payout -- the same wall the weekend trim,
+the overnight exit and the proportional trim all hit.
+
+**This leaves the stall rule working for a reason that is not the stated
+one, and that is the important consequence.** `+2% / 3 flat` passed the whole
+battery -- +81.5pp against a leverage-matched control, both halves, 4 of 4
+universes, better drawdown -- on the hypothesis that it avoids bad overnight
+gaps on stalled winners. This screen says flatness does not predict the
+overnight leg at all (`move3` rho -0.0043, and its quintiles are
+non-monotone). So whatever the +56.5pp is, it is not that.
+
+Candidate explanations, none measured: banking and re-entering resets
+`entry_price` and `opened_at`, which changes what the time stop and the
+decayed-position trim do afterwards; or it is a composition effect from
+freeing a slot; or path and compounding. The earlier "time stop in disguise"
+test was weaker than it looked -- `time_stop_days` 0.29 and 0.50 give
+identical books -- so that possibility is not closed.
+
+**A rule that works for an unknown reason is the shadow-book failure with
+better statistics.** The morning filter looked worth +100pp on a mechanism
+that turned out to be the last look showing through. This is the same shape
+and it is not adopted until the mechanism is established.
+
 `overnight_profit_take` and `overnight_profit_stall_bars` default to `None`
 and `0`, are applied by the engine, and are not wired into
 `_execution_config`.
