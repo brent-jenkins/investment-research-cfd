@@ -919,6 +919,82 @@ trips averaging −0.331% against +0.011% kept, t=+4.63 — dates from
 conviction sizing. Direction and existence stand; the magnitudes are on a
 superseded basis and should not be quoted as current.
 
+### What changed on 2026-09-04
+
+**Overnight profit-taking, the last untested member of its family, and the
+owner's conditional version of it survives.** The observation that started it:
+a short in AMAT stood at **+141.77** on Thursday's last bar and **+2.43** on
+Friday morning, an overnight gap of +18.3 points costing 131 on 7.3 units.
+The book went 5,005.75 to 4,809.60 the same night.
+
+The counter-fact is in the same position's own history. The two preceding
+nights gapped *favourably* -- -3.06 (+22.37) and -7.70 (+56.25), the largest
+single move in its life. Over three nights the overnight exposure netted
+-52.4, and Thursday's +56 looked exactly like Friday's -131 the evening
+before.
+
+**The threshold alone is monotonically harmful**, exactly as the
+holding-period table predicts -- trips held 16+ bars earn 18.7M, so
+truncating a winner costs:
+
+    bank at   CAGR     vs baseline
+      +1%     95.5%      -372.2pp
+      +2%    270.1%      -197.6pp
+      +3%    386.1%       -81.5pp
+      +5%    437.2%       -30.5pp
+      +8%    508.2%       +40.5pp
+
+The +8% arm is not evidence: it fires 74 times in 3,219 trades, its H1 is
+-8.0pp, and pushing further gives -13.0, +5.6, -4.1 and +13.3 at
+10/12/15/20% -- every one negative in H1 and positive in H2, which is a
+period rather than a rule, and at +20% only 8 trades separate it from the
+baseline.
+
+**Conditioning it on the trend having stalled reverses the result.** The
+owner's actual hypothesis was the combination, not the threshold: bank a gain
+only once it has stopped paying. `overnight_profit_stall_bars` requires no
+gain over the last N completed bars in the direction held.
+
+    arm                 vs base   trades   H1 diff   H2 diff   maxDD
+    +2% / 2 flat        +34.2pp     +275   +26.2pp   +42.2pp   44.1%
+    +2% / 3 flat        +56.5pp     +224   +59.4pp   +53.1pp   41.0%
+    +3% / 2 flat        +45.0pp     +195   +50.4pp   +39.6pp   43.4%
+    +3% / 3 flat        +57.1pp     +153   +19.2pp   +99.1pp   37.5%
+    +5% / 2 flat        +54.9pp      +97   +14.5pp   +99.8pp   44.0%
+    +5% / 3 flat        +44.6pp      +81   -13.8pp  +111.8pp   41.8%
+
+Positive in both halves for five of the six, drawdown improving rather than
+worsening, and mean leverage falling 1.71 to 1.61-1.65 -- the second effect
+the owner predicted, since a position banked at the close carries no margin
+overnight. `+2% / 3 flat` is the most balanced; `+3% / 3 flat` has the best
+drawdown at -6.9pp and Calmar 14.00 against 10.53.
+
+**RETRACTED before it was believed: the first measurement said +165.0pp and
++161.3pp.** That version decided on `close[bar]` while the engine fills at
+`open[bar]`, so it used the bar's own outcome to choose an exit at the bar's
+start. A rule gated on a price threshold is precisely the kind that benefits
+from that, and it was carrying about four-fifths of the effect: +165.0pp
+became +34.2pp on the previous completed bar. The corrected rule decides on
+`close[bar-1]`, which is what the daemon genuinely has at the last bar of a
+session.
+
+**The same flaw exists in the time stop**, which also tests `price_now`
+against `entry_price` and fills at the open. It is pre-existing, it is in the
+shipped baseline, and it is *not* changed here -- but it means the time
+stop's measured contribution is an upper bound, and the parameter this file
+calls "the most load-bearing in the book" has never been measured without it.
+
+**Not adopted.** It has passed the split and nothing else. It still needs the
+battery conviction sizing and the morning filter got: leverage-matched
+control, block bootstrap, per-year and per-quarter cuts, universe robustness.
+And one question specific to this rule -- whether it is the **time stop in
+disguise**, since a stalled position at 0.29 days is one the time stop would
+close shortly anyway, and the two would then be measuring the same exit.
+
+`overnight_profit_take` and `overnight_profit_stall_bars` default to `None`
+and `0`, are applied by the engine, and are not wired into
+`_execution_config`.
+
 ### What changed on 2026-09-01
 
 **The shipped baseline is 327.1%/yr at −45.4%**, after two changes on the

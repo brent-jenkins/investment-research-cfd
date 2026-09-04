@@ -249,6 +249,19 @@ def run_execution(signal_frame, analysis_frame, config):
     # means the signal survived the bar; disagreement means it faded to flat
     # or turned over, which live reports as two different refusals and both
     # of which refuse.
+    # The last bar of each session, for the overnight profit take. Computed
+    # once here rather than per bar, and from the frame's own index: the
+    # panel is session-restricted, so the last bar of a calendar day IS the
+    # session's close.
+    session_end = np.zeros(len(index), dtype=bool)
+    if len(index):
+        _stamps = pd.DatetimeIndex(index)
+        _closes = pd.Series(_stamps, index=_stamps).groupby(
+            _stamps.normalize()).transform("max")
+        session_end = np.asarray(
+            _stamps == pd.DatetimeIndex(_closes), dtype=bool
+        )
+
     if bool(getattr(config, "entry_recheck", False)):
         fresh_direction = _as_labels(signal_frame.direction, index, columns)
         fresh_confidence = _as_matrix(
@@ -511,6 +524,48 @@ def run_execution(signal_frame, analysis_frame, config):
             )
             new_held = np.where(stale, 0, new_held)
             timed_out = stale
+
+        # Bank a gain on the last bar of a session rather than carrying it
+        # overnight.
+        #
+        # Deliberately NOT folded into the time stop above, though it reuses
+        # the same quantity. That branch only runs when a time stop is
+        # configured, and this rule has to work whether or not one is -- the
+        # first version of this sat inside it and swallowed `timed_out`,
+        # which is the sort of thing an indentation level costs you.
+        take = getattr(config, "overnight_profit_take", None)
+        stall = int(getattr(config, "overnight_profit_stall_bars", 0) or 0)
+        if take is not None and session_end[bar] and bar >= 1 + stall:
+            # Decided on the PREVIOUS bar's close, not this one's.
+            #
+            # The fill happens at this bar's open, so using this bar's close
+            # to decide it is look-ahead within the bar -- and a rule gated
+            # on a price threshold is precisely the kind that benefits from
+            # knowing how the bar turned out. The first version did that and
+            # measured +165pp; on the previous close it is measured again
+            # below, which is the only figure worth quoting.
+            #
+            # This is what the live path would genuinely have: at the last
+            # bar of a session the daemon knows the last COMPLETED bar and
+            # deals into the one in progress.
+            decided = close[bar - 1]
+            with np.errstate(invalid="ignore", divide="ignore"):
+                gain = np.where(
+                    (entry_price > 0) & np.isfinite(entry_price),
+                    (decided / entry_price - 1.0) * np.sign(held) * 100.0,
+                    np.nan,
+                )
+            banking = (held != 0) & np.isfinite(gain) & (gain >= float(take))
+
+            # Optionally, only once it has stopped paying: no gain over the
+            # last N bars in the direction held, again on completed bars.
+            if stall > 0:
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    recent = (
+                        (decided / close[bar - 1 - stall] - 1.0) * np.sign(held)
+                    )
+                banking &= np.isfinite(recent) & (recent <= 0.0)
+            new_held = np.where(banking, 0, new_held)
 
         # Stamped here, after every rule that can close a position has had
         # its say -- the cooldown suppression, the blackout and the time

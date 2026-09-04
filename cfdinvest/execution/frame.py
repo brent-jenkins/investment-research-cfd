@@ -276,6 +276,43 @@ class ExecutionConfig:
     #: answer "would it have been liquidated", which needs the broker's
     #: close-out level and a path simulation.
     max_margin_usage: float | None = None
+    #: Close a winning position on the last bar of a session, if its
+    #: unrealised gain is at least this many PERCENT. ``None`` disables it.
+    #:
+    #: The owner's observation, 2026-09-04: a short in AMAT stood at +141.77
+    #: on the last bar of Thursday and at +2.43 on Friday morning, an
+    #: overnight gap of +18.3 points costing 131. The question is whether
+    #: banking a gain that has already appeared beats carrying it overnight.
+    #:
+    #: This is the one member of its family never measured. Every previous
+    #: test was on the LOSING side -- cutting losses overnight, flattening
+    #: into weekends, trimming proportionally -- and all failed, because
+    #: losers mean-revert favourably and the premium is paid on every night
+    #: to catch a rare one. Whether WINNERS mean-revert unfavourably is a
+    #: separate question, with a plausible mechanism: a trend follower's
+    #: winners are the crowded, extended names, which are the ones that gap.
+    #:
+    #: The prior against is the holding-period table. Trips held 16+ bars
+    #: earn 18.7M and those held two bars or fewer lose 164k, so anything
+    #: truncating a long winner has historically cost more than it saved --
+    #: which is also why stops are monotonically harmful here.
+    #:
+    #: Measured against ``entry_price`` and signed by the side held, so it is
+    #: the position's own gain rather than the instrument's move.
+    overnight_profit_take: float | None = None
+    #: Require the position to have stopped paying before banking it: the
+    #: gain over the last N bars must be zero or negative in the direction
+    #: held. ``0`` applies no such condition.
+    #:
+    #: The owner's instinct was that the combination matters rather than the
+    #: threshold alone, and the AMAT case has the feature -- it sat at
+    #: 435.58, 435.90, 434.87, 435.77, 436.01 for the last five bars, so the
+    #: trend had already stopped paying before the gap arrived.
+    #:
+    #: Deliberately parameter-free given N: "has not gained" rather than "has
+    #: moved less than X", so the sweep does not need a second threshold
+    #: whose value nothing would justify.
+    overnight_profit_stall_bars: int = 0
     #: Trades smaller than this in units are ignored as noise.
     minimum_trade_units: float = 1e-9
 
