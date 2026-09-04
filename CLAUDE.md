@@ -1260,6 +1260,61 @@ and `0`, are applied by the engine, and are not wired into
 `_execution_config`.
 
 
+
+### The state of every performance figure, as of 2026-09-04
+
+**Do not quote a CAGR from this file until the time stop is verified.** The
+time stop decides on the fill bar's close and fills at its open, it is 88% of
+all exits, and correcting it takes the engine from +467.7% to -47.5%. That is
+one afternoon's finding and one implementation of "correct", so the magnitude
+is unverified -- but the *direction* is not in question, because judging on a
+bar's close and filling at its open cannot understate performance.
+
+**What is now uncertain**
+
+* Every CAGR, drawdown, Calmar and trade-count figure in this file: 467.7%,
+  327.1%, 307.6%, 254.9%, 130.5%, 76.3%, and every arm compared against them.
+* Every parameter chosen by a sweep, which is nearly all of them --
+  ``entry_confidence`` 0.35, ``confidence_sizing_strength`` 0.75, the screen
+  target of 10, ``exposure_per_unit_size`` 4.0, ``time_stop_days`` 0.29,
+  ``earnings_blackout_days`` 1, ``breakout_lookback`` 12. They were fitted
+  against an engine that lets its dominant exit see the future.
+* Every rejection measured the same way: the profit-take thresholds, the
+  overnight exits, the weekend flattening, the proportional trim,
+  ``rebalance_threshold``, the morning filter. The evidence against them came
+  from the same simulator as the evidence for the strategy.
+
+**What is unaffected**, because it is read from data or from the account
+rather than produced by the simulator's P&L:
+
+* The live account's own record: 6 of 29 candidate opens blocked by the last
+  look, the margin factors at 20.0, netting confirmed by a real resize, the
+  order and position record now agreeing.
+* Structural measurements over the price data: the median position at a
+  session close is **45.5% of equity** and the largest decile 70.1%; AMAT
+  peaked at +5.48% and never reached 8%; 7.4% of trips ever reach +5% at a
+  close; four of eleven traded names have **zero** overnight quotes while
+  seven have nine bars a night.
+* The cost arithmetic, which is a ratio and survives any rescaling: an
+  overnight profit-take saves 7.64% of equity at its best threshold and pays
+  17.45% in spread, losing by about 2.3x -- the same ratio the weekend trim
+  lost by. Two nights carry the entire saving and the median night in the
+  cohort *gains* 0.020%.
+
+**What follows from that.** The forward record on the demo account is now the
+only trustworthy evidence this project has, because it is real fills at real
+spreads confirmed by a counterparty. It is also about eleven months from
+being distinguishable from noise, which was true before today and matters
+much more now.
+
+The account's behaviour is unchanged and nothing has been adopted. What has
+changed is that the number justifying it is in question.
+
+**The one measurement that would settle it** is an isolated synthetic case
+where the correct answer is known by construction -- a handful of bars, one
+position, a time stop that must or must not fire -- rather than a difference
+between two runs of the full harness. Everything else waits on that.
+
 ### The time stop sees the future, and it may be the whole edge
 
 **Found 2026-09-04, and it is the most serious finding in this file.** The
