@@ -1262,6 +1262,73 @@ and `0`, are applied by the engine, and are not wired into
 
 
 
+
+### A working configuration on the corrected engine, and its caveats
+
+**The gate is roughly half where it should be.** Swept on the clean engine,
+with `cost/gross` as the criterion because every arm at the shipped gate
+loses and CAGR would merely rank them by speed:
+
+    gate    gross      cost   cost/gross   trades     CAGR
+    0.35   +98,151   188,605      192.2%    3,366   -47.5%
+    0.45  +130,774   190,742      145.9%    2,178   -22.2%
+    0.55  +175,807   173,233       98.5%    1,371    +0.7%
+    0.65  +274,245   173,990       63.4%      986   +21.0%
+    0.75  +512,433   190,482       37.2%      577   +48.4%
+
+Monotone, and **gross rises as well as cost falling** -- selectivity is not
+just saving spread, it is removing trades that lost money gross. The gate and
+the hysteresis band compound; holding longer does not, and makes things
+sharply worse (time stop 2.0 takes the cost share to 385.6%). The direction
+is fewer, better, and *not* longer, which is what the owner said short-term
+CFD trading should look like.
+
+    gate  band        cost/gross  trades   CAGR   maxDD  Calmar
+    0.75  0.02/0.01        37.2%     577  48.4%   13.1%   3.69
+    0.75  0.10/0.04        26.4%     243  33.6%    6.0%   5.60
+    0.65  0.20/0.08        27.5%     132  16.3%    5.6%   2.91
+    0.55  0.10/0.04        42.9%     462  27.3%   22.7%   1.20
+
+**The overnight profit take works here, and only here.** Against the gate
+0.75 book:
+
+    arm                    cost/gross    CAGR
+    no profit take              37.2%   48.4%
+    bank at +2% notional        33.5%   55.9%     +7.5pp
+    bank at +5%                 37.3%   47.1%
+    bank at +10%                37.5%   46.6%
+    +2% after 3 flat            37.0%   48.6%
+    +5% after 3 flat            37.0%   48.5%
+
++2% of notional is +10% return on margin at 5x, which is the threshold the
+owner proposed. Two reversals from the flawed engine: the plain threshold was
+-198pp there and is +7.5pp here, and the stall condition -- which was
+essential before -- now adds nothing. Both follow from the time stop no
+longer exiting before falls.
+
+**It is not implementable as written.** The rule fires on the last bar of a
+session, which completes only after the market closes, so the daemon would
+see it too late to act and would exit a day later -- after the gap it exists
+to avoid. That is the same defect as `open_delay_minutes` and the last look:
+a rule that works in a backtest and cannot work live. It needs to fire on the
+second-to-last bar, or be implemented in the bridge.
+
+**The live account corroborates the correction, from a third direction.**
+After a week: equity 4,763.38, -4.73%, 23 trips, 30% wins, mean win +16.27
+against mean loss -37.88. The engine's design says winners should be LARGER
+than losers -- they run 7 bars against 4 at 2.4x the size -- and live they are
+2.3x smaller. That inversion was flagged on 2026-09-04 as unexplained and now
+has an explanation: the look-ahead was what made winners big, because it
+exited losers before they fell. Remove it and the profile inverts, which is
+exactly what the account has done all week. The owner's own read -- "a
+strategy struggling to stand still that slips backwards when it fails" -- is
+what a 192% cost share feels like from the inside.
+
+**What none of this has yet.** One grid search on one dataset, no battery,
+and no noise floor. The 8pp floor was derived for a 300-500% book by varying
+the screen's selection lag alone; on a 48% book the equivalent is unknown,
+and until it is measured the +7.5pp cannot be called signal.
+
 ### The corrected engine: a real edge, and costs twice its size
 
 **Item 2 of 2026-09-04, first pass.** With the look-ahead removed, the
