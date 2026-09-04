@@ -336,7 +336,17 @@ previous: list[str] = []
 # so picking the same ten names two days running is the normal case, and set
 # comparison then marked both as in force. Only one is -- the one
 # `traded_universe` actually read -- and it reports which by timestamp.
-in_force_at = str(traded_as_of)[:19] if traded_as_of else None
+#
+# And only when the selection is actually BEING FOLLOWED. A selection refused
+# for the wrong size now carries its date -- so the halt mail can say the
+# screen is running rather than reporting "none on record" -- but a refused
+# selection is not in force, it is the thing that was declined. Marking it
+# would tell the reader the book holds names it does not hold.
+in_force_at = (
+    str(traded_as_of)[:19]
+    if traded_as_of and not getattr(_traded, "screen_failed", False)
+    else None
+)
 for row in screens:
     names = [str(t) for t in (row.get("selected") or ()) if str(t)]
     held = set(names)

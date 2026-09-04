@@ -326,3 +326,71 @@ def test_the_traded_count_is_computed_from_the_curve_not_asserted():
     assert resolve_target(config, 9) == 9
 
 
+
+
+# --------------------------------------------------------------------------- #
+# A refused selection is not an absent one.
+#
+# The halt mail reported "Last usable selection: none on record" for a
+# selection recorded minutes earlier, because the refusal path built a
+# TradedUniverse without `as_of`. That conflates two states which need
+# different actions: a screen that has never run needs investigating, and a
+# selection made for a different size resolves itself on the next run.
+#
+# M359 the refusal dropping the date, so a fresh selection reads as absent
+# M360 the two states sharing a message, so the remedy is wrong for one
+# --------------------------------------------------------------------------- #
+
+
+def test_a_selection_refused_for_size_keeps_its_date():
+    """The operator must be able to see the screen IS running."""
+    from cfdinvest.universe.traded import traded_universe
+
+    class Uni:
+        follow_screen = True
+        target = 25
+        size_preference = "largest"
+        size_curve = {}
+        max_target = 25
+
+    config = Config(follow=True)
+    config.universe = Uni()
+
+    rows = [{"as_of": "2026-09-04T16:00:00+00:00",
+             "selected": [f"T{n}" for n in range(10)]}]
+    import cfdinvest.universe.screen as screen
+    original = screen.load_screens
+    screen.load_screens = lambda *a, **k: rows
+    try:
+        universe = traded_universe(config)
+    finally:
+        screen.load_screens = original
+
+    assert universe.screen_failed, "a size mismatch should refuse the selection"
+    assert universe.as_of, (
+        "the refusal dropped the selection's date, so the halt mail reports "
+        "'none on record' for a selection that exists and is recent"
+    )
+    assert "intended" in universe.source, (
+        "the source does not say what was intended, so the reader cannot "
+        "tell a size mismatch from a screen that never ran"
+    )
+
+
+def test_the_halt_mail_gives_a_different_remedy_for_each_state():
+    """A working job must not be the thing the reader is sent to check."""
+    import inspect
+
+    from cfdinvest.schedule import app
+
+    source = inspect.getsource(app._send_screen_halt)
+    assert "The next screen run resolves this" in source, (
+        "the mail has no branch for a selection refused on size, so it tells "
+        "the reader to check a job that is working"
+    )
+    assert "screen-universe is running" in source, (
+        "the genuine-failure remedy has been lost"
+    )
+    assert 'if "instruments," in universe.source' in source, (
+        "the two states are no longer distinguished"
+    )

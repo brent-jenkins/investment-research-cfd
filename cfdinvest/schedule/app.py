@@ -1693,15 +1693,29 @@ def _send_screen_halt(universe, account, smtp, transport) -> None:
             "be opened until it can.",
             "",
             f"Source: {universe.source}",
-            f"Last usable selection: {universe.as_of or 'none on record'}",
+            f"Last recorded selection: {universe.as_of or 'none on record'}",
             "",
             "Positions already open are unaffected. They are still priced, "
             "still marked, and still closed on the engine's own terms -- "
             "what may be closed is whatever the broker says is open.",
             "",
-            "This is the system declining to trade a universe nobody chose, "
-            "rather than a fault in dealing. Check that screen-universe is "
-            "running and that its selection is being recorded.",
+            # Two different states, and they need different actions. A
+            # selection that exists but is the wrong size means the intended
+            # count changed and the next screen will fix it; telling the
+            # reader to check the job is running would send them to
+            # investigate something that is working.
+            (
+                "The recorded selection was made for a different universe "
+                "size, so it is refused rather than truncated -- the first "
+                "N of a larger ranking is not the selection the screen would "
+                "have made asking for N. The next screen run resolves this "
+                "and nothing needs doing."
+                if "instruments," in universe.source else
+                "This is the system declining to trade a universe nobody "
+                "chose, rather than a fault in dealing. Check that "
+                "screen-universe is running and that its selection is being "
+                "recorded."
+            ),
         ]
         if balance is not None:
             lines += ["", f"Balance: {balance:,.2f} "

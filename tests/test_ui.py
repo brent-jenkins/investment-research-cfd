@@ -3331,6 +3331,13 @@ def test_the_in_force_marker_is_unique_on_a_real_history():
         pytest.skip("no recorded screens available")
     if not screens or not universe.as_of:
         pytest.skip("nothing recorded to mark")
+    if universe.screen_failed:
+        # A refused selection carries its date -- so the halt mail can say
+        # the screen IS running -- but it is not in force and `names` is the
+        # config fallback rather than the selection's. This test is about
+        # identifying which recorded selection is being followed, which only
+        # means anything when one is.
+        pytest.skip("the selection was refused, so none is in force")
 
     at = str(universe.as_of)[:19]
     marked = [r for r in screens if str(r.get("as_of") or "")[:19] == at]

@@ -145,9 +145,16 @@ def traded_universe(app_config, account: str | None = None) -> TradedUniverse:
             "trading the configured list until the next screen",
             len(names), intended,
         )
+        # `as_of` is carried through deliberately. Without it the halt mail
+        # reported "Last usable selection: none on record" for a selection
+        # recorded minutes earlier -- conflating "the screen has never run"
+        # with "it ran and the size no longer matches", and sending the
+        # reader to check a job that is working perfectly.
         return TradedUniverse(
             names=configured,
-            source=f"config (selection is for {len(names)} instruments)",
+            source=f"config (selection is for {len(names)} instruments, "
+                   f"{intended} intended)",
+            as_of=as_of or None,
         )
 
     stale = _is_stale(as_of)
