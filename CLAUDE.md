@@ -1263,7 +1263,30 @@ and `0`, are applied by the engine, and are not wired into
 
 ### The state of every performance figure, as of 2026-09-04
 
-**Do not quote a CAGR from this file until the time stop is verified.** The
+**CONFIRMED 2026-09-04 by direct measurement.** The signed open-to-close
+move, read from the trade log against the raw price panel:
+
+    population                          n        mean      median
+    bars a position was simply held  24,282   +0.1010%   +0.0624%
+    bars the TIME STOP exited on      2,278   -0.9199%   -0.7948%
+    difference                                -1.0209%   per exit
+
+On an ordinary held bar a position gains 0.10%; on a time-stop exit bar it
+loses 0.92%. The median is -0.79%, so half of all time-stop exits land on
+bars that fall more than three-quarters of a percent -- a bias, not a tail.
+No rule of the form "held long enough and has not made money" can select bars
+that are about to fall 1% unless it uses the fall. Spread-free by
+construction, reading raw open and close only, so the
+``entry_price``-includes-spread confound is excluded.
+
+**The live account never had this.** In production the engine runs over
+completed bars and the daemon deals during the following one; filling at the
+open of a bar whose close is already known exists only in the backtest. So
+the account has been trading the honest version throughout, and its
+roughly-flat first week is consistent with the corrected expectation rather
+than with the advertised one.
+
+**Do not quote a CAGR from this file.** The
 time stop decides on the fill bar's close and fills at its open, it is 88% of
 all exits, and correcting it takes the engine from +467.7% to -47.5%. That is
 one afternoon's finding and one implementation of "correct", so the magnitude
