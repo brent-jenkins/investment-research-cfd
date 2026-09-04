@@ -509,28 +509,31 @@ def run_execution(signal_frame, analysis_frame, config):
             # because a position flat on price has still cost something to
             # hold and "not working" includes not covering its own carry.
             age = (bar_stamps[bar] - opened_at) / NANOS_PER_DAY
-            # Which price the "has it worked" test is made against.
+            # Judged at the price the exit actually transacts at.
             #
-            # `price_now` is THIS bar's close and the fill happens at this
-            # bar's open, so the default compares against information the
-            # decision would not have had. Correcting it moves every recorded
-            # figure, so it is a switch rather than a silent fix -- see
-            # ExecutionConfig.time_stop_uses_completed_bar.
-            judged = price_now
-            if bool(getattr(config, "time_stop_uses_completed_bar", False)):
-                # The FILL price, not the previous close.
-                #
-                # The first attempt used close[bar-1] and returned -42.5%
-                # against +467.7% at every time-stop value, which is the
-                # shape of a broken control rather than a corrected one. It
-                # judged a position on the previous session's close and so
-                # discarded the overnight gap -- information the dealer
-                # genuinely has, because the fill is struck after it.
-                #
-                # `reference` is this bar's open under the default fill mode:
-                # known at the moment of dealing, and the price the exit
-                # actually gets. No look-ahead, nothing thrown away.
-                judged = reference
+            # This read `price_now` -- THIS bar's close -- until 2026-09-04,
+            # while the fill happens at this bar's open. It therefore decided
+            # using the bar's own outcome and acted at the bar's start.
+            #
+            # Measured directly from the trade log rather than inferred: on
+            # bars the time stop exited, the signed open-to-close move
+            # averaged -0.9199% against +0.1010% on bars a position was
+            # merely held, a difference of 1.02% per exit across 2,278 exits,
+            # with a median of -0.79% so it was the typical exit rather than
+            # a tail. No rule of the form "held long enough and has not made
+            # money" selects bars about to fall a percent unless it is using
+            # the fall.
+            #
+            # Not a switch. The old behaviour is a bug, every figure measured
+            # with it has been retracted, and an option preserving it is a
+            # way for it to return. The synthetic cases in tests/ assert the
+            # correct behaviour directly.
+            #
+            # `reference` is the fill price -- this bar's open under the
+            # default fill mode. Known at the moment of dealing, and the
+            # price the exit gets. The overnight gap into this bar is
+            # included, because the dealer genuinely knows it.
+            judged = reference
             with np.errstate(invalid="ignore", divide="ignore"):
                 move = np.where(
                     (entry_price > 0) & np.isfinite(entry_price),
@@ -570,7 +573,11 @@ def run_execution(signal_frame, analysis_frame, config):
             # This is what the live path would genuinely have: at the last
             # bar of a session the daemon knows the last COMPLETED bar and
             # deals into the one in progress.
-            decided = close[bar - 1]
+            # The same principle as the time stop above: judge at the
+            # price this will transact at. The first version used
+            # close[bar-1], which is safe from look-ahead but discards the
+            # gap into the bar being dealt on -- information the dealer has.
+            decided = reference
             with np.errstate(invalid="ignore", divide="ignore"):
                 gain = np.where(
                     (entry_price > 0) & np.isfinite(entry_price),
@@ -584,7 +591,8 @@ def run_execution(signal_frame, analysis_frame, config):
             if stall > 0:
                 with np.errstate(invalid="ignore", divide="ignore"):
                     recent = (
-                        (decided / close[bar - 1 - stall] - 1.0) * np.sign(held)
+                        (close[bar - 1] / close[bar - 1 - stall] - 1.0)
+                        * np.sign(held)
                     )
                 banking &= np.isfinite(recent) & (recent <= 0.0)
             new_held = np.where(banking, 0, new_held)
