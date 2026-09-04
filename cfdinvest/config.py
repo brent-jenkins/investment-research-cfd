@@ -606,10 +606,29 @@ class UniverseConfig:
     #: pick the whole candidate pool. This is the deliberate stop.
     #:
     #: Distinct from the VIABILITY ceiling, which is computed from the
-    #: balance and the broker's minimum deal sizes and will usually bind
-    #: first on a small account. This one bounds the ambition; that one
-    #: bounds the arithmetic.
-    max_target: int | None = 70
+    #: balance and the broker's minimum deal sizes. In principle that one
+    #: binds first on a small account; measured on 2026-09-04 it does not,
+    #: and this is what stops 70 being shipped.
+    #:
+    #: ``position_capacity`` is optimistic in two ways that compound. It
+    #: sizes against ``max_leverage`` -- 3.5x, where the book actually runs
+    #: 2.05x -- and it takes the 90th-percentile minimum ticket, 50, rather
+    #: than the dearest, 137. Across the 54 instruments with recorded sizes:
+    #:
+    #:     at 3.50x   83 slots by the p90 ticket, 30 by the dearest
+    #:     at 2.05x   48 slots by the p90 ticket, 17 by the dearest
+    #:
+    #: At 70 names the notional per slot is 239 at 3.5x and **140 at the
+    #: leverage actually run** -- against a dearest ticket of 137, so the
+    #: expensive names would sit at one times their minimum where the model
+    #: requires four. The honest range is 17 to 48 depending on which
+    #: assumption is taken, and 25 sits in the middle of it.
+    #:
+    #: Raise this as the balance grows, or better, teach
+    #: ``position_capacity`` to size against realised leverage and the
+    #: dearest ticket rather than the ninetieth percentile -- at which point
+    #: the viability ceiling binds on its own and this constant can go.
+    max_target: int | None = 25
 
     #: Measured CAGR against universe size, from which the traded count is
     #: derived. Data rather than configuration: it is the output of a sweep
