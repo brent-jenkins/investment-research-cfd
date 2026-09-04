@@ -1112,6 +1112,43 @@ because the intuition is strong and wrong.
 confidence is good" rather than "falling confidence is bad": bands 1-4 sit
 between -0.031% and -0.048% and only band 5 differs at +0.111%.
 
+**That screen measured the wrong window, and the owner caught it.**
+`conf_delta3` reads the three bars ending at the close. AMAT's collapse ran
+0.885 to 0.477 between 13:00 and 15:00 and the score then sat at 0.477-0.499
+for four hours, so the delta read **+0.008** -- a perfectly stable signal, on
+a position that had halved earlier the same day. Re-measured within the
+session, the owner's case does appear:
+
+    cut                          n      overnight   next full day   losing
+    halved within the session  230       -0.2194%       -0.5504%     50.4%
+    halved, and in profit       44       -0.4026%       -1.0629%     50.0%
+    everything else          3,139       -0.0532%       -0.0097%     51.5%
+
+Halved-and-in-profit loses 7.6x what everything else does overnight and
+clears the 0.24% round trip. **And it fails all three robustness checks**,
+in the same pattern that retired the volatility-conditioned gap insurance:
+
+    excluding the worst gap       -0.4026% becomes -0.1276%, below cost
+    excluding the worst two       becomes +0.0023% -- holding was profitable
+    mean against median           -0.4026% against -0.0502%, a tail
+    first half / second half      +0.7437% then -1.5490%, sign reversed
+
+One night carries it: AMD on 2026-07-29, gapping -12.227%. The 230-strong
+wider cut reverses too, +0.3198% then -0.7587%. The quintiles were already
+incoherent -- `conf_ratio_session` band 3, barely changed at 0.956, is the
+worst at -0.215%.
+
+**This is the fourth independent route to one conclusion**, after the
+automatic pauses, the overnight exit and the proportional trim: gap losses
+are not spread across identifiably risky nights, they are concentrated in a
+few unforecastable events, and to catch the one that matters you pay the
+premium on all the others. Confidence decay is a real reading and an
+unusable one -- 12 events a year, right half the time, profitable only
+through a tail.
+
+It also weakens the stall rule further. That rule's stated mechanism is gap
+avoidance, and gap avoidance has now failed from four directions.
+
 **And the arithmetic settles it regardless of ranking.** The worst band loses
 **0.106%** overnight against **22-26bp** to exit and re-enter. Even perfectly
 selected, the premium exceeds the payout -- the same wall the weekend trim,
