@@ -1174,6 +1174,87 @@ better statistics.** The morning filter looked worth +100pp on a mechanism
 that turned out to be the last look showing through. This is the same shape
 and it is not adopted until the mechanism is established.
 
+
+**Why the stall rule works: not for the stated reason, and not for any reason
+established.** The rule's whole case was that it avoids bad overnight gaps on
+stalled winners. The engine's own five-component decomposition says it does
+the opposite:
+
+    component        baseline    +2% / 3 flat        change
+    gap           -32,760,664     -46,492,280   -13,731,615
+    intraday     +111,499,558    +160,630,876   +49,131,318
+    spread        -16,172,507     -24,949,482    -8,776,976
+    slippage       -5,353,428      -8,367,239    -3,013,811
+
+**Gap losses get 13.7M WORSE.** The entire gain is intraday, paid for partly
+with worse gaps and 8.8M more spread. And **81% of banked positions are
+re-opened within four days** -- it does not sit out the night, it closes and
+buys the same thing back.
+
+**The reset hypothesis was tested and is also wrong.** Re-entry resets
+`entry_price` and `opened_at`, and the time stop measures from entry, so the
+obvious explanation was that stalled winners get a fresh clock. That predicts
+a large fall in time-stop exits. Measured: 2,278 to **2,356**, a rise of 78.
+Signal exits rose 312 to 509, so time stops fall as a *share* of closes from
+88.0% to 82.2% while rising in absolute terms. The prediction failed.
+
+**What is established is that the benefit is contingent on the time stop's
+exact value, and reverses:**
+
+    time_stop_days   baseline   with rule   difference   relative
+            0.29       467.7%      524.1%      +56.5pp     +12.1%
+            0.75       467.7%      524.1%      +56.5pp     +12.1%
+            1.50        96.7%       86.8%       -9.9pp     -10.3%
+            3.00        22.7%        8.7%      -14.0pp     -61.7%
+
+A +56.5pp effect that becomes -14.0pp when an unrelated parameter is loosened
+is a **configuration coincidence rather than an edge**. It earns only in the
+narrow corner where the time stop is about one session long, which is where
+it happens to be set. (0.29 and 0.75 remain identical for the session-grid
+reason: the next session's first bar is about 0.75 days from the previous
+session's last, so both fire on the same bar. Three distinct points, not
+four.)
+
+Remaining untested candidate: re-entry re-sizes a stale position to current
+equity and current conviction, which is drift rebalancing achieved by
+close-and-reopen rather than by resize -- and `rebalance_threshold = 3.0`
+disables the direct version deliberately, on a measurement that used
+continuous resizing rather than a session-boundary round trip.
+
+**Not adopted, and the reason is now specific rather than cautious.** It does
+the opposite of what it claims, earns through a channel nobody can explain,
+and inverts when a neighbouring parameter moves.
+
+**And it points at the more valuable piece of work.** The rule's entire value
+sits on top of the time stop -- and the time stop carries the intra-bar
+look-ahead found the same day: it tests `price_now` against `entry_price`
+while filling at the open. So the parameter this file calls "the most
+load-bearing in the book" has a compromised measurement, and anything
+conditioned on it, this rule included, cannot be trusted until it is
+re-measured cleanly.
+
+**A book-level exposure gap, found while checking the owner's AMAT
+observation.** The claim that the book was "partly self-hedged" by holding
+long MU against short AMAT was wrong and is retracted. The sizes were 4:1 --
+AMAT 7.3 units at 436.01 for 3,183 of notional against MU 0.8 at 958.25 for
+767 -- so MU offset **19%** of AMAT's loss, -172 against +33. That is not a
+hedge; it is a net short semiconductor position of about 2,416, roughly half
+the account's equity, with a small long leg inside it.
+
+The general form is worse. Read on 2026-09-04 the book was **four shorts and
+one long**: gross notional 9,800 at 2.05x equity, comfortably inside the 3.5x
+cap, and **net directional exposure -8,202, or -1.72x equity**. Nothing in
+the system measures net direction. `max_leverage` caps gross,
+`concentration` caps one name at a share of gross, `max_per_sector` counts
+names. The book may be entirely one-way and no limit notices.
+
+That is not automatically wrong for a trend follower -- being one-way in a
+trending market is the design -- but it is unmeasured, and the correlation
+work of 2026-08-31 does not cover it. That work concluded a correlation cap
+prices what was visible beforehand and beforehand there was nothing to price.
+Net directional exposure is not a forecast; it is an accounting fact known at
+every pass.
+
 `overnight_profit_take` and `overnight_profit_stall_bars` default to `None`
 and `0`, are applied by the engine, and are not wired into
 `_execution_config`.
