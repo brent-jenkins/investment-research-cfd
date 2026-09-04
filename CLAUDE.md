@@ -1261,6 +1261,63 @@ and `0`, are applied by the engine, and are not wired into
 
 
 
+
+### The corrected engine: a real edge, and costs twice its size
+
+**Item 2 of 2026-09-04, first pass.** With the look-ahead removed, the
+question is not which time stop is best but whether the strategy makes money
+at all. It does not, and the reason is specific.
+
+    arm                        gross P&L    total cost        net   cost/gross
+    as shipped                   +98,151       188,605    -90,454       192.2%
+    no time stop                 +44,370       133,880    -89,510       301.7%
+    exposure 1.0                 +48,519       113,665    -65,145       234.3%
+    entry gate 0.5              +158,449       189,617    -31,168       119.7%
+
+**Gross P&L is positive in every arm.** The entries predict; the signal is
+real. The book then pays between 1.2x and 3x that signal in spread and
+slippage. On the flawed engine the cost share was 35%.
+
+**The time stop is now nearly inert**, which is the cleanest confirmation
+available that its measured value was the bug:
+
+    time stop   None -46.1%   0.29 -47.5%   0.5 -47.5%
+                1.0  -45.9%   2.0  -50.2%   5.0 -48.7%
+
+Four points of spread across the whole range *including removing it*. This
+file calls it "the most load-bearing parameter in the book"; corrected, it
+barely does anything.
+
+**Stops remain monotonically harmful** -- -75.4% at 1.5 ATR rising to -60.6%
+at 4 ATR -- which refutes a prediction made before the numbers were seen. The
+reasoning was that the time stop had been doing illegitimately what a stop
+does legitimately, so a real stop might finally earn its keep. It does not.
+Recorded because the prediction was stated in advance and was wrong.
+
+**Selectivity is the lever, and it reverses a recorded finding.** Raising
+`entry_confidence` from 0.35 to 0.5 lifts gross from +98,151 to +158,449
+while cost stays flat, taking the cost share from 192% to 120% and cutting
+the net loss by two thirds. This file records the opposite -- "+1.6pp at 0.40
+and -12pp at 0.45, the gate stays at 0.35" -- measured on the flawed engine,
+where an exit that could see the bar rescued marginal trades and taking more
+of them was nearly free. Without it, trade selection is what matters.
+
+**The target for item 2 is therefore explicit: get cost below 100% of
+gross.** It is 119.7% at the best arm so far, so roughly a fifth of the way
+to go, from higher selectivity, fewer names, longer holds or lower turnover.
+None of those has been swept on a clean engine.
+
+**What the account should do, decided 2026-09-04: keep running, unchanged.**
+Not because the configuration is good -- it is now believed net-negative --
+but because the corrected engine makes a falsifiable prediction about it and
+the account is the only instrument that can test it. If the account makes
+money over the coming months, the corrected engine is wrong and everything
+above needs revisiting. That reframes the forward record from "how is the
+strategy doing" to "is the simulator telling the truth", which is the more
+valuable question and cannot be answered any other way. It costs nothing: the
+account is demo and no capital is at risk. Stopping it would destroy the test
+and gain nothing.
+
 ### The state of every performance figure, as of 2026-09-04
 
 **CONFIRMED 2026-09-04 by direct measurement.** The signed open-to-close
