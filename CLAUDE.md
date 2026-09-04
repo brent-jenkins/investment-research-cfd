@@ -1263,6 +1263,63 @@ and `0`, are applied by the engine, and are not wired into
 
 
 
+
+### Where things stand, 2026-09-04 evening
+
+The account restarts from a clean slate on Monday. Everything below is
+deployed and verified on the box.
+
+    engine      corrected -- no rule decides on a bar's close and fills at
+                its open. tests/test_no_intrabar_lookahead.py guards it.
+    gate        entry_confidence 0.75, was 0.35
+    universe    25 names from the screen, was 10
+    book        FLAT. 4,780.79 GBP, no margin in use, no open positions
+    forward     restarts Monday from 4,780.79
+
+The 25 names are the first genuinely diversified book this project has
+traded: MU, INTC, AMD, PLTR, LRCX, TSLA, CAT, LLY, BKNG, ISRG, NKE, LULU,
+GS, SLB, CMCSA, MPC, MRK, TMUS, DHR, TMO, DE, XOM, COP, WMT, HON. Energy,
+healthcare, retail, telecoms, financials and industrials, against the
+previous eight which were five semiconductors and three others -- the "one
+bet wearing several tickers" this file records as the live risk the
+concentration cap cannot see. That is the mechanism behind the size curve's
+improvement rather than a coincidence of it.
+
+**Week one closed at -4.38%**, on a configuration measured wrongly. It is a
+record of the old setup and not a baseline for the new one.
+
+**What to watch, in the order it should appear.**
+
+1. *The win/loss ratio.* Losses ran 2.3x wins all week where the design says
+   winners should be larger. That inversion is the live signature of the
+   look-ahead -- it made winners big by exiting losers before they fell -- so
+   it should correct first, and before any return figure means anything.
+2. *Trade frequency.* Roughly three a week at this gate against nine before.
+   A fortnight is six trades. Uninformative on returns; resist reading them.
+3. *How the book builds.* At 25 names with `max_opens_per_pass = 3` it takes
+   several passes to fill, and that interaction is unmeasured. Worth reading
+   the first day's order records rather than assuming.
+4. *Returns.* Months. The win-rate tripwire needs 50 completed trips, which
+   at this rate is well into the new year.
+
+**Left deliberately undone, in priority order.**
+
+* `position_capacity` sizes against `max_leverage` and the 90th-percentile
+  minimum ticket. It should use realised leverage and the dearest ticket:
+  measured, 70 names would put the dear instruments at 1x their minimum deal
+  size where the model requires 4x. Fixing it lets the viability ceiling bind
+  on its own and `universe.max_target = 25` can be deleted rather than
+  maintained by hand.
+* Every remaining parameter is still fitted to the flawed engine: exposure,
+  the hysteresis band, the earnings blackout, the breakout lookback,
+  conviction sizing, the decayed trim. The gate and the universe are the only
+  two re-derived.
+* The overnight profit take stays shelved. It measured +7.5pp against a
+  9.3pp floor, and the bridge plumbing for it was reverted rather than left
+  half-built.
+* The 9.3pp floor itself is derived from one method (selection lag) on one
+  configuration. Every figure now being compared against it inherits that.
+
 ### A working configuration on the corrected engine, and its caveats
 
 **The gate is roughly half where it should be.** Swept on the clean engine,
