@@ -158,9 +158,18 @@ def test_market_detail_is_fetched_for_the_held_set_not_the_traded_list():
         "a session calendar is built from the traded list, so a held name "
         "outside it is refused for a session state nobody looked up"
     )
-    assert source.count("describe(dealing_tickers") == 2, (
-        "expected both the session calendar and the opening-window calendar "
-        "to cover the held set"
+    # EVERY calendar lookup, not a fixed number of them. This asserted
+    # exactly two -- the session and the opening window -- and went stale the
+    # moment a closing window was added, which is a test that has to be
+    # edited whenever the code grows rather than one that states a property.
+    # The property is that no calendar is ever built from the traded list.
+    total = source.count("describe(")
+    covered = source.count("describe(dealing_tickers")
+    assert total >= 2, "the calendar lookups have gone; this tests nothing"
+    assert covered == total, (
+        f"{total - covered} of {total} calendar lookups are built from "
+        "something other than the held set, so a held name outside the "
+        "traded list gets a session state nobody looked up"
     )
 
 

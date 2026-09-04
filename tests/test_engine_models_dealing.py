@@ -60,6 +60,7 @@ MODELLED_BY = {
     "limits": "concentration",
     "max_opens_per_pass": "max_opens_per_pass",
     "max_margin_usage": "max_margin_usage",
+    "flatten_before_close": "overnight_profit_take",
 }
 
 #: Parameters that carry data rather than apply a rule. Each states why, so
@@ -77,6 +78,12 @@ NOT_A_GATE = {
         "margin headroom read from the broker. Data, not a rule: the "
         "ceiling that uses it is `max_margin_usage`, and the engine's "
         "equivalent is equity, which it already has."
+    ),
+    "closing_soon": (
+        "which instruments are within the closing window, read from the "
+        "exchange calendar. Data, not a rule: the gate that uses it is "
+        "`flatten_before_close`, and the engine expresses the same window "
+        "as `close_delay_minutes` over its own session-restricted bars."
     ),
     "session_open": (
         "the exchange calendar. Deliberately not modelled: the engine's panel "

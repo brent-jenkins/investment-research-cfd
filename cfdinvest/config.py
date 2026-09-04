@@ -433,6 +433,50 @@ class StrategyConfig:
     #: refuses rather than proceeds -- because a margin guard that disables
     #: itself reads as protection while providing none.
     max_margin_usage: float | None = None
+    #: Close every open position shortly before the session ends.
+    #:
+    #: The strategy carries 94% of its entries overnight, and structurally
+    #: rather than by choice: ``time_stop_days`` of 0.29 is 6.96 hours
+    #: against a session of about six hours of bars, so nothing can reach its
+    #: stop before the bell. Nobody decided that; it fell out of a parameter
+    #: fitted on the flawed engine.
+    #:
+    #: Measured on the corrected engine at gate 0.75 over 25 names, against a
+    #: 9.3pp floor: 103.8% to 159.2%, drawdown 14.8% to 7.3%, cost share
+    #: 38.4% to 24.2%, Calmar 7.04 to 21.82. Both halves (+141/+179), four
+    #: years of four, 99.7% of bootstrap paths ahead with 0.1% drawing down
+    #: worse, and positive at 10, 16 and 25 names. It earns MORE on LESS
+    #: leverage -- 0.27x against 0.40x -- so exposure cannot explain it.
+    #:
+    #: Every earlier test of flattening lost, because it competed with a time
+    #: stop that could see the fill bar. That comparison was void.
+    #:
+    #: Lives here rather than in the engine because the engine works on
+    #: hourly bars and the session's last bar completes after the close: a
+    #: rule there would exit a day late, after the gap it exists to avoid.
+    #: ``ExecutionConfig.overnight_profit_take`` models it for the backtest.
+    flatten_before_close: bool = False
+    #: Refuse to OPEN within this many minutes of the session close.
+    #:
+    #: The owner's tilt, and the necessary complement: a position opened in
+    #: the last hour and flattened at the bell pays a full round trip for an
+    #: hour of exposure. 20% of entries fell in the last two hours.
+    #:
+    #: Sixty minutes. It costs 7.6pp of return -- inside the 9.3pp floor, so
+    #: not distinguishable from noise -- and buys drawdown from 10.5% to
+    #: 7.3% with Calmar from 15.94 to 21.82. Two and three hours cost real
+    #: return for no further risk gain.
+    #:
+    #: A control separates it from the flattening: refusing late entries
+    #: WITHOUT flattening returns 95.4%, worse than the 103.8% baseline. The
+    #: tilt is not an entry-timing edge, it is what stops flattening wasting
+    #: a round trip.
+    #:
+    #: **Defaults to 0 for exactly that reason.** These two settings must
+    #: move together: on its own this one is harmful, and a default of 60
+    #: with ``flatten_before_close`` off would have shipped the losing half
+    #: of a winning pair. They are enabled together in config.toml.
+    close_delay_minutes: int = 0
     #: Notional per unit of signal size, as a multiple of equity.
     exposure_per_unit_size: float = 1.0
     #: Days either side of a reporting date to hold no position. ``0`` off.

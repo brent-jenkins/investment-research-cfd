@@ -239,6 +239,18 @@ def run_execution(signal_frame, analysis_frame, config):
         window = np.repeat(allowed[:, None], len(columns), axis=1)
         entry_gate = window if entry_gate is None else (entry_gate & window)
 
+    # And the mirror at the other end of the session: no opening into the
+    # close. Same construction as the opening window, same reason for being
+    # unshifted.
+    shut = int(getattr(config, "close_delay_minutes", 0) or 0)
+    if shut > 0 and len(index):
+        _s = pd.DatetimeIndex(index)
+        _ends = pd.Series(_s, index=_s).groupby(_s.normalize()).transform("max")
+        remaining = (pd.DatetimeIndex(_ends) - _s).total_seconds() / 60.0
+        allowed_late = np.asarray(remaining >= float(shut), dtype=bool)
+        late = np.repeat(allowed_late[:, None], len(columns), axis=1)
+        entry_gate = late if entry_gate is None else (entry_gate & late)
+
     # The last look, modelled. Also unshifted, and for the same reason: the
     # question is whether the decision still stands on the bar being dealt
     # on, which is what `advisor.livecheck` asks the broker's own quote

@@ -673,6 +673,8 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
             # it would model a strategy the account does not run -- exactly
             # the divergence this field was added to close.
             open_delay_minutes=getattr(strategy, "open_delay_minutes", 0),
+            # And the closing window, for the same reason.
+            close_delay_minutes=getattr(strategy, "close_delay_minutes", 0),
         confidence_sizing_strength=getattr(
             strategy, "confidence_sizing_strength", None
         ),
@@ -737,6 +739,9 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
         # The same delay the dealing path applies, so the backtest and
         # the account agree about when trading starts.
         open_delay_minutes=getattr(strategy, "open_delay_minutes", 0),
+        # And the same window at the other end, so they agree about when it
+        # stops. Both are facts about the bar being dealt on.
+        close_delay_minutes=getattr(strategy, "close_delay_minutes", 0),
         time_stop_days=strategy.time_stop_days,
         earnings_dates=earnings or None,
         earnings_blackout_days=strategy.earnings_blackout_days,
@@ -1406,10 +1411,36 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
             ticker: (settled is None or bool(settled["is_open"].get(ticker, False)))
             for ticker in session_open
         }
+        # The mirror, asked forwards: will this market STILL be open in N
+        # minutes? If not, the session is ending -- so no new position is
+        # taken, and anything held is flattened.
+        #
+        # Asked of the calendar rather than computed from a session end, for
+        # the same reason as the opening window: holidays, half days and
+        # per-instrument sessions are already handled by the thing that
+        # knows about them, and a computed end would be wrong on exactly the
+        # days it matters most.
+        shut = int(getattr(app_config.strategy, "close_delay_minutes", 0) or 0)
+        ending = (describe(dealing_tickers, now + pd.Timedelta(minutes=shut))
+                  if shut else None)
+        closing_soon = {
+            ticker: (
+                ending is not None
+                and bool(session_open.get(ticker, False))
+                and not bool(ending["is_open"].get(ticker, False))
+            )
+            for ticker in session_open
+        }
+        if shut:
+            open_allowed = {
+                ticker: allowed and not closing_soon.get(ticker, False)
+                for ticker, allowed in open_allowed.items()
+            }
     except Exception as error:  # noqa: BLE001 - an unknown calendar is closed
         logger.warning("Capital: no session calendar (%s); trading nothing", error)
         session_open = {}
         open_allowed = {}
+        closing_soon = {}
 
     # The last look, over the instruments that might open. Priced from the
     # broker's own mid, which is the price an order would actually meet.
@@ -1455,6 +1486,11 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         available=account.available,
         max_margin_usage=getattr(
             app_config.strategy, "max_margin_usage", None
+        ),
+        # Flatten before the bell rather than carrying overnight.
+        closing_soon=closing_soon,
+        flatten_before_close=bool(
+            getattr(app_config.strategy, "flatten_before_close", False)
         ),
     )
 

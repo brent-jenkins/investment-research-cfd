@@ -181,6 +181,22 @@ class ExecutionConfig:
     #: rule, which compares against wall-clock market hours, and it is the
     #: closest a bar-resolution model can come.
     open_delay_minutes: int = 0
+    #: Refuse to OPEN within this many minutes of the session close.
+    #:
+    #: The mirror of ``open_delay_minutes``, and the natural complement to
+    #: ``overnight_profit_take``. A position opened in the last hour of a
+    #: session that is then flattened at the bell pays a full round trip for
+    #: an hour of exposure -- the worst trade available. Measured on the
+    #: shipped configuration, 20% of entries fall in the last two hours.
+    #:
+    #: Applied to ENTRIES only and, like the opening delay, deliberately NOT
+    #: shifted by ``execution_lag``: it is a fact about the bar being dealt
+    #: on rather than about the bar the view was formed on.
+    #:
+    #: Measured against the bar index rather than a wall clock, for the same
+    #: reason as the opening delay -- the panel is session-restricted, so the
+    #: last bar of a day IS the session's last bar.
+    close_delay_minutes: int = 0
     #: Re-check the decision against the bar being dealt on before opening.
     #:
     #: The engine decides on the last bar that *closed* and fills on the

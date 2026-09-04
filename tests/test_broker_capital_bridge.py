@@ -612,3 +612,104 @@ def test_the_margin_figure_is_converted_from_the_brokers_percentage():
     assert CapitalMarket(epic="X", ticker="X").margin_fraction is None, (
         "an unquoted requirement became a number rather than staying absent"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Flattening before the bell.
+#
+# The strategy carried 94% of its entries overnight, and structurally rather
+# than by choice: time_stop_days of 0.29 is 6.96 hours against a session of
+# about six hours of bars, so nothing could reach its stop before the close.
+# Flattening measured +55.4pp with drawdown roughly halved, on LESS leverage.
+#
+# It lives here rather than in the engine because the engine's last hourly
+# bar completes after the market shuts -- a rule there would exit a day late,
+# after the gap it exists to avoid.
+#
+# M361 flattening ignored, so the book carries overnight anyway
+# M362 a close refused for being below the minimum DEAL size
+# M363 opening into the closing window
+# M364 flattening applied when it is not configured
+# --------------------------------------------------------------------------- #
+
+
+def closing_plan(signals, positions=None, **kwargs):
+    kwargs.setdefault("balance", 5_000.0)
+    kwargs.setdefault("limits", LIMITS)
+    kwargs.setdefault("exposure_per_unit_size", 4.0)
+    kwargs.setdefault("rebalance_threshold", 0.25)
+    kwargs.setdefault("session_open", OPEN)
+    kwargs.setdefault("recheck", False)
+    return bridge.plan_orders(
+        signals, MARKETS, positions or {}, placed=positions or {}, **kwargs
+    )
+
+
+def test_a_held_position_is_closed_when_the_session_is_ending():
+    held = {"AAPL": {"size": 10.0, "direction": "BUY", "deal_id": "d1"}}
+    report = closing_plan(
+        [signal("AAPL", size=0.05)], positions=held,
+        closing_soon={"AAPL": True}, flatten_before_close=True,
+    )
+    intent = only(report, "AAPL")
+    assert intent.action == "close", (
+        f"a position was carried overnight instead of flattened: {intent.action}"
+    )
+    assert intent.target_units == 0.0
+    assert "session close" in intent.reason
+
+
+def test_a_close_is_never_refused_for_being_below_the_minimum_deal_size():
+    """The reason the flatten runs BEFORE sizing.
+
+    NKE's minimum is 1.0 units. A small holding sizes to zero and would hit
+    the below-the-minimum branch, which refuses -- correct for an OPEN and
+    catastrophic for a CLOSE, since it would strand the position overnight.
+    """
+    held = {"NKE": {"size": 0.4, "direction": "BUY", "deal_id": "d2"}}
+    report = closing_plan(
+        [signal("NKE", size=0.0001)], positions=held,
+        closing_soon={"NKE": True}, flatten_before_close=True,
+    )
+    intent = only(report, "NKE")
+    assert intent.action == "close", (
+        f"a close was refused as '{intent.reason}' -- the flatten must run "
+        "before sizing, or a position too small to open cannot be shut"
+    )
+
+
+def test_nothing_is_opened_into_the_closing_window():
+    report = closing_plan(
+        [signal("AAPL", size=0.05)],
+        closing_soon={"AAPL": True}, flatten_before_close=True,
+    )
+    intent = only(report, "AAPL")
+    assert intent.action == "refused", (
+        "a position was opened with the session about to end, which pays a "
+        "round trip for minutes of exposure"
+    )
+
+
+def test_instruments_outside_the_window_are_unaffected():
+    """Per instrument, because sessions differ between them."""
+    held = {"AAPL": {"size": 10.0, "direction": "BUY", "deal_id": "d1"},
+            "MSFT": {"size": 5.0, "direction": "BUY", "deal_id": "d3"}}
+    report = closing_plan(
+        [signal("AAPL", size=0.05), signal("MSFT", size=0.05)], positions=held,
+        closing_soon={"AAPL": True, "MSFT": False}, flatten_before_close=True,
+    )
+    assert only(report, "AAPL").action == "close"
+    assert only(report, "MSFT").action != "close", (
+        "an instrument whose session was not ending was flattened too"
+    )
+
+
+def test_flattening_does_nothing_unless_configured():
+    held = {"AAPL": {"size": 10.0, "direction": "BUY", "deal_id": "d1"}}
+    report = closing_plan(
+        [signal("AAPL", size=0.05)], positions=held,
+        closing_soon={"AAPL": True},          # window is open, flag is off
+    )
+    assert only(report, "AAPL").action != "close", (
+        "the book was flattened without flatten_before_close being set"
+    )

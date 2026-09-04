@@ -754,6 +754,37 @@ open_delay_minutes = 30
 # Highest conviction first, from the last look's re-evaluation rather than
 # the stale signal -- if only three go through they should be the three the
 # strategy believes in now.
+# Day trading: flatten before the bell, and stop opening into it.
+#
+# These two move TOGETHER and neither ships alone. Refusing late entries
+# without flattening returns 95.4% against a 103.8% baseline -- the losing
+# half of a winning pair -- so a default that enabled one would be worse than
+# nothing.
+#
+# Measured on the corrected engine at gate 0.75 over 25 names, against a
+# 9.3pp floor:
+#
+#   arm                          CAGR    maxDD   cost   Calmar
+#   carry overnight (was)      103.8%    14.8%  38.4%     7.04
+#   flatten                    166.8%    10.5%  25.8%    15.94
+#   flatten + no opens 1h      159.2%     7.3%  24.2%    21.82
+#   no opens 1h, still carry    95.4%    10.5%  34.1%     9.05
+#
+# The last row is the control and it is what identifies the mechanism: the
+# gain is not carrying overnight, not entry timing. Full battery: both halves
+# (+141/+179), four years of four, 99.7% of bootstrap paths ahead with 0.1%
+# drawing down worse, positive at 10, 16 and 25 names, and it earns more on
+# LESS leverage -- 0.27x against 0.40x -- so exposure cannot explain it.
+#
+# Why this was invisible until 2026-09-04: every earlier test of flattening
+# competed against a time stop that could see the fill bar. An exit that
+# cheats beats an honest one. The strategy also carried 94% of entries
+# overnight structurally rather than by choice -- time_stop_days of 0.29 is
+# 6.96 hours against a six-hour session, so nothing could reach its stop
+# before the close. Nobody chose that.
+flatten_before_close = true
+close_delay_minutes = 60
+
 max_opens_per_pass = 3            # 50% of the balance as margin, not 100%
 
 # The most of the balance that committed margin may consume, or unset to not
