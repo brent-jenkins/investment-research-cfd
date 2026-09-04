@@ -1259,6 +1259,70 @@ every pass.
 and `0`, are applied by the engine, and are not wired into
 `_execution_config`.
 
+
+### The time stop sees the future, and it may be the whole edge
+
+**Found 2026-09-04, and it is the most serious finding in this file.** The
+time stop tests THIS bar's close against ``entry_price`` and the engine fills
+at THIS bar's OPEN. ``fill_mode`` is ``"open"`` and
+``time_stop_threshold`` is **0.0**, so on every time-stop bar the engine asks
+"is this position up?" using the close, then exits at the open. A position
+that fell during the bar is exited *before* the fall that was just observed;
+one that rose is kept, having already seen the rise.
+
+Time stops are **88% of all closes** -- 2,278 of 2,590.
+
+    arm                     closes   time stops     CAGR    maxDD
+    as shipped               2,590        2,278   467.7%    44.4%
+    judged on the fill       2,765        2,459   -47.5%    93.9%
+
+**+467.7% to -47.5%.** And the corrected arm fires MORE time stops, not
+fewer, so it is not drifting toward the no-time-stop case that this file
+records at -58.6%; it is a real correction.
+
+Sweeping the parameter does not rescue it:
+
+    time_stop_days   as shipped   corrected
+            0.15         569.3%      -38.8%
+            0.29         467.7%      -47.5%
+            0.50         467.7%      -47.5%
+            1.00         186.6%      -45.9%
+
+**Consequences.** Every return figure this project holds was measured on this
+engine -- 467.7%, 327.1%, 307.6%, 254.9%, and every sweep, arm and control
+compared against them. They are all suspect. So, symmetrically, is every
+NEGATIVE result: the monotonic harm from profit-taking thresholds, the failed
+overnight exits, the weekend flattening, the proportional trim. The evidence
+against those was produced by the same engine as the evidence for the
+strategy.
+
+The honest statement is that **under a corrected time stop the shipped
+configuration loses money**, and whether any configuration works is unknown,
+because every other parameter was fitted against the flawed one.
+
+**What is not yet ruled out.** ``entry_price`` is the *effective* fill,
+including spread, while ``reference`` is the raw fill reference. At a
+threshold of exactly 0.0 that half-spread bias closes marginal positions. It
+is present in both arms so the comparison should be fair, but it is the
+obvious candidate for an artefact and the verification has to isolate it.
+Two earlier "corrections" today produced implausible numbers before the third
+was right, which is reason for caution about this one.
+
+What is **not** in doubt is the direction: judging on a bar's close and
+filling at its open is look-ahead, and it touches 88% of exits.
+
+**The one thing this makes more attractive rather than less.** The strategy
+is already mostly intraday -- median hold about four bars, 80.5% of trips
+closed within a trading day -- and its exits are the compromised part. An
+end-of-day close is not an addition to that mechanism but a **replacement**
+for it, and it requires no price comparison at all: "the session is ending,
+close" cannot look ahead. Every measurement rejecting end-of-day closing was
+made on the flawed engine and has to be redone on the corrected one.
+
+``ExecutionConfig.time_stop_uses_completed_bar`` defaults to ``False``, which
+is the flawed behaviour, deliberately: flipping it would move every recorded
+figure silently as a side effect of a bug fix.
+
 ### What changed on 2026-09-01
 
 **The shipped baseline is 327.1%/yr at −45.4%**, after two changes on the

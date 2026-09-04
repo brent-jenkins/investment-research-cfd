@@ -313,6 +313,32 @@ class ExecutionConfig:
     #: moved less than X", so the sweep does not need a second threshold
     #: whose value nothing would justify.
     overnight_profit_stall_bars: int = 0
+    #: Evaluate the time stop on the last COMPLETED bar rather than on the
+    #: bar it fills in.
+    #:
+    #: The time stop tests ``price_now`` -- this bar's close -- against
+    #: ``entry_price``, and the engine fills at this bar's OPEN. So it uses
+    #: the bar's own outcome to decide an exit at the bar's start, which is
+    #: look-ahead within the bar. The same flaw was found in the first
+    #: overnight profit-take on 2026-09-04 and was carrying four fifths of
+    #: that rule's measured effect.
+    #:
+    #: Default ``False``, which is the flawed behaviour, and deliberately so:
+    #: every figure this project has recorded was measured with it, including
+    #: the shipped baseline and the sweep that calls the time stop "the most
+    #: load-bearing parameter in the book". Flipping the default would move
+    #: all of them silently as a side effect of a bug fix, so the correction
+    #: is a named switch and the difference gets measured before anything
+    #: changes.
+    #:
+    #: The age test is unaffected -- how long a position has been held is
+    #: known at the start of a bar. Only the price comparison moves, and it
+    #: moves to the FILL price rather than to the previous bar's close: the
+    #: dealer knows the price being filled at, including any overnight gap,
+    #: and a version judging on the previous close discards that and returns
+    #: -42.5% at every setting, which is a broken control rather than a
+    #: corrected one.
+    time_stop_uses_completed_bar: bool = False
     #: Trades smaller than this in units are ignored as noise.
     minimum_trade_units: float = 1e-9
 

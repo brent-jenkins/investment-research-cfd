@@ -509,10 +509,32 @@ def run_execution(signal_frame, analysis_frame, config):
             # because a position flat on price has still cost something to
             # hold and "not working" includes not covering its own carry.
             age = (bar_stamps[bar] - opened_at) / NANOS_PER_DAY
+            # Which price the "has it worked" test is made against.
+            #
+            # `price_now` is THIS bar's close and the fill happens at this
+            # bar's open, so the default compares against information the
+            # decision would not have had. Correcting it moves every recorded
+            # figure, so it is a switch rather than a silent fix -- see
+            # ExecutionConfig.time_stop_uses_completed_bar.
+            judged = price_now
+            if bool(getattr(config, "time_stop_uses_completed_bar", False)):
+                # The FILL price, not the previous close.
+                #
+                # The first attempt used close[bar-1] and returned -42.5%
+                # against +467.7% at every time-stop value, which is the
+                # shape of a broken control rather than a corrected one. It
+                # judged a position on the previous session's close and so
+                # discarded the overnight gap -- information the dealer
+                # genuinely has, because the fill is struck after it.
+                #
+                # `reference` is this bar's open under the default fill mode:
+                # known at the moment of dealing, and the price the exit
+                # actually gets. No look-ahead, nothing thrown away.
+                judged = reference
             with np.errstate(invalid="ignore", divide="ignore"):
                 move = np.where(
                     (entry_price > 0) & np.isfinite(entry_price),
-                    (price_now / entry_price - 1.0) * np.sign(held) * 100.0,
+                    (judged / entry_price - 1.0) * np.sign(held) * 100.0,
                     np.nan,
                 )
             rate = np.where(held > 0, long_rates, short_rates)
