@@ -855,6 +855,28 @@ order genuinely reduces and genuinely releases the margin, rather than
 opening a second position and doubling it. It is a fact about the account
 that nothing in the repository can tell you, which is why it is written here.
 
+**Verified with a real order on 2026-09-04**, because a setting in a UI and a
+behaviour at the venue are different claims. BKNG was held SELL 21.123; an
+`Intent` was built exactly as the bridge builds one, the side taken by the
+dealing pass's own expression, and `BUY 1.123` was placed at 192.94:
+
+    account before   SELL 21.123        record   SELL 21.123
+    account after    SELL 20.000        record   SELL 20.000
+    BKNG positions on the account: 1    -- netted, not hedged
+    margin released  35.40 against 43.34 predicted (prices moved)
+
+A short being *reduced* is the case the old code got wrong -- target −20 is
+negative, so it would have sent SELL and taken the short to −22.246. It sent
+BUY. And the record now says SELL 20.0 where before yesterday's fix it would
+have said BUY 1.123: wrong size, inverted side, and invisible to `reconcile`,
+which compares epics rather than sizes.
+
+**One imperfection, recorded rather than fixed.** After a resize the record's
+`deal_id` is the *order's* id, not the surviving position's. Harmless today
+because the bridge takes `deal_id` from the broker's own positions when it
+builds a close, never from the record -- and a bug the day anything closes
+from the record instead.
+
 **And it exposed two more latent bugs in the same disabled path.** Trimming a
 long from 100 units to 60 sends SELL 40, and `record_result` stored the
 ORDER: `units` from `result.size` and `direction` from `result.direction`. So
