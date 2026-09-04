@@ -991,6 +991,86 @@ And one question specific to this rule -- whether it is the **time stop in
 disguise**, since a stalled position at 0.29 days is one the time stop would
 close shortly anyway, and the two would then be measuring the same exit.
 
+
+**The battery, run on the owner's push-back.** The response to "it has passed
+one test" is to run the others, not to defend the shelf. On `+2% / 3 flat`:
+
+    leverage-matched control   +81.5pp   against exposure 3.5 at the same
+                                         mean leverage (1.64 vs 1.61)
+    split-half                 +59.4pp / +53.1pp
+    block bootstrap            beats the baseline median on 60.7% of paths,
+                               worse drawdown on only 26.8%
+    per calendar year          +57, +44, +225, **-53**  -- 3 of 4
+    universe robustness        +11.0, +56.5, +39.4, +35.9 at targets
+                               8/10/12/16 -- 4 of 4
+    the time stop in disguise  no
+
+The leverage control is the strongest part and the one that retired
+`rebalance_threshold`. Throttling exposure alone *loses*: the baseline at
+exposure 3.5 returns 442.6% against 467.7%. The arm returns 524.1% while
+carrying less leverage than the baseline, so the +81.5pp differential is the
+rule rather than the dial. Conviction sizing's equivalent was +35.8pp.
+
+Drawdown improves rather than being paid: bootstrap p50 41.9% to 37.0%, p90
+53.8% to 48.2%, and only 26.8% of paths draw down past the baseline's median
+against conviction sizing's 56.3%. This is the first intervention in this
+family to improve return, drawdown and leverage at once; every other one lost
+on at least one.
+
+**The weakness, stated plainly: 2026 is -53pp**, and it is the most recent
+year and the closest to what the account trades now. It is a partial year of
+eight months and -53pp against a base of 349% is a 15% relative shortfall
+rather than a reversal, but conviction sizing was 3 of 3 and the morning
+filter 4 of 4, and this is 3 of 4 with the miss in the worst place. Target 8
+is also only +11.0pp, barely past the floor.
+
+`+3% / 3 flat` has the better headline drawdown (37.5%) and is **2 of 4** on
+years -- 2023 at -32pp as well as 2026. It is the worse candidate despite
+looking better on the single-path figure, which is the distinction between a
+realisation and a distribution.
+
+**Not the time stop in disguise**, though the test came out weaker than
+intended. `time_stop_days` of 0.29 and 0.50 produce *identical* books,
+because the panel is session-restricted: consecutive bars inside a day are an
+hour apart and the first bar of the next session is about 0.75 days from the
+last of the previous one, so both thresholds fire on exactly the same bar.
+The real comparison is therefore two points, not three. At 1.00 the benefit
+falls to +17.7pp on a much worse book (186.6%), which is 9.5% in relative
+terms against 12.1% at the configured value. A rule doing the time stop's job
+would grow more valuable as the time stop slowed; this one does not.
+
+**The confidence version of the owner's idea fails, and the way it fails is
+the useful part.** Asked what confidence showed for AMAT into Thursday's
+close:
+
+    09-03 13:00   430.50   short   0.885
+    09-03 15:00   435.58   short   0.477
+    09-03 18:00   435.77   short   0.490
+    09-03 19:00   436.01   short   0.490   <- last bar
+    09-04 13:00   459.60   flat    0.000   <- after the gap
+
+Confidence at the close was **0.490 against a 0.35 entry gate**, direction
+still `short`. An absolute confidence check would not have fired. The signal
+died *because of* the gap, not before it -- the same shape as NVDA and AVGO
+sitting at the 21st percentile of their own correlation history the day
+before they fell 11% together. A shock does not announce itself; it creates
+the reading afterwards.
+
+What *was* visible is that confidence halved from 0.885 and then sat flat at
+0.477-0.499 for five bars while price sat flat at 435.58-436.01. The warning
+was the flatness in both series, not the level in either -- which is the
+stall condition and not a confidence threshold. A third variant, **decay from
+the peak**, is neither of the two measured and remains untested.
+
+**On AMAT itself the rule fires**: at Thursday's session-end decision bar
+(the 18:00 close, 435.77) the short from 455.43 was up 4.32% and had moved
+-0.04% over three bars. It would have banked about +141 against the +2.43
+the position now shows. It would also have fired on Wednesday, forgoing the
++56.25 favourable gap that followed, and the Friday gap has already largely
+reverted -- 459.60 at the open back to about 453.7 -- which is why one
+position over three nights argues both ways and the aggregate is what
+decides.
+
 `overnight_profit_take` and `overnight_profit_stall_bars` default to `None`
 and `0`, are applied by the engine, and are not wired into
 `_execution_config`.
