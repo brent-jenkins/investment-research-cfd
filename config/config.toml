@@ -479,10 +479,31 @@ rebalance_threshold = 3.0     # off; 1.0's gain is exposure plus a first-half ef
 # risk-adjusted measure calls the arms equivalent and 0.35 carries the
 # lowest drawdown of the high-return group.
 #
-# The firm finding is the other end: raising the gate is destructive, at
-# -47.7pp for 0.45 and -94.4pp for 0.55. The superseded note said "-12pp at
-# 0.45" -- right in direction, four times understated in size.
-entry_confidence = 0.35
+# ALL OF THE ABOVE IS RETRACTED, 2026-09-04. Every figure in it was measured
+# on an engine whose time stop decided using a bar's close and filled at that
+# bar's open -- look-ahead, on 88% of all exits, worth about 1.02% per exit
+# across 2,278 exits. Corrected, the strategy returns -47.5% at this gate
+# rather than +467.7%, and "raising the gate is destructive" inverts:
+#
+#     gate    cost/gross    CAGR      H1      H2   2023  2024  2025  2026
+#     0.35        192.2%   -47.5%  -39.0%  -54.8%   +35   -77   -35   -66
+#     0.55         98.5%    +0.7%
+#     0.65         63.4%   +21.0%
+#     0.75         37.2%   +48.4%  +51.9%  +45.0%   +87   +16   +83   +23
+#     0.85                 +33.9%
+#
+# Monotone to a peak at 0.75 and turning over after it, so an interior
+# optimum rather than the edge of a sweep. Positive in both halves and in
+# four years of four, against a 9.3pp noise floor re-derived for this book by
+# varying the screen's selection lag alone. The old 8pp floor belonged to a
+# book six times larger and does not apply.
+#
+# Why the sign flipped: with an exit that could see the bar coming, marginal
+# trades were nearly free to take and the gate had little to do. Without it,
+# which trades are taken is the whole game -- gross P&L RISES from +98k to
+# +512k as the gate goes up, so selectivity is not merely saving spread, it
+# is removing trades that lost money gross.
+entry_confidence = 0.75
 exit_confidence = 0.20
 
 # How large a signal must be before the book acts on it, and the level an
@@ -1114,7 +1135,40 @@ candidates = [
 
 # How many the screen selects. Unset means "as many as are traded", so the
 # screen answers "which twenty" rather than inventing a number of its own.
-# target = 20
+# An explicit target, which wins over the size curve.
+#
+# Set to 25 on 2026-09-04, and deliberately NOT to the curve's peak of 70.
+# The curve is a return measurement and the engine does not model the
+# broker's minimum deal size; the dealing path does. At 70 names on this
+# balance each position is about 136 of notional, and 0.1 units -- the
+# minimum -- is 100 on MU and 114 on LLY, so the expensive names would round
+# to the floor and the intended weights would be badly distorted. At 25 each
+# position is about 381, comfortably above the granularity.
+#
+# So this is the viability ceiling the resolver's docstring describes and
+# cannot yet compute, applied by hand until it can. It is a fact about the
+# account's SIZE rather than about the strategy, and it should rise as the
+# balance does.
+# Held at 10 -- the size actually in force -- rather than at the curve's
+# peak of 70, and NOT left to the curve.
+#
+# The curve above is now honest and points at 70, but the engine does not
+# model the broker's minimum deal size and the dealing path does. At 70 names
+# on this balance each position is about 136 of notional, against a 0.1-unit
+# minimum worth 100 on MU and 114 on LLY, so the expensive names would round
+# to the floor and the weights would be distorted. About 25 is what this
+# balance can actually deal.
+#
+# The right mechanism already exists and is one wire short of working:
+# `risk.capacity.position_capacity` computes slots from a balance and the
+# brokers minimum sizes, `operating_size` accepts it as a ceiling, and
+# `universe.resolve_target` passes `ceiling=None` with a comment saying the
+# dealing path should supply it. Wiring that makes this value rise on its own
+# as the balance grows, which is better than any constant.
+#
+# Pinned meanwhile so the size curve can be recorded truthfully without
+# silently changing what the account holds.
+target = 10
 
 # Sector map for the concentration cap. Without it the cap cannot bind, and
 # the screen reports that it was not applied rather than silently skipping.
@@ -1273,11 +1327,25 @@ VZ = "telecom"
 # 12 span 8.5pp and are not separable, while 6 and 16 clearly are. The
 # operating size is a band, not a peak.
 [universe.size_curve]
-6 = 62.5
-8 = 76.9
-10 = 82.3
-12 = 73.8
-16 = 50.4
-20 = 42.9
-30 = -6.3
+# RE-MEASURED 2026-09-04 on the corrected engine at entry_confidence 0.75.
+# The previous curve peaked at 10 and went negative by 30; it was measured
+# with the time stop's look-ahead, where holding a marginal name was nearly
+# free because the exit rescued it, so a wide universe looked expensive and
+# its diversification looked worthless. Both were artefacts.
+#
+# Corrected, the curve is monotone to 70 and every size is positive in every
+# year -- where the old finding had 16 and above losing 23-40% in 2024, it
+# now returns +43% at 16 and +66% at 25. Drawdown stays between 12.6% and
+# 21.2% across the whole range.
+8 = 40.5
+10 = 48.4
+12 = 54.5
+16 = 70.8
+20 = 93.1
+25 = 103.8
+30 = 110.7
+40 = 139.4
+50 = 161.7
+70 = 215.7
+100 = 209.7
 

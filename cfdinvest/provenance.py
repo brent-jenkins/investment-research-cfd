@@ -134,21 +134,26 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
     ),
     Justification(
         path="execution.thresholds.entry_confidence",
-        value=0.35,
+        value=0.75,
         feed=CURRENT_FEED,
         cost_model=CURRENT_COST_MODEL,
-        source="scratchpad/confidence.py: seven entry/exit bands through the "
-               "engine, screen-gated at target 10, measured spreads, with "
-               "entry_size at the signal floor so this is the only filter",
-        figure="0.00 -> 141.4%/-44.7% (Calmar 3.16); 0.25 -> 134.5%/-42.0% "
-               "(3.20); 0.35 -> 130.5%/-40.3% (3.24); 0.45 -> 82.8%; 0.55 -> "
-               "36.1%. KEPT at 0.35 rather than moved to the peak: removing "
-               "the gate buys +11.0pp for +4.4pp of drawdown at flat Calmar, "
-               "which is 1.4x the 8.0pp floor and not enough to move a live "
-               "parameter when the risk-adjusted measure calls them equal. "
-               "The firm result is that raising it is destructive, -47.7pp "
-               "at 0.45. Confidence floors at 0.1500 by construction, so any "
-               "gate at or below that is inert",
+        source="scratchpad/costsearch and diligence: the gate swept through "
+               "the CORRECTED engine, screen-gated, measured spreads, with "
+               "cost/gross as the criterion because every arm at the old "
+               "gate loses and CAGR would only rank them by speed",
+        figure="0.35 -> 192.2% cost/gross and -47.5%; 0.55 -> 98.5%/+0.7%; "
+               "0.65 -> 63.4%/+21.0%; 0.75 -> 37.2%/+48.4%; 0.85 -> +33.9%; "
+               "0.95 -> +18.4%. An INTERIOR optimum: the curve turns over "
+               "after 0.75 rather than running to the edge of the sweep. "
+               "Positive in both halves (+51.9%/+45.0%) and in four years of "
+               "four (+87/+16/+83/+23), against a 9.3pp floor re-derived for "
+               "this book by varying the screen's selection lag alone -- the "
+               "old 8.0pp floor belonged to a book six times larger. Gross "
+               "P&L RISES from +98k to +512k across the sweep, so this "
+               "removes trades that lost money gross rather than merely "
+               "saving spread. SUPERSEDES the 2026-08-30 justification for "
+               "0.35, every figure of which was measured on an engine whose "
+               "time stop decided on a bar's close and filled at its open",
     ),
     Justification(
         path="signal.high_volatility_multiplier",
@@ -206,35 +211,29 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
     ),
     Justification(
         path="universe.size_curve",
-        # String keys: TOML table keys are strings, and the registry
-        # compares against what is configured rather than what a reader
-        # would type.
-        value={"6": 62.5, "8": 76.9, "10": 82.3, "12": 73.8, "16": 50.4,
-               "20": 42.9, "30": -6.3},
+        value={"8": 40.5, "10": 48.4, "12": 54.5, "16": 70.8, "20": 93.1,
+               "25": 103.8, "30": 110.7, "40": 139.4, "50": 161.7,
+               "70": 215.7, "100": 209.7},
         feed=CURRENT_FEED,
         cost_model=CURRENT_COST_MODEL,
-        source="scratchpad/screen_walk.py then universe_sweep.py: the screen "
-               "replayed point in time over 917 days and 100 candidates, its "
-               "daily selection expressed as an entry_gate, seven target "
-               "sizes through the engine with measured spreads",
-        figure="6 -> 62.5%/-19.1%; 8 -> 76.9%/-30.4%; 10 -> 82.3%/-41.3%; "
-               "12 -> 73.8%/-49.4%; 16 -> 50.4%; 20 -> 42.9%; 30 -> -6.3% "
-               "with cost at 105.9% of gross. 8/10/12 span 8.5pp and are not "
-               "separable at an 8.0pp floor, so this is a band not a peak; "
-               "resolve_target picks 10 because size_preference is 'largest'. "
-               "Measured on the currently tradeable list, which is the only "
-               "universe there is: a delisted name cannot be traded, so a "
-               "2023-vintage candidate list would not be a better estimate "
-               "but an unusable one. Owner's standing position, and not an "
-               "unexamined omission -- whether forward results match is what "
-               "the demo account is for. The RANKING is what earns this, not "
-               "breadth or the daily refresh: ten drawn at random from the "
-               "same ranked pool return -19.7% on average over five seeds, "
-               "every seed losing money, so the ordering is worth +150.1pp. "
-               "Randomising the universe moves CAGR 26.5pp across seeds -- a "
-               "separate and much larger floor than selection timing's "
-               "8.0pp, and the one that applies to comparisons of different "
-               "universes",
+        source="scratchpad/universe.py: the screen target swept through the "
+               "CORRECTED engine at entry_confidence 0.75, screen-gated, "
+               "measured spreads, with target equal to the number held so "
+               "eligible equals held and the rotation failure does not apply",
+        figure="monotone from 40.5% at 8 names to a peak of 215.7% at 70, "
+               "turning over to 209.7% at 100. Drawdown stays between 12.6% "
+               "and 21.2% across the whole range and EVERY size is positive "
+               "in every year -- where the superseded curve had 16 and above "
+               "losing 23-40% in 2024, it returns +43% at 16 and +66% at 25. "
+               "SUPERSEDES the curve peaking at 10 and going negative by 30, "
+               "which was measured with the time stop's look-ahead: holding "
+               "a marginal name was nearly free when the exit could see the "
+               "bar, so a wide universe looked expensive and its "
+               "diversification looked worthless. Both were artefacts. "
+               "SHIPPED AT 25 rather than the peak, because the engine does "
+               "not model the broker's minimum deal size and at 70 names on "
+               "this balance each position is ~136 of notional against a "
+               "0.1-unit minimum worth 100 on MU and 114 on LLY",
     ),
     Justification(
         path="execution.thresholds.entry_size",

@@ -128,7 +128,7 @@ beside every headline. A shuffle control that fails says so.
 | --- | --- |
 | Universe | 8 US shares, one trading session (14:30–21:00 UTC) |
 | Bars | Hourly |
-| Entry / exit confidence | 0.35 / 0.20 |
+| Entry / exit confidence | 0.75 / 0.20 |
 | Time stop | 0.29 days — one session |
 | Re-entry cooldown | 2 hours |
 | Max gross exposure | 3.5× equity (≈70% of the balance as margin) |
