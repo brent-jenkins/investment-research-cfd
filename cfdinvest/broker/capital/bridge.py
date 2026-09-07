@@ -456,9 +456,24 @@ def plan_orders(
                 for i in intents
             ]
 
-    # The book-wide cap, applied last, exactly as the engine applies it after
-    # the keep rather than before -- a position opened when the balance was
-    # higher must not survive untouched into a breach.
+    # The book-wide cap, applied last -- after the per-pass deferral above,
+    # so the survivors are sized against the room the refusals freed.
+    #
+    # This used to claim it matched "the engine, which applies it after the
+    # keep rather than before". That was false: until 2026-09-07 the engine
+    # capped and *then* deferred, the reverse of here, while its own comment
+    # cited this one as its authority. Two comments each pointing at the
+    # other, and the order between them inverted. The engine has been moved
+    # to match this, and tests/test_engine_models_dealing.py now asserts the
+    # correspondence rather than leaving it to prose.
+    #
+    # Note what this does NOT do: only `open` and `resize` intents are
+    # shrunk, so a held position sitting at `none` passes through untouched
+    # and a book that drifts above the ceiling stays there. That is the same
+    # deliberate choice as max_open_positions -- never liquidate into a
+    # drawdown -- and it means the ceiling bounds NEW exposure rather than
+    # total. CLAUDE.md records the consequence: the gross limit has never
+    # fired on the live account.
     ceiling = float(getattr(limits, "max_total_exposure_gbp", 0.0) or 0.0)
     if ceiling and gross > ceiling:
         scale = ceiling / gross

@@ -258,6 +258,31 @@ class ExecutionConfig:
     #: ``None`` disables it, which is the engine default: it is a modelling
     #: switch, and a shipped figure cannot move because a new field appeared.
     max_opens_per_pass: int | None = None
+    #: Whether the gross cap SELECTS or SCALES when the book breaches it.
+    #:
+    #: ``False`` -- the default and the behaviour every figure in CLAUDE.md
+    #: was measured on -- scales the whole book proportionally, holdings
+    #: included. Its stated defence is that "the cap decides how much risk in
+    #: total, not which asset gets it", and the consequence is that a trade
+    #: which just scrapes the entry bar is never refused: it opens, and every
+    #: existing position is trimmed pro rata to fund it, paying spread to
+    #: shrink the good ones. The trimming is conviction-blind, so a 0.76
+    #: entry dilutes a 0.95 position by the same percentage.
+    #:
+    #: ``True`` drops the lowest-conviction NEW opens until the book fits,
+    #: and only then scales -- and what it scales is limited to positions
+    #: that are actually changing, so a held position is never trimmed to
+    #: fund a new one. That is what ``bridge.plan_orders`` does on the live
+    #: account, where only ``open`` and ``resize`` intents are shrunk.
+    #:
+    #: Raised by the owner, 2026-09-07: a book with free cash should not open
+    #: lower-quality trades just because it can, and the mirror of that is
+    #: that a book at its ceiling should choose rather than dilute.
+    #:
+    #: Defaults to ``False`` because it is a behavioural change rather than a
+    #: modelling correction, and a shipped figure must not move because a new
+    #: field appeared.
+    leverage_cap_selects: bool = False
     #: Margin required per unit of notional, per instrument, as a FRACTION.
     #:
     #: 0.20, not 20.0. Capital's API states the figure as a percentage and

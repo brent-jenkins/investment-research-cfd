@@ -1201,16 +1201,30 @@ candidates = [
 # silently changing what the account holds.
 # Unset: the size curve chooses, bounded by two ceilings.
 #
-# `universe.max_target` (70) stops the curve selecting the whole candidate
-# pool -- it peaks at 70 and is still worth 209.7% at 100, a gap inside the
-# 9.3pp floor, so "largest within the floor" would otherwise take everything.
+# `universe.max_target` stops the curve selecting the whole candidate pool.
+# It is 25, set in cfdinvest/config.py -- this file never assigns it, and a
+# comment here previously said 70, which was the intermediate decision
+# written down and not revised when it landed at 25.
 #
-# The VIABILITY ceiling then binds below that on a small account: computed by
-# `universe._viability_ceiling` from the balance recorded in persist.margin
-# and the minimum deal sizes in persist.spreads, requiring every slot to be
-# worth several minimum tickets. That is what stops the book holding 70
-# positions of 136 against a 0.1-unit minimum worth 100-114 on the dear
-# names, and it rises on its own as the balance does.
+# It matters more than it did. Re-measured on 2026-09-07 the size curve is
+# MONOTONE to 100 with no peak, so "largest within the floor" now selects the
+# entire hundred-name pool rather than the 70 the old curve implied. Nothing
+# in the return curve argues for a stop any more, and drawdown does not argue
+# for one either -- 6.6% to 7.6% across the whole range with no trend.
+#
+# The VIABILITY ceiling is meant to bind below that on a small account:
+# computed by `universe._viability_ceiling` from the balance recorded in
+# persist.margin and the minimum deal sizes in persist.spreads, requiring
+# every slot to be worth several minimum tickets, and rising on its own as
+# the balance does.
+#
+# **Measured, it does not bind.** `position_capacity` is optimistic in two
+# ways that compound: it sizes against `max_leverage` (3.5x, where the book
+# runs about 1.3x even at a hundred names) and takes the ninetieth-percentile
+# minimum ticket rather than one it might actually be handed. On the recorded
+# balance it computes 83 slots, which is above every curve entry but 100 --
+# so removing `max_target` today would not hand the decision to the balance,
+# it would hand it to the curve. That is what keeps this constant alive.
 #
 # Pin an explicit value here only to override both.
 # target = 25
@@ -1372,25 +1386,42 @@ VZ = "telecom"
 # 12 span 8.5pp and are not separable, while 6 and 16 clearly are. The
 # operating size is a band, not a peak.
 [universe.size_curve]
-# RE-MEASURED 2026-09-04 on the corrected engine at entry_confidence 0.75.
-# The previous curve peaked at 10 and went negative by 30; it was measured
-# with the time stop's look-ahead, where holding a marginal name was nearly
-# free because the exit rescued it, so a wide universe looked expensive and
-# its diversification looked worthless. Both were artefacts.
+# RE-MEASURED 2026-09-07 on the DAY-TRADING configuration.
 #
-# Corrected, the curve is monotone to 70 and every size is positive in every
-# year -- where the old finding had 16 and above losing 23-40% in 2024, it
-# now returns +43% at 16 and +66% at 25. Drawdown stays between 12.6% and
-# 21.2% across the whole range.
-8 = 40.5
-10 = 48.4
-12 = 54.5
-16 = 70.8
-20 = 93.1
-25 = 103.8
-30 = 110.7
-40 = 139.4
-50 = 161.7
-70 = 215.7
-100 = 209.7
+# SUPERSEDED: the 2026-09-04 curve (40.5 / 48.4 / 54.5 / 70.8 / 93.1 / 103.8
+# / 110.7 / 139.4 / 161.7 / 215.7 / 209.7). It was correct when measured and
+# it described the wrong book: its value at 25 is 103.8, which is exactly
+# what the same harness reports for the CARRY-OVERNIGHT arm. The account has
+# flattened at the bell since 2026-09-06, so the curve choosing the universe
+# size was fitted to the book the account stopped running two days earlier.
+# Struck rather than deleted -- the same sweep will otherwise be run again
+# and the same numbers believed.
+#
+# The shape changed, and that is the part that matters. The old curve peaked
+# at 70 and fell at 100. This one is MONOTONE ACROSS THE WHOLE RANGE with no
+# peak, so "largest within the noise floor" now selects 100 -- the entire
+# candidate pool -- where before it selected 70.
+#
+# Drawdown does not pay for it: 7.6% at 8 names, 6.6% at 40 to 70, 7.6% at
+# 100, with no trend. Every size is positive in every year. What does rise
+# is the cost share, 20.8% of gross at 8 names to 34.7% at 100, and mean
+# leverage, 0.54x to 1.31x.
+#
+# THE ACCOUNT CANNOT FUND THE TOP OF THIS CURVE, and nothing here says so.
+# At 100 names on the recorded balance a slot is worth about 62 against a
+# dearest recorded minimum ticket of 137, so the expensive names could not
+# be opened at all. That is `universe.max_target` and the viability ceiling's
+# job, not this table's -- but a curve read without them describes a book
+# that cannot be held.
+8 = 57.0
+10 = 69.8
+12 = 82.5
+16 = 104.9
+20 = 130.5
+25 = 159.2
+30 = 179.7
+40 = 240.9
+50 = 297.6
+70 = 401.3
+100 = 490.4
 

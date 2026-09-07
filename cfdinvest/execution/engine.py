@@ -677,14 +677,28 @@ def run_execution(signal_frame, analysis_frame, config):
         target_units = _apply_concentration_cap(
             target_units, reference, equity, config
         )
-        target_units = _apply_leverage_cap(target_units, reference, equity, config)
 
-        # And the per-pass opening budget, applied last among the sizing
-        # decisions because that is where the dealing path applies it: the
-        # caps above shape the book, and this one decides how much of the
-        # reshaping actually happens on this bar.
+        # The per-pass opening budget, BEFORE the book-wide cap.
+        #
+        # This ran after the leverage cap until 2026-09-07, on a comment
+        # saying "that is where the dealing path applies it". The dealing
+        # path applies it the other way round -- bridge.plan_orders defers
+        # at line 434 and caps at line 462 -- and its own comment says why:
+        # the survivors are then sized against the room the refusals freed,
+        # rather than every position being shrunk to fit a book that is
+        # about to lose members anyway. Both comments claimed to match the
+        # other and they disagreed; the dealing path is what the account
+        # runs, so the engine moves.
+        #
+        # Same argument as the concentration cap directly above, which was
+        # already ordered on it: refusing first frees room for the rest.
         target_units = _defer_surplus_opens(
             target_units, units, confidence[bar], config
+        )
+
+        target_units = _apply_leverage_cap(
+            target_units, reference, equity, config,
+            held=units, confidence=confidence[bar],
         )
 
         # And the margin the book would commit. Applied after the leverage
@@ -1290,21 +1304,100 @@ def _apply_concentration_cap(units, reference, equity, config):
     return units * np.nan_to_num(scale, nan=1.0, posinf=1.0)
 
 
-def _apply_leverage_cap(units, reference, equity, config):
-    """Scale the whole book down until gross notional fits the cap.
+def _apply_leverage_cap(units, reference, equity, config, *, held=None,
+                        confidence=None):
+    """Bring gross notional inside the cap, by scaling or by selecting.
 
-    Proportional, so the relative sizing the signal layer produced survives:
-    the cap decides how much risk in total, not which asset gets it.
+    ``units`` is the TARGET book; ``held`` is what is currently held, needed
+    only to tell a new open from a position already carried.
+
+    **Scaling is the default and is what every recorded figure was measured
+    on.** It shrinks the whole book proportionally, on the reasoning that the
+    cap decides how much risk in total rather than which asset gets it. That
+    reasoning has a consequence nobody had stated: a trade that just scrapes
+    the entry bar is never refused. It opens, and every existing position is
+    trimmed pro rata to fund it -- conviction-blind, so a 0.76 entry dilutes
+    a 0.95 position by the same percentage, and spread is paid to shrink the
+    good ones. The owner's objection on 2026-09-07 was that a book should
+    choose its trades rather than fill to capacity; this is that objection
+    arriving from the other side of the cap.
+
+    **Selecting** drops the lowest-conviction NEW opens until the book fits.
+    Only then does it scale, and only over positions that are actually
+    changing, so a held position is never trimmed to fund a new one. That is
+    what ``bridge.plan_orders`` does live, where the ceiling shrinks ``open``
+    and ``resize`` intents and leaves a position sitting at ``none`` alone.
+
+    The two differ in what they do when the cap still binds after every new
+    open is gone: nothing. A book that has drifted above its ceiling on
+    falling equity stays there and drains as positions exit on their own
+    terms. That is the same deliberate choice as ``max_open_positions`` --
+    never liquidate into a drawdown -- and it is what the account does.
+
+    An absent ``held`` or ``confidence`` under selection is a programming
+    error rather than missing data, and raises: silently falling back to
+    scaling would be a gate reporting a clean pass while inert, which is this
+    project's most-repeated failure.
     """
     price = np.nan_to_num(reference)
-    gross = float(np.abs(units * price).sum())
     cap = config.max_leverage * max(equity, 0.0)
-
     if cap <= 0:
         return np.zeros_like(units)
-    if gross > cap:
+
+    gross = float(np.abs(units * price).sum())
+    if gross <= cap:
+        return units
+
+    if not getattr(config, "leverage_cap_selects", False):
         return units * (cap / gross)
-    return units
+
+    if held is None or confidence is None:
+        raise ValueError(
+            "leverage_cap_selects needs the held book and the confidence row "
+            "to rank by; without them it can only scale, which is the "
+            "behaviour it exists to replace"
+        )
+
+    out = np.asarray(units, dtype="float64").copy()
+
+    # Weakest new opens go first. A score that is absent sorts to the front
+    # rather than the back -- "no reading" is not conviction, and the name
+    # nobody can rank is the one to drop when room is short. That is the
+    # opposite convention from _defer_surplus_opens, deliberately: there an
+    # absent score loses its slot to a ranked name, and here it loses its
+    # place in the book, which are the same outcome stated from either end.
+    opening = np.flatnonzero((out != 0) & (np.asarray(held) == 0))
+    if opening.size:
+        scores = np.nan_to_num(
+            np.asarray(confidence, dtype="float64")[opening],
+            nan=-np.inf, neginf=-np.inf,
+        )
+        for index in opening[np.argsort(scores, kind="stable")]:
+            if gross <= cap:
+                break
+            gross -= float(abs(out[index] * price[index]))
+            out[index] = 0.0
+
+    if gross <= cap:
+        return out
+
+    # Still over with every new open gone, so the breach is in the book that
+    # is already there. Scale only what is changing, exactly as the dealing
+    # path does, and leave a held-and-unchanged position untouched.
+    changing = out != np.asarray(held)
+    if not changing.any():
+        return out
+
+    settled = float(np.abs(np.where(changing, 0.0, out) * price).sum())
+    moving = float(np.abs(np.where(changing, out, 0.0) * price).sum())
+    room = cap - settled
+    if moving <= 0:
+        return out
+    if room <= 0:
+        # No room at all: a change may not add exposure, so it reverts to
+        # what is held -- which zeroes an open and cancels a resize.
+        return np.where(changing, np.asarray(held), out)
+    return np.where(changing, out * (room / moving), out)
 
 
 def _roll_entry_price(previous_units, new_units, entry_price, fill_price):

@@ -480,6 +480,125 @@ uses the shared root, exactly as before it existed. See
 The root `README.md` is out of date — it describes the project as
 "ingestion layer complete".
 
+### What changed on 2026-09-07
+
+**The owner's question: a book with free cash should not open lower-quality
+trades just because it can.** It does not, and checking why turned up
+something else.
+
+`_target_units` sizes each position independently -- `signal size x
+exposure_per_unit_size x equity / price` -- and nothing normalises across the
+book. No slot count divides the equity, nothing scales up to deploy idle
+cash, and free cash is never a trigger to open anything. If three names clear
+the 0.75 gate the book holds three and the rest stays cash; a fourth eligible
+name does not shrink the first three. So the universe target says how many
+names may be *considered*, not how many must be held and not how the money is
+split. That is also why the size curve rises with universe size: more
+eligible names means more independent opportunities found, not the same
+capital spread thinner.
+
+**The mirror case was wrong, in two ways, and both were divergences from the
+dealing path.** At the ceiling `_apply_leverage_cap` scaled the WHOLE book
+proportionally, holdings included, so a trade that just scraped the entry bar
+was never refused -- it opened and every existing position was trimmed pro
+rata to fund it, conviction-blind, paying spread to shrink the good ones.
+
+    order    bridge.plan_orders defers surplus opens (line 434) and THEN
+             applies the gross ceiling (462), so survivors are sized against
+             the room the refusals freed. The engine capped and then deferred.
+    scope    the bridge shrinks only `open` and `resize` intents, so a held
+             position at `none` passes through untouched. The engine scaled
+             everything.
+
+**Each comment cited the other as its authority and the order between them
+was inverted.** `test_engine_models_dealing.py` could not catch it because
+the parameter exists on both sides; only the sequence differed. The engine
+moved to match the account, and the bridge's false claim about it is struck.
+
+**The cap fires, and selecting instead of scaling is worth nothing
+measurable.** The first detector said the cap never binds -- 0.0% of bars at
+the ceiling -- which was the detector being too tight rather than a null.
+Counted at the call:
+
+    target   bars   gross cap fires   concentration fires   worst single cut
+        25  6,404      44   0.7%          834   13.0%              56.6%
+        50  6,404     131   2.0%        1,287   20.1%              69.8%
+        70  6,404     194   3.0%        1,534   24.0%              73.0%
+       100  6,404     319   5.0%        1,780   27.8%              75.9%
+
+So the dilution is real and severe when it happens -- one bar in a hundred at
+25 names, cutting up to 57% of the book -- and rare enough that the aggregate
+is noise. Across eleven universe sizes `leverage_cap_selects` moves the
+result by -5.3pp to +1.9pp with the sign flipping, every value inside the
+9.3pp floor. **No evidence either way.**
+
+`ExecutionConfig.leverage_cap_selects` therefore exists, is applied by the
+engine, is tested with six mutations checked, and **defaults to False** --
+the behaviour every recorded figure was measured on. It is the right rule and
+it is not worth turning on for return. The concentration cap is what actually
+binds here, 13% to 28% of bars against the gross cap's 0.7% to 5%.
+
+**The find is the size curve, and it was describing the wrong book.** Its
+value at 25 names is 103.8, which is exactly what the same harness reports
+for the CARRY-OVERNIGHT arm. The account has flattened at the bell since
+2026-09-06, so the table that chooses the universe size was fitted to the
+book the account stopped running two days earlier.
+
+    target  shipped  re-measured   maxDD  Calmar   lev   cost    worst year
+         8     40.5        57.0     7.6%    7.46  0.54  20.8%       +38%
+        10     48.4        69.8     7.6%    9.12  0.58  22.4%       +46%
+        12     54.5        82.5     7.6%   10.79  0.62  22.8%       +62%
+        16     70.8       104.9     7.6%   13.72  0.68  24.2%       +77%
+        20     93.1       130.5     7.6%   17.15  0.74  24.2%       +92%
+        25    103.8       159.2     7.3%   21.82  0.78  24.2%      +114%
+        30    110.7       179.7     7.4%   24.41  0.84  25.8%      +128%
+        40    139.4       240.9     6.6%   36.31  0.92  26.9%      +159%
+        50    161.7       297.6     6.6%   45.31  1.00  29.4%      +207%
+        70    215.7       401.3     6.6%   60.63  1.14  32.0%      +282%
+       100    209.7       490.4     7.6%   64.66  1.31  34.7%      +348%
+
+**The shape changed, and that is the consequence.** The old curve peaked at
+70 and turned over at 100. This one is monotone across the whole range with
+no peak, so "largest within the noise floor" now selects **100 -- the entire
+candidate pool** -- where before it selected 70. Drawdown does not pay for
+it: 6.6% to 7.6% with no trend. Every size is positive in every year. What
+rises is the cost share, 20.8% of gross to 34.7%, and mean leverage, 0.54x to
+1.31x.
+
+**Nothing in the return curve argues for a stop any more.** `max_target` is
+the only thing that does, which makes it load-bearing where it used to be a
+tidy-up. Shipping is unchanged: at a ceiling of 25 both the old and new
+curves select 25, so the account holds what it held.
+
+**The viability ceiling still does not bind, and that is what keeps the
+constant alive.** It is designed to answer exactly this from the balance and
+the broker's minimum deal sizes, and `position_capacity` is optimistic in two
+ways that compound -- it sizes against `max_leverage` 3.5x where the book
+runs about 1.3x even at a hundred names, and takes the ninetieth-percentile
+minimum ticket rather than one it might actually be handed. On the recorded
+balance it computes **83 slots**, above every curve entry but 100. So
+removing `max_target` today would not hand the decision to the balance; it
+would hand it to the curve.
+
+**At 100 names the account could not hold the book at all.** A slot is worth
+about 62 against a dearest recorded minimum ticket of 137, so the dear names
+could not be opened, let alone sized by conviction. The curve and the account
+now disagree by a factor of four to six, and every figure above 25 in
+`size_curve` describes a book this balance cannot fund. That is the fifth
+time the engine has modelled something the account does not do, and the first
+time it has been the *sizing* rather than a gate.
+
+**Two thresholds that should be one.** `risk.capacity.NOISE_FLOOR_PP` is 8.0
+and `operating_size` reads it, while the research floor re-derived for the
+corrected book is 9.3pp. Both are in use, they disagree, and "one owner per
+threshold" says they must not. It changes nothing at a ceiling of 25 -- only
+25 is within either floor -- so it is recorded rather than changed blind.
+
+**Left where it is, deliberately.** `leverage_cap_selects` stays False;
+`max_target` stays 25 until `position_capacity` sizes against realised
+leverage and refuses individual names it cannot afford, rather than against a
+ceiling the book never reaches and a ticket it may never be handed.
+
 ### What changed on 2026-09-03
 
 **A stale figure was justifying a live parameter, and correcting it reversed

@@ -211,29 +211,40 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
     ),
     Justification(
         path="universe.size_curve",
-        value={"8": 40.5, "10": 48.4, "12": 54.5, "16": 70.8, "20": 93.1,
-               "25": 103.8, "30": 110.7, "40": 139.4, "50": 161.7,
-               "70": 215.7, "100": 209.7},
+        value={"8": 57.0, "10": 69.8, "12": 82.5, "16": 104.9, "20": 130.5,
+               "25": 159.2, "30": 179.7, "40": 240.9, "50": 297.6,
+               "70": 401.3, "100": 490.4},
         feed=CURRENT_FEED,
         cost_model=CURRENT_COST_MODEL,
-        source="scratchpad/universe.py: the screen target swept through the "
-               "CORRECTED engine at entry_confidence 0.75, screen-gated, "
-               "measured spreads, with target equal to the number held so "
-               "eligible equals held and the rotation failure does not apply",
-        figure="monotone from 40.5% at 8 names to a peak of 215.7% at 70, "
-               "turning over to 209.7% at 100. Drawdown stays between 12.6% "
-               "and 21.2% across the whole range and EVERY size is positive "
-               "in every year -- where the superseded curve had 16 and above "
-               "losing 23-40% in 2024, it returns +43% at 16 and +66% at 25. "
-               "SUPERSEDES the curve peaking at 10 and going negative by 30, "
-               "which was measured with the time stop's look-ahead: holding "
-               "a marginal name was nearly free when the exit could see the "
-               "bar, so a wide universe looked expensive and its "
-               "diversification looked worthless. Both were artefacts. "
-               "SHIPPED AT 25 rather than the peak, because the engine does "
-               "not model the broker's minimum deal size and at 70 names on "
-               "this balance each position is ~136 of notional against a "
-               "0.1-unit minimum worth 100 on MU and 114 on LLY",
+        source="scratchpad/curve.py: the screen target swept through the "
+               "corrected engine on the DAY-TRADING configuration -- "
+               "entry_confidence 0.75, flatten at the bell, no opens in the "
+               "last hour, entry_recheck on -- screen-gated, measured "
+               "spreads, target equal to the number held so eligible equals "
+               "held and the rotation failure does not apply. The baseline "
+               "arm reproduced the recorded 159.2% to the decimal before any "
+               "other arm was read",
+        figure="MONOTONE ACROSS THE WHOLE RANGE with no peak: 57.0% at 8 "
+               "names rising to 490.4% at 100. Drawdown does not pay for it "
+               "-- 7.6% at 8, 6.6% at 40 to 70, 7.6% at 100, no trend -- and "
+               "every size is positive in every year. What rises is the cost "
+               "share, 20.8% of gross to 34.7%, and mean leverage, 0.54x to "
+               "1.31x. SUPERSEDES the 2026-09-04 curve (40.5 / 48.4 / 54.5 / "
+               "70.8 / 93.1 / 103.8 / 110.7 / 139.4 / 161.7 / 215.7 / 209.7), "
+               "which peaked at 70 and turned over at 100. That curve was "
+               "correct when measured and described the wrong book: its 103.8 "
+               "at 25 names is exactly what the same harness reports for the "
+               "CARRY-OVERNIGHT arm, and the account has flattened at the "
+               "bell since 2026-09-06. So the table choosing the universe "
+               "size was fitted to the book the account stopped running two "
+               "days earlier. THE SHAPE CHANGE IS THE CONSEQUENCE: 'largest "
+               "within the floor' now selects 100 rather than 70, so nothing "
+               "in the return curve argues for a stop and universe.max_target "
+               "is the only thing that does. SHIPPED AT 25 regardless, "
+               "because the engine does not model the broker's minimum deal "
+               "size: at 100 names on this balance a slot is worth about 62 "
+               "against a dearest recorded minimum ticket of 137, so the dear "
+               "names could not be opened at all",
     ),
     Justification(
         path="execution.thresholds.entry_size",

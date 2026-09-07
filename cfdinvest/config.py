@@ -645,9 +645,17 @@ class UniverseConfig:
     target: int | None = None
     #: The most names to hold, whatever the return curve says.
     #:
-    #: The curve peaks at 70 and is still worth 209.7% at 100, a difference
-    #: inside the 9.3pp noise floor -- so "largest within the floor" would
-    #: pick the whole candidate pool. This is the deliberate stop.
+    #: **The curve no longer peaks at all.** Re-measured on 2026-09-07 on the
+    #: day-trading configuration it rises monotonically from 57.0% at 8 names
+    #: to 490.4% at 100, so "largest within the floor" selects the entire
+    #: candidate pool rather than the 70 it used to. Drawdown does not pay
+    #: for it -- 6.6% to 7.6% with no trend across the range -- so nothing in
+    #: the return curve argues for a stop, and this constant is now the only
+    #: thing that does.
+    #:
+    #: SUPERSEDED: "the curve peaks at 70 and is still worth 209.7% at 100".
+    #: True of the 2026-09-04 curve, which was measured on the carry-overnight
+    #: book the account stopped running on 2026-09-06.
     #:
     #: Distinct from the VIABILITY ceiling, which is computed from the
     #: balance and the broker's minimum deal sizes. In principle that one
@@ -667,6 +675,11 @@ class UniverseConfig:
     #: expensive names would sit at one times their minimum where the model
     #: requires four. The honest range is 17 to 48 depending on which
     #: assumption is taken, and 25 sits in the middle of it.
+    #:
+    #: At the 100 the curve now wants, a slot is worth about 62 and the dear
+    #: names could not be opened at all. So the return curve and the account
+    #: disagree by a factor of four to six, and every figure above 25 in
+    #: `size_curve` describes a book this balance cannot hold.
     #:
     #: Raise this as the balance grows, or better, teach
     #: ``position_capacity`` to size against realised leverage and the
