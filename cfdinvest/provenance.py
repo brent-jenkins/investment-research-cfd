@@ -241,10 +241,19 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
                "within the floor' now selects 100 rather than 70, so nothing "
                "in the return curve argues for a stop and universe.max_target "
                "is the only thing that does. SHIPPED AT 25 regardless, "
-               "because the engine does not model the broker's minimum deal "
-               "size: at 100 names on this balance a slot is worth about 62 "
-               "against a dearest recorded minimum ticket of 137, so the dear "
-               "names could not be opened at all",
+               "pending the universe question rather than because the "
+               "balance cannot fund it. The engine now models the broker's "
+               "minimum deal size (ExecutionConfig.min_deal_sizes, the 63 "
+               "increments recorded on the account) and the constraint does "
+               "not bind: the first six months at target 100 return 120.3% "
+               "on a 1,000 balance against 120.2% with it switched off, same "
+               "540 active bars, median three positions of about 447 each "
+               "against a dearest ticket of 137. RETRACTED the same day: "
+               "'at 100 names a slot is worth about 62 so the dear names "
+               "could not be opened' divided exposure by the TARGET, which "
+               "is how many names the screen may CHOOSE FROM rather than how "
+               "many are held -- and the book holds a median of THREE at "
+               "target 100, flat on 42.6% of bars",
     ),
     Justification(
         path="execution.thresholds.entry_size",

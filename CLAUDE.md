@@ -594,10 +594,99 @@ corrected book is 9.3pp. Both are in use, they disagree, and "one owner per
 threshold" says they must not. It changes nothing at a ceiling of 25 -- only
 25 is within either floor -- so it is recorded rather than changed blind.
 
-**Left where it is, deliberately.** `leverage_cap_selects` stays False;
-`max_target` stays 25 until `position_capacity` sizes against realised
-leverage and refuses individual names it cannot afford, rather than against a
-ceiling the book never reaches and a ticket it may never be handed.
+**The engine was blind to the account balance, and now is not.** The owner's
+requirement: whether it is 1,000 or 100,000 or 1,000,000, the app should
+decide the best approach rather than be told a number. That could not be
+answered, because every cost the engine charges is a fraction of notional and
+nothing else responded to scale. Measured, with the increments switched off:
+
+    balance        t8      t12      t16      t25      t40      t70     t100
+      1,000     57.0%    82.5%   104.9%   159.2%   240.9%   401.3%   490.4%
+    100,000     57.0%    82.5%   104.9%   159.2%   240.9%   401.3%   490.4%
+  1,000,000     57.0%    82.5%   104.9%   159.2%   240.9%   401.3%   490.4%
+
+Identical to the decimal. A model that cannot tell a thousand pounds from a
+million cannot be asked which of them should hold more names.
+
+`ExecutionConfig.min_deal_sizes` closes the bottom end -- the 63 increments
+recorded on the account, in units, running 0.001 to 1.0, applied last in the
+sizing chain where `bridge._round_down` sits. Down, never up; an open under
+one increment is refused; a held position is never closed by the rounding;
+a deliberate close survives; an unrecorded increment leaves the name
+unconstrained rather than refusing it. Six mutations checked.
+
+**THE TOP END IS STILL BLIND AND CANNOT BE FIXED FROM THIS LAKE.**
+`slippage_fraction` is a scalar, so a million-pound order pays the same basis
+points as a thousand-pound one. Market impact needs average daily volume, and
+Capital's volume field is a tick count about 414x off the real figure. So
+100,000 and 1,000,000 read identically above, and that is a statement about
+the model rather than about the strategy. Anything about capacity at size is
+**not measured** and must not be inferred from these figures.
+
+**RETRACTED THE SAME DAY, and the retraction is the useful part.** Earlier in
+this entry: "at 100 names on the recorded balance a slot is worth about 62
+against a dearest minimum ticket of 137, so the dear names could not be
+opened at all". That divides exposure by the TARGET -- and the target is how
+many names the screen may CHOOSE FROM, not how many are held.
+
+    target   flat    p25   med   p75   p90   p99   max   held/eligible
+         8  81.5%      1     1     2     2     5     6            12%
+        12  76.7%      1     1     2     3     6     9             8%
+        16  72.1%      1     1     2     4     7    11             6%
+        25  65.2%      1     1     3     5     8    14             4%
+        40  56.6%      1     2     3     6    11    19             5%
+        70  46.8%      1     2     5     7    15    26             3%
+       100  42.6%      2     3     5     9    17    36             3%
+
+**At target 100 the book holds a median of THREE positions and is flat on
+42.6% of bars.** The two quantities differ by a factor of thirty, so the slot
+arithmetic answered a question nobody asked -- and `position_capacity` has
+the same flaw in its premise, capping eligibility by how many simultaneous
+positions the balance can fund.
+
+**That table also answers the owner's objection directly.** "Having 100 x
+low-value trades open isn't ideal" -- it does not do that. The count already
+varies with conditions rather than filling to capacity: p25 of one or two
+positions against a p99 of five to seventeen, because the 0.75 gate decides
+how many qualify on the bar and nothing normalises across the book. Widening
+the universe buys *fewer idle bars* (flat 81.5% down to 42.6%) and genuine
+diversification when it matters (the largest position is 100% of gross at the
+median below 40 names, and 50% at 100) rather than more simultaneous trades.
+
+**Measured properly, the constraint does not bind at any balance tested.**
+The whole-run comparison is misleading here -- a 5,000 book at these rates is
+a 500,000 book within two years, so the minimum deal size binds at the start
+and then stops mattering. The first six months, at target 100:
+
+    balance   increments   return    ending   active bars   held med   per posn
+      1,000     modelled   120.3%     2,203           540          3        447
+      1,000      ignored   120.2%     2,202           540          3        455
+      5,000     modelled   119.9%    10,997           540          3      2,269
+      5,000      ignored   120.2%    11,010           540          3      2,273
+
+Same active bars, same median holding, 0.1pp of return. **Nothing is refused
+for being too small, down to a 1,000 balance.**
+
+So `universe.max_target` is not holding back a book the account cannot fund.
+It is holding back one nobody has decided to run yet, which is a different
+and more honest reason to keep it. The decision is now the owner's on
+strategy grounds rather than blocked on arithmetic.
+
+**What remains genuinely unknown before removing it.** The 490.4% at 100
+names is one path on one dataset with no battery -- no leverage-matched
+control, no block bootstrap, no per-quarter cut -- and the cost share rises
+from 20.8% of gross to 34.7% across the range, which is the direction that
+has killed every other idea in this file. A monotone curve with no peak is
+also exactly what a measurement looks like when the thing that should stop it
+is unmodelled, and one such thing is known to be unmodelled here: capacity at
+size.
+
+**Left where it is, deliberately.** `leverage_cap_selects` stays False and
+`min_deal_sizes` is not wired into `_execution_config` -- both are modelling
+switches, and a shipped figure must not move because a new field appeared.
+`max_target` stays 25, now on strategy grounds rather than arithmetic: the
+balance can fund the wide book, and whether it should run one is a decision
+about risk appetite that has not been taken and is not taken here.
 
 ### What changed on 2026-09-03
 

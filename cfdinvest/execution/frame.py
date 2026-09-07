@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -283,6 +284,27 @@ class ExecutionConfig:
     #: modelling correction, and a shipped figure must not move because a new
     #: field appeared.
     leverage_cap_selects: bool = False
+    #: The broker's minimum dealing increment, in UNITS, per instrument.
+    #:
+    #: The engine had no notion of one, which made it blind to the account
+    #: balance in the way that matters most: a 1,000 book and a 100,000 book
+    #: modelled identically, because every cost is a fraction of notional and
+    #: nothing else responds to scale. Only one of them can place the orders.
+    #:
+    #: Capital treats ``min_deal_size`` as a floor AND a step -- 0.1 units on
+    #: NVDA -- and ``bridge._round_down`` rounds down to it, never up, so a
+    #: size cannot breach the limit it was computed from. This models the
+    #: same rule: a target below one increment is refused where the book is
+    #: flat, and a position already held is never closed by the rounding.
+    #:
+    #: Recorded per instrument rather than as a constant because the ticket
+    #: cost varies by a factor of 700 across the 63 instruments observed --
+    #: 0.19 on BKNG against 137.36 on MRNA -- so a single number cannot
+    #: state which names a small account can hold.
+    #:
+    #: ``None`` disables it, which is the engine default and the basis every
+    #: recorded figure was measured on.
+    min_deal_sizes: Mapping[str, float] | None = None
     #: Margin required per unit of notional, per instrument, as a FRACTION.
     #:
     #: 0.20, not 20.0. Capital's API states the figure as a percentage and

@@ -1218,13 +1218,21 @@ candidates = [
 # every slot to be worth several minimum tickets, and rising on its own as
 # the balance does.
 #
-# **Measured, it does not bind.** `position_capacity` is optimistic in two
-# ways that compound: it sizes against `max_leverage` (3.5x, where the book
-# runs about 1.3x even at a hundred names) and takes the ninetieth-percentile
-# minimum ticket rather than one it might actually be handed. On the recorded
-# balance it computes 83 slots, which is above every curve entry but 100 --
-# so removing `max_target` today would not hand the decision to the balance,
-# it would hand it to the curve. That is what keeps this constant alive.
+# **`position_capacity` does not bind, and the reason is worse than being
+# optimistic.** It is optimistic -- it sizes against `max_leverage` 3.5x
+# where the book runs about 1.3x, and takes the ninetieth-percentile minimum
+# ticket rather than one it might actually be handed, computing 83 slots on
+# the recorded balance. But the premise is the real problem: it caps how many
+# names may be ELIGIBLE by how many SIMULTANEOUS positions the balance can
+# fund, and those are different quantities. At target 100 the book holds a
+# median of THREE positions and is flat on 42.6% of bars, so the two differ
+# by a factor of thirty.
+#
+# Measured with the engine applying the real increments, nothing is refused
+# for being too small at any balance down to 1,000. So this constant is not
+# holding back a book the account cannot fund; it is holding back one nobody
+# has decided to run yet, which is a different and more honest reason to
+# keep it.
 #
 # Pin an explicit value here only to override both.
 # target = 25
@@ -1407,12 +1415,17 @@ VZ = "telecom"
 # is the cost share, 20.8% of gross at 8 names to 34.7% at 100, and mean
 # leverage, 0.54x to 1.31x.
 #
-# THE ACCOUNT CANNOT FUND THE TOP OF THIS CURVE, and nothing here says so.
-# At 100 names on the recorded balance a slot is worth about 62 against a
-# dearest recorded minimum ticket of 137, so the expensive names could not
-# be opened at all. That is `universe.max_target` and the viability ceiling's
-# job, not this table's -- but a curve read without them describes a book
-# that cannot be held.
+# RETRACTED, 2026-09-07, later the same day: "the account cannot fund the
+# top of this curve -- at 100 names a slot is worth about 62 against a
+# dearest minimum ticket of 137". That divides exposure by the TARGET, and
+# the target is how many names the screen may CHOOSE FROM rather than how
+# many are held. At target 100 the book holds a MEDIAN OF THREE positions
+# and is flat on 42.6% of bars.
+#
+# Measured with the real increments applied by the engine, the first six
+# months at target 100 return 120.3% on a 1,000 balance against 120.2% with
+# the constraint off, on the same 540 active bars. Nothing is refused for
+# being too small. The wide universe is fundable from day one.
 8 = 57.0
 10 = 69.8
 12 = 82.5

@@ -709,6 +709,14 @@ def run_execution(signal_frame, analysis_frame, config):
             target_units, reference, equity, columns, config
         )
 
+        # Last, because it quantises the answer every cap above produced --
+        # the same place bridge._round_down sits, after the ceiling rather
+        # than before it. A size rounded before a cap would be rounded again
+        # by the cap and stop being a multiple of anything.
+        target_units = _quantise_to_deal_size(
+            target_units, units, columns, config
+        )
+
         stop_out = False
         if config.stop_out_level is not None and equity <= config.stop_out_level * peak_equity:
             stop_out = True
@@ -1183,6 +1191,63 @@ def _apply_position_limit(target_units, new_held, units, config):
     target_units = np.where(keep, target_units, 0.0)
     new_held = np.where(keep, new_held, 0).astype(new_held.dtype)
     return target_units, new_held
+
+
+def _quantise_to_deal_size(target_units, units, columns, config):
+    """Round every target down to the broker's dealing increment.
+
+    The engine had no notion of a minimum deal size, and the consequence is
+    larger than it sounds: every cost it charges is a fraction of notional,
+    so nothing in the model responded to the size of the account at all. A
+    1,000 book and a 100,000 book produced the same CAGR, and only one of
+    them could place the orders. This is what makes the balance matter.
+
+    ``bridge._round_down`` is the rule being modelled: down to the increment,
+    never up, because a size rounded up can breach the limit it was computed
+    from. Capital treats ``min_deal_size`` as floor and step at once.
+
+    Three cases, and the second two are why this is not one line:
+
+      * flat, and the target is under one increment -- **refused**. This is
+        the case that removes a name from a small account's universe
+        entirely, and it is the whole point of modelling it.
+      * held, and the rounded target lands on zero -- **left alone**. The
+        rounding must not manufacture a close: the position is fundable, it
+        is already open, and closing it here would be the model inventing an
+        exit the account never makes.
+      * a deliberate close, target already zero -- **survives**. Refusing an
+        exit is never the safe direction, and a guard that could not tell a
+        rounded-away open from an intended close would do exactly that.
+
+    An instrument with no recorded increment is left unconstrained rather
+    than refused. That is absence named, not absence treated as permission:
+    the alternative reading -- refuse what we cannot measure -- would empty
+    the book on the first run against a fresh spread store.
+    """
+    increments = getattr(config, "min_deal_sizes", None)
+    if not increments:
+        return target_units
+
+    step = np.array(
+        [float(increments.get(str(name), 0.0) or 0.0) for name in columns],
+        dtype="float64",
+    )
+    constrained = step > 0
+    if not constrained.any():
+        return target_units
+
+    out = np.asarray(target_units, dtype="float64").copy()
+    held = np.asarray(units, dtype="float64")
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        steps = np.floor(np.abs(out) / np.where(constrained, step, 1.0))
+    rounded = np.sign(out) * steps * step
+
+    apply = constrained & (out != 0.0)
+    # A held position the rounding would erase keeps what it holds.
+    rescued = apply & (rounded == 0.0) & (held != 0.0)
+    out = np.where(apply, rounded, out)
+    return np.where(rescued, held, out)
 
 
 def _apply_margin_cap(target_units, reference, equity, columns, config):

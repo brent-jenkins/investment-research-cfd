@@ -676,10 +676,24 @@ class UniverseConfig:
     #: requires four. The honest range is 17 to 48 depending on which
     #: assumption is taken, and 25 sits in the middle of it.
     #:
-    #: At the 100 the curve now wants, a slot is worth about 62 and the dear
-    #: names could not be opened at all. So the return curve and the account
-    #: disagree by a factor of four to six, and every figure above 25 in
-    #: `size_curve` describes a book this balance cannot hold.
+    #: **RETRACTED 2026-09-07, same day, and the retraction is the useful
+    #: part.** That paragraph said "at the 100 the curve now wants, a slot is
+    #: worth about 62 and the dear names could not be opened at all". It
+    #: divides exposure by the TARGET, and the target is how many names the
+    #: screen may CHOOSE FROM, not how many are held. Measured: at target 100
+    #: the book holds a median of THREE positions and is flat on 42.6% of
+    #: bars. The arithmetic answers a question nobody asked.
+    #:
+    #: With real minimum deal sizes modelled by the engine, the first six
+    #: months at target 100 return 120.3% on a 1,000 balance against 120.2%
+    #: with the constraint switched off -- same 540 active bars, median three
+    #: positions of about 447 each against a dearest ticket of 137. Nothing
+    #: is refused for being too small, at any balance tested down to 1,000.
+    #:
+    #: So this constant is protecting against something that does not happen,
+    #: and `position_capacity` shares the flaw: it caps ELIGIBILITY by how
+    #: many SIMULTANEOUS positions the balance can fund, which are different
+    #: quantities differing by a factor of thirty here.
     #:
     #: Raise this as the balance grows, or better, teach
     #: ``position_capacity`` to size against realised leverage and the
