@@ -26,7 +26,7 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 __all__ = ["TradedUniverse", "traded_universe", "resolve_target",
-           "STALE_AFTER_DAYS"]
+           "explain_target", "TargetDecision", "STALE_AFTER_DAYS"]
 
 #: A selection older than this is used anyway, and said out loud.
 #:
@@ -184,7 +184,9 @@ def _is_stale(as_of: str) -> bool:
         return True
 
 
-def _viability_ceiling(app_config, fallback: int) -> tuple[int | None, str]:
+def _viability_ceiling(
+    app_config, fallback: int,
+) -> tuple[int | None, str, bool]:
     """How many slots this balance can actually size, from observations.
 
     The resolver used to pass ``ceiling=None`` with a comment saying the
@@ -219,7 +221,7 @@ def _viability_ceiling(app_config, fallback: int) -> tuple[int | None, str]:
         from cfdinvest.persist import spreads as spread_store
         from cfdinvest.risk.capacity import minimum_tickets, position_capacity
     except Exception as error:  # noqa: BLE001 - a resolver must not explode
-        return fallback, f"capacity layer unavailable ({error})"
+        return fallback, f"capacity layer unavailable ({error})", False
 
     balance = None
     try:
@@ -228,17 +230,17 @@ def _viability_ceiling(app_config, fallback: int) -> tuple[int | None, str]:
         if usage:
             balance = float(usage[-1]["balance"])
     except Exception as error:  # noqa: BLE001
-        return fallback, f"balance unreadable ({error})"
+        return fallback, f"balance unreadable ({error})", False
     if not balance:
         return fallback, ("no balance recorded yet; margin readings start "
-                          "on the first dealing pass")
+                          "on the first dealing pass"), False
 
     try:
         tickets = minimum_tickets(spread_store.load_spreads(app_config))
     except Exception as error:  # noqa: BLE001
-        return fallback, f"minimum deal sizes unreadable ({error})"
+        return fallback, f"minimum deal sizes unreadable ({error})", False
     if not tickets:
-        return fallback, "no minimum deal sizes recorded"
+        return fallback, "no minimum deal sizes recorded", False
 
     strategy = getattr(app_config, "strategy", None)
     capacity = position_capacity(
@@ -249,15 +251,46 @@ def _viability_ceiling(app_config, fallback: int) -> tuple[int | None, str]:
         universe_size=cap,
     )
     if capacity.slots is None:
-        return fallback, f"not computed ({capacity.note})"
+        return fallback, f"not computed ({capacity.note})", False
     return int(capacity.slots), (
         f"balance {balance:,.0f}, {len(tickets)} minimum sizes, "
         f"bound by {capacity.binding}"
-    )
+    ), True
 
 
-def resolve_target(app_config, fallback: int) -> int:
-    """How many to hold, derived rather than asserted.
+@dataclass(frozen=True)
+class TargetDecision:
+    """Why the book holds the number of names it holds.
+
+    Exists because the answer and the reasoning were computed in two places
+    and disagreed. The Universe page showed ``resolve_target`` -- which
+    applies the viability ceiling and ``max_target`` -- beside a caption
+    built from ``operating_size(curve)`` with NO ceiling, so it explained
+    choosing 100 next to a metric reading 25. A page that explains a
+    decision it did not make is worse than one explaining nothing, because
+    the reader cannot tell which half is wrong.
+
+    So the decision is computed once, here, and read everywhere.
+    """
+
+    slots: int
+    #: What the return curve alone would take, ignoring every ceiling. Kept
+    #: because "the curve wants 100 and something stopped it" is the useful
+    #: thing to show, and it is what was being shown by accident.
+    curve_slots: int | None
+    curve_note: str
+    ceiling: int | None
+    ceiling_why: str
+    max_target: int | None
+    #: Plain words for what actually decided.
+    bound_by: str
+
+    def describe(self) -> str:
+        return f"{self.slots} names, bound by {self.bound_by}"
+
+
+def explain_target(app_config, fallback: int) -> TargetDecision:
+    """How many to hold, derived rather than asserted, and why.
 
     Three inputs. The *viability ceiling* -- how many positions this balance
     can size at all, given the broker's minimum deal sizes; below that a
@@ -273,31 +306,96 @@ def resolve_target(app_config, fallback: int) -> int:
     """
     from cfdinvest.risk.capacity import operating_size
 
+    cap = getattr(app_config.universe, "max_target", None)
+    cap = int(cap) if cap else None
+    preference = str(getattr(app_config.universe, "size_preference", "largest"))
+
     # An explicit target wins. The override check used to live at the call
     # site, so moving the resolver here silently dropped it -- and the guard,
     # which now shares this function, would have ignored a pinned value.
     explicit = getattr(app_config.universe, "target", None)
     if explicit:
-        return int(explicit)
+        return TargetDecision(
+            slots=int(explicit), curve_slots=None, curve_note="",
+            ceiling=None, ceiling_why="not consulted; the target is pinned",
+            max_target=cap, bound_by="a person",
+        )
 
     curve = {int(k): float(v)
              for k, v in (getattr(app_config.universe, "size_curve", {}) or {}).items()}
     if not curve:
         logger.info("No size curve configured; holding the traded count (%d)", fallback)
-        return fallback
+        return TargetDecision(
+            slots=int(fallback), curve_slots=None,
+            curve_note="no measured curve configured",
+            ceiling=None, ceiling_why="not reached; there is no curve to bound",
+            max_target=cap,
+            bound_by="the traded count, for want of a measurement",
+        )
 
-    ceiling, why = _viability_ceiling(app_config, fallback)
+    # What the curve wants on its own. Reported rather than used, so a reader
+    # can see the gap between the measurement and the answer.
+    unbounded = operating_size(curve, prefer=preference)
+
+    ceiling, why, measured = _viability_ceiling(app_config, fallback)
     if ceiling is None:
         logger.info("No viability ceiling (%s); the curve decides alone", why)
     else:
         logger.info("Viability ceiling %d slots (%s)", ceiling, why)
 
-    chosen = operating_size(
-        curve, ceiling=ceiling,
-        prefer=str(getattr(app_config.universe, "size_preference", "largest")),
-    )
+    # `max_target` binds whichever path the ceiling took. It used to be
+    # applied only inside `_viability_ceiling`, on its success path -- so a
+    # run that could not read a balance fell back to the traded count and the
+    # cap was silently not applied at all. It never bit, because the fallback
+    # is smaller than the cap in every configuration shipped so far, which is
+    # exactly what a latent hole looks like: correct by coincidence.
+    bounds = [int(b) for b in (ceiling, cap) if b is not None]
+    effective = min(bounds) if bounds else None
+
+    chosen = operating_size(curve, ceiling=effective, prefer=preference)
     if chosen.slots is None:
         logger.warning("Size not computed (%s); holding %d", chosen.note, fallback)
-        return fallback
+        return TargetDecision(
+            slots=int(fallback), curve_slots=unbounded.slots,
+            curve_note=chosen.note, ceiling=ceiling, ceiling_why=why,
+            max_target=cap,
+            bound_by="the traded count; the size was not computed",
+        )
+
+    slots = int(chosen.slots)
+    # Which constraint actually bit. The curve first: if the answer is what
+    # the curve wanted anyway, nothing bound it and saying otherwise would
+    # invent a constraint. Then whichever bound is the tighter one, named --
+    # `max_target` before the viability ceiling when they tie, because the
+    # ceiling is itself clamped by the cap, so an equal ceiling was set BY
+    # the cap and crediting the balance would name the wrong one.
+    if unbounded.slots is not None and slots >= int(unbounded.slots):
+        bound_by = f"the curve ({preference} within the noise floor)"
+    elif effective is None:
+        bound_by = "the measured curve"
+    elif cap is not None and effective == cap:
+        bound_by = f"universe.max_target ({cap})"
+    elif ceiling is not None and effective == ceiling:
+        # Only claim the balance decided when a balance was actually read.
+        # The ceiling falls back to the traded count when it cannot compute,
+        # and labelling that "from the balance and deal sizes" is a confident
+        # sentence about a measurement that did not happen -- the shape of
+        # failure this project names in every other layer.
+        bound_by = (
+            "the viability ceiling, from the balance and deal sizes"
+            if measured else
+            f"what is held now, for want of a balance ({why})"
+        )
+    else:
+        bound_by = "the measured curve"
+
     logger.info("Universe size computed: %s -- %s", chosen.describe(), chosen.note)
-    return int(chosen.slots)
+    return TargetDecision(
+        slots=slots, curve_slots=unbounded.slots, curve_note=chosen.note,
+        ceiling=ceiling, ceiling_why=why, max_target=cap, bound_by=bound_by,
+    )
+
+
+def resolve_target(app_config, fallback: int) -> int:
+    """How many to hold. See :func:`explain_target` for why."""
+    return explain_target(app_config, fallback).slots

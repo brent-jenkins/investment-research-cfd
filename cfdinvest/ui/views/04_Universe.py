@@ -95,18 +95,24 @@ except Exception as error:  # noqa: BLE001
 # derived from, and what it declined to take.
 st.subheader("How many it holds")
 try:
-    from cfdinvest.risk.capacity import NOISE_FLOOR_PP, operating_size
-    from cfdinvest.universe.traded import resolve_target
+    from cfdinvest.risk.capacity import NOISE_FLOOR_PP
+    from cfdinvest.universe.traded import explain_target
 
     curve = {int(k): float(v)
              for k, v in (getattr(settings.universe, "size_curve", {}) or {}).items()}
-    computed = resolve_target(settings, len(traded))
+    # ONE computation, read for both the number and the reason. These used to
+    # be two: the metric came from resolve_target, which applies the viability
+    # ceiling and max_target, while the caption came from operating_size with
+    # NO ceiling -- so the page explained choosing 100 beside a metric reading
+    # 25 and the reader could not tell which half was wrong.
+    decision = explain_target(settings, len(traded))
+    computed = decision.slots
     explicit = getattr(settings.universe, "target", None)
     preference = str(getattr(settings.universe, "size_preference", "largest"))
 
     row = st.columns(3)
     row[0].metric("Instruments held", computed)
-    row[1].metric("Chosen by", "a person" if explicit else f"the curve ({preference})")
+    row[1].metric("Chosen by", decision.bound_by)
     row[2].metric("Noise floor", f"{NOISE_FLOOR_PP:g}pp")
 
     if explicit:
@@ -115,18 +121,41 @@ try:
             "measurement decide."
         )
     elif curve:
-        answer = operating_size(curve, prefer=preference)
         peak = max(curve, key=lambda k: curve[k])
         st.caption(
             f"Derived from a measured curve of return against size, read "
             f"through a noise floor of {NOISE_FLOOR_PP:g}pp rather than by "
-            f"taking its best point. {answer.note}. The peak is {peak} at "
-            f"{curve[peak]:.1f}%, and it is **not** taken on its own: "
-            f"changing only the day of the month a screen runs on moves the "
-            f"same strategy by {NOISE_FLOOR_PP:g}pp, so sizes within that of "
-            f"each other are indistinguishable and `{preference}` decides "
+            f"taking its best point. {decision.curve_note}. The peak is "
+            f"{peak} at {curve[peak]:.1f}%, and it is **not** taken on its "
+            f"own: changing only the day of the month a screen runs on moves "
+            f"the same strategy by {NOISE_FLOOR_PP:g}pp, so sizes within that "
+            f"of each other are indistinguishable and `{preference}` decides "
             f"between them."
         )
+        # What the curve wanted before anything bounded it. Shown only when it
+        # differs, because the gap is the whole point: the measurement can
+        # want a book the balance cannot fund or the cap will not permit, and
+        # a page that hides that reads as though the curve chose.
+        if decision.curve_slots is not None and decision.curve_slots != computed:
+            held_back = []
+            if decision.max_target is not None and computed >= decision.max_target:
+                held_back.append(
+                    f"`universe.max_target` stops it at {decision.max_target}"
+                )
+            if decision.ceiling is not None:
+                held_back.append(
+                    f"the viability ceiling allows {decision.ceiling} "
+                    f"({decision.ceiling_why})"
+                )
+            st.warning(
+                f"**The curve alone would take {decision.curve_slots}.** It "
+                f"holds {computed} because "
+                + ("; ".join(held_back) if held_back
+                   else "something below the curve bound it")
+                + ". The viability ceiling is computed from the recorded "
+                "balance and the broker's minimum deal sizes; `max_target` is "
+                "a deliberate stop that no measurement argues for."
+            )
         st.caption(
             "This is also the open-position cap, deliberately the same "
             "number: every name eligible but unheld is a candidate to rotate "
