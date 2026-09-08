@@ -42,6 +42,9 @@ from typing import Any, Mapping, Sequence
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "effective_sector_cap",
+    "select_within_sector_cap",
+    "reachable_size",
     "ScreenConfig",
     "Candidate",
     "ScreenResult",
@@ -646,9 +649,6 @@ def rank_candidates(
     )
 
     notes: list[str] = []
-    selected: list[str] = []
-    capped: list[str] = []
-    per_sector: dict[str, int] = {}
 
     cap = settings.max_per_sector
     if cap is not None and not (sectors or {}):
@@ -657,15 +657,9 @@ def rank_candidates(
             "no sector map supplied, so the sector cap was not applied"
         )
 
-    for candidate in ordered:
-        if len(selected) >= settings.target:
-            break
-        if cap is not None and candidate.sector:
-            if per_sector.get(candidate.sector, 0) >= cap:
-                capped.append(candidate.ticker)
-                continue
-            per_sector[candidate.sector] = per_sector.get(candidate.sector, 0) + 1
-        selected.append(candidate.ticker)
+    selected, capped = select_within_sector_cap(
+        [(c.ticker, c.sector) for c in ordered], settings.target, cap,
+    )
 
     if len(selected) < settings.target:
         notes.append(
@@ -680,6 +674,87 @@ def rank_candidates(
         profile_held=profile_held,
         notes=tuple([*spread_notes, *profile_notes, *notes]),
     )
+
+
+def effective_sector_cap(app_config) -> int | None:
+    """The cap the screen will actually apply, resolved once.
+
+    ``universe.max_per_sector`` of ``None`` does NOT mean "no cap" -- it
+    means "leave ScreenConfig's own default in force", which is 5. The
+    distinction cost a mutation check: a reachability guard read the config
+    value literally, concluded 100 names were reachable, and passed a target
+    of 70 that the screen could only fill to 38.
+
+    Anything asking "how many names can this configuration hold" must
+    resolve it through here, or it is asking about a cap nobody applies.
+    """
+    override = getattr(getattr(app_config, "universe", None), "max_per_sector", None)
+    if override is not None:
+        return int(override) or None
+    return ScreenConfig().max_per_sector
+
+
+def select_within_sector_cap(
+    ordered: Sequence[tuple[str, str]],
+    target: int,
+    cap: int | None,
+) -> tuple[list[str], list[str]]:
+    """Walk a ranking best-first, taking names until the target is full.
+
+    ``ordered`` is ``(ticker, sector)`` best first; ``sector`` may be empty,
+    and an unmapped name is never capped -- the cap can only bind where the
+    map says what it is capping.
+
+    **Extracted 2026-09-08 so that research and production cannot disagree
+    about what the screen selects, because they did.** Every size-curve
+    figure this project has recorded was swept over the raw ranking, taking
+    its first N. The screen does not do that: it skips names whose sector is
+    full and reaches further down. On the day this was found, the harness's
+    top thirty and the screen's actual thirty shared **eight names** -- the
+    harness held twenty-two technology names where the account held a book
+    spread across nine sectors. Two different strategies wearing one number.
+
+    It also means a target above what the cap can fill is unreachable rather
+    than merely ambitious: nine sectors at five apiece tops out at 38 of the
+    100 candidates, and asking for 70 silently returns 38. That is what put
+    the account on eight names for part of a live session, because
+    ``traded_universe`` refuses a selection whose size does not match.
+
+    Returns ``(selected, capped)`` -- the second being names passed over for
+    their sector rather than their rank, which the screen reports so a
+    reader can tell the two apart.
+    """
+    selected: list[str] = []
+    capped: list[str] = []
+    per_sector: dict[str, int] = {}
+
+    for ticker, sector in ordered:
+        if len(selected) >= target:
+            break
+        if cap is not None and sector:
+            if per_sector.get(sector, 0) >= cap:
+                capped.append(ticker)
+                continue
+            per_sector[sector] = per_sector.get(sector, 0) + 1
+        selected.append(ticker)
+
+    return selected, capped
+
+
+def reachable_size(sectors: Mapping[str, str], cap: int | None) -> int:
+    """The largest universe this sector map and cap can actually fill.
+
+    Asking the screen for more than this returns fewer names than requested,
+    silently, and a caller comparing the two sizes then refuses the whole
+    selection. Exposed so a target can be checked before it is configured
+    rather than after a live session has gone wrong.
+    """
+    if cap is None:
+        return len(sectors)
+    counts: dict[str, int] = {}
+    for sector in sectors.values():
+        counts[sector] = counts.get(sector, 0) + 1
+    return sum(min(int(cap), n) for n in counts.values())
 
 
 def select_universe(
