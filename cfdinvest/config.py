@@ -730,31 +730,35 @@ class UniverseConfig:
     #: the account is a demo, it was taking zero trades, and an idle book
     #: produces no forward evidence either way. The battery is still owed and
     #: the figure must not be quoted as validated until it is run.
-    #: **70 was UNREACHABLE and cost a live session's book.** Set on
-    #: 2026-09-08 and reverted within the hour: `max_per_sector = 5`
-    #: displaces 62 of the 100 candidates, so the screen can assemble at
-    #: most **38 names**. A recorded selection whose size does not match the
-    #: intended target is refused whole by `traded_universe`, which falls
-    #: back to `market.tickers` -- so the account spent minutes on EIGHT
-    #: names, worse than the 25 it started from.
+    #: **50 from 2026-09-08**, with `max_per_sector` at 8, which fills 54 of
+    #: the hundred candidates -- so the target is reachable, and
+    #: `tests/test_reachable_universe.py` fails the build if it stops being.
     #:
-    #: 30 is the largest entry in `size_curve` the screen can actually
-    #: deliver. It is a real increase on 25 and it is deliverable, which 70
-    #: was not.
+    #: Today's history, kept because it is the whole argument for that test.
+    #: 25 was raised to 70 during a live session on the strength of the
+    #: account's own morning: of the names clearing the 0.75 gate, 6 of 17
+    #: were inside the traded 25 on the 13:00 bar and 1 of 4 on the 14:00
+    #: bar. The direction was right and the number was unreachable -- five
+    #: per sector across nine sectors fills 38, `traded_universe` refuses a
+    #: selection whose size does not match, and the account fell back to
+    #: `market.tickers`: EIGHT names, worse than the 25 it started from. It
+    #: was minutes, and only because the change was verified afterwards.
     #:
-    #: **This also puts every size-curve entry above 38 in question.** The
-    #: curve was swept over the recorded rankings, which are the FULL
-    #: ranking before the sector cap; the screen applies the cap afterwards.
-    #: So 40, 50, 70 and 100 describe books the screen cannot select, and
-    #: the difference between 401.3% at 70 and 490.4% at 100 is a difference
-    #: between two universes that do not exist. Reaching them needs
-    #: `max_per_sector` raised, which is a separate decision with its own
-    #: evidence -- CLAUDE.md records the sector cap as measured to buy
-    #: nothing a rank-matched control did not, and separately credits sector
-    #: spread as the mechanism behind the curve's improvement. Those two
-    #: cannot both be right and neither has been re-measured on the
-    #: corrected engine.
-    max_target: int | None = 30
+    #: The measurement behind 50 is the first ever taken on universes the
+    #: screen can actually select. Every earlier size curve swept the RAW
+    #: ranking's first N, while the screen skips names whose sector is full
+    #: and reaches further down: the two share EIGHT names out of thirty.
+    #: The old curve was silently measuring `max_per_sector = None`, which is
+    #: why its values reproduce the uncapped row of the new grid exactly.
+    #:
+    #: **What is still unknown, and it is the drawdown.** The bootstrap puts
+    #: P(drawdown > 25%) at 0.0% across 4,000 paths with a worst path of
+    #: 16.3%. Part of that is real -- gaps are 83% of tail losses here and
+    #: the book now flattens before the bell -- but a resampling cannot
+    #: price a risk its sample does not contain, and a correlated shock
+    #: happens about once in 3.65 years. Treat 6-9% as what the model can
+    #: see rather than as a risk estimate.
+    max_target: int | None = 50
 
     #: Measured CAGR against universe size, from which the traded count is
     #: derived. Data rather than configuration: it is the output of a sweep
@@ -779,7 +783,35 @@ class UniverseConfig:
     #: written. Until then every screen reported the cap as not applied, so
     #: turning the map on changed the answer by more than the map itself: it
     #: activated a limit that had been inert since the screen was built.
-    max_per_sector: int | None = None
+    #: **SET TO 8 on 2026-09-08**, from the first joint sweep of the cap and
+    #: the target measured through the screen's own selection function.
+    #:
+    #: It had been `None`, which does not mean "no cap" -- it leaves
+    #: ScreenConfig's default of 5 in force. That ambiguity cost a live
+    #: session: a reachability guard read the value literally, concluded 100
+    #: names were selectable, and waved through a target of 70 the screen
+    #: could only fill to 38. `effective_sector_cap` now resolves it once and
+    #: this value is explicit so nobody has to know the fallback.
+    #:
+    #: 8 rather than 5 or 12, measured against a leverage-matched control on
+    #: the shipped universe -- the test that retired `rebalance_threshold`:
+    #:
+    #:     cap 8  / t50   +48.7pp over its control, maxDD 6.6%
+    #:     cap 12 / t70  +106.0pp over its control, maxDD 7.7%
+    #:     none   / t100 +300.3pp over its control, maxDD 7.6%
+    #:
+    #: Every arm is positive in both halves and in all four calendar years,
+    #: and a 4,000-path block bootstrap puts cap 8 / t50 above the shipped
+    #: arm's MEDIAN on 99.9% of paths.
+    #:
+    #: **It does not concentrate the book, which was the objection and it was
+    #: wrong.** Raising the cap widens the universe rather than tilting it,
+    #: because the target rises alongside: at cap 8 / t50 the largest sector
+    #: is 16% of the book across 8 sectors, against 17% across 7 at cap 5 /
+    #: t30. Only the uncapped corner concentrates, reaching 33% technology --
+    #: and there the screen selects all 100 candidates, so it stops being a
+    #: selection at all.
+    max_per_sector: int | None = 8
 
 
 @dataclass(frozen=True, slots=True)

@@ -210,63 +210,63 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
                "unused deliberately rather than by venue limit",
     ),
     Justification(
-        path="universe.size_curve",
-        value={"8": 57.0, "10": 69.8, "12": 82.5, "16": 104.9, "20": 130.5,
-               "25": 159.2, "30": 179.7, "40": 240.9, "50": 297.6,
-               "70": 401.3, "100": 490.4},
+        path="universe.max_per_sector",
+        value=8,
         feed=CURRENT_FEED,
         cost_model=CURRENT_COST_MODEL,
-        source="**RETRACTED 2026-09-08 -- MEASURED ON A UNIVERSE THE "
-               "SCREEN CANNOT SELECT.** The sweep took the raw ranking's "
-               "first N; the screen walks the ranking skipping names whose "
-               "sector is full and reaches further down. On the day this was "
-               "found the harness's top thirty and the screen's real thirty "
-               "shared EIGHT names -- twenty-two technology names against a "
-               "book across nine sectors. The error is at every point, 25 "
-               "included, so this is not a stale figure but one that never "
-               "described this account. The values remain configured because "
-               "resolve_target reads them live and emptying the table would "
-               "drop the universe mid-session; a replacement is being "
-               "measured through select_within_sector_cap, which both the "
-               "screen and any harness must now call. SUPERSEDED SOURCE: "
-               "scratchpad/curve.py: the screen target swept through the "
-               "corrected engine on the DAY-TRADING configuration -- "
-               "entry_confidence 0.75, flatten at the bell, no opens in the "
-               "last hour, entry_recheck on -- screen-gated, measured "
-               "spreads, target equal to the number held so eligible equals "
-               "held and the rotation failure does not apply. The baseline "
-               "arm reproduced the recorded 159.2% to the decimal before any "
-               "other arm was read",
-        figure="MONOTONE ACROSS THE WHOLE RANGE with no peak: 57.0% at 8 "
-               "names rising to 490.4% at 100. Drawdown does not pay for it "
-               "-- 7.6% at 8, 6.6% at 40 to 70, 7.6% at 100, no trend -- and "
-               "every size is positive in every year. What rises is the cost "
-               "share, 20.8% of gross to 34.7%, and mean leverage, 0.54x to "
-               "1.31x. SUPERSEDES the 2026-09-04 curve (40.5 / 48.4 / 54.5 / "
-               "70.8 / 93.1 / 103.8 / 110.7 / 139.4 / 161.7 / 215.7 / 209.7), "
-               "which peaked at 70 and turned over at 100. That curve was "
-               "correct when measured and described the wrong book: its 103.8 "
-               "at 25 names is exactly what the same harness reports for the "
-               "CARRY-OVERNIGHT arm, and the account has flattened at the "
-               "bell since 2026-09-06. So the table choosing the universe "
-               "size was fitted to the book the account stopped running two "
-               "days earlier. THE SHAPE CHANGE IS THE CONSEQUENCE: 'largest "
-               "within the floor' now selects 100 rather than 70, so nothing "
-               "in the return curve argues for a stop and universe.max_target "
-               "is the only thing that does. SHIPPED AT 25 regardless, "
-               "pending the universe question rather than because the "
-               "balance cannot fund it. The engine now models the broker's "
-               "minimum deal size (ExecutionConfig.min_deal_sizes, the 63 "
-               "increments recorded on the account) and the constraint does "
-               "not bind: the first six months at target 100 return 120.3% "
-               "on a 1,000 balance against 120.2% with it switched off, same "
-               "540 active bars, median three positions of about 447 each "
-               "against a dearest ticket of 137. RETRACTED the same day: "
-               "'at 100 names a slot is worth about 62 so the dear names "
-               "could not be opened' divided exposure by the TARGET, which "
-               "is how many names the screen may CHOOSE FROM rather than how "
-               "many are held -- and the book holds a median of THREE at "
-               "target 100, flat on 42.6% of bars",
+        source="scratchpad/battery.py and battery2.py: the cap swept jointly "
+               "with the target, because the cap decides which targets are "
+               "REACHABLE at all -- 3 fills 26 of the candidates, 5 fills 38, "
+               "8 fills 54, 12 fills 70. Sweeping the target against a fixed "
+               "cap is what produced tables describing books the screen "
+               "cannot select",
+        figure="at a target of 50, +48.7pp over a leverage-matched control on "
+               "the shipped 30-name universe, maxDD 6.6%, positive in both "
+               "halves and 4 of 4 years. Was None, which does NOT mean no cap "
+               "-- it left ScreenConfig's default of 5 in force, and that "
+               "ambiguity let a reachability check read 100 names as "
+               "selectable and wave through a target of 70 that filled to 38, "
+               "putting the account on 8 names mid-session. Explicit now. The "
+               "looser arms measure better still (cap 12 / t70 at +106.0pp, "
+               "uncapped / t100 at +300.3pp) and are NOT taken: at target 100 "
+               "from a 100-name pool the screen selects everything and stops "
+               "being a selection, and that arm is the only one that "
+               "concentrates -- 33% technology against 16% here",
+    ),
+    Justification(
+        path="universe.size_curve",
+        value={"8": 57.0, "12": 79.9, "16": 94.3, "20": 100.8, "25": 120.2,
+               "30": 137.3, "40": 167.4, "50": 191.0},
+        feed=CURRENT_FEED,
+        cost_model=CURRENT_COST_MODEL,
+        source="scratchpad/battery.py: the sector cap and the screen target "
+               "swept JOINTLY, with each universe built through the screen's "
+               "own select_within_sector_cap rather than by taking the "
+               "ranking's first N. This table is the max_per_sector = 8 row "
+               "of that grid; the curve is per-cap and stops at 50 because "
+               "8 across 9 sectors fills 54 of the 100 candidates",
+        figure="57.0% at 8 names rising to 191.0% at 50, monotone. Adopted "
+               "at 50 with the cap at 8, on a leverage-matched control "
+               "against the shipped universe -- the test that retired "
+               "rebalance_threshold -- worth +48.7pp, with maxDD 6.6% (the "
+               "lowest of any arm), positive in both halves and in 4 of 4 "
+               "calendar years, and above the shipped arm's MEDIAN on 99.9% "
+               "of 4,000 bootstrap paths. It does not concentrate the book: "
+               "largest sector 16% across 8 sectors, against 17% across 7 at "
+               "cap 5 / t30. RETRACTS both earlier tables (40.5/48.4/54.5/"
+               "70.8/93.1/103.8/110.7/139.4/161.7/215.7/209.7, then 57.0/"
+               "69.8/82.5/104.9/130.5/159.2/179.7/240.9/297.6/401.3/490.4). "
+               "Neither was stale -- both were measuring max_per_sector = "
+               "None, because taking the ranking's first N is what an "
+               "uncapped screen does. The second reproduces the uncapped row "
+               "of the new grid to the decimal, which is what identified the "
+               "error. On the shipped cap of 5 the harness's top thirty and "
+               "the screen's real thirty shared EIGHT names, so the old "
+               "figures never described this account at any size. NOT "
+               "VALIDATED: the bootstrap puts P(drawdown>25%) at 0.0% over "
+               "4,000 paths, which a resampling cannot support -- it can "
+               "only redraw risk its sample contains, and a correlated shock "
+               "occurs about once in 3.65 years",
     ),
     Justification(
         path="execution.thresholds.entry_size",
