@@ -699,7 +699,38 @@ class UniverseConfig:
     #: ``position_capacity`` to size against realised leverage and the
     #: dearest ticket rather than the ninetieth percentile -- at which point
     #: the viability ceiling binds on its own and this constant can go.
-    max_target: int | None = 25
+    #: **RAISED 25 -> 70 on 2026-09-08, the owner's decision**, on the
+    #: measurement below plus the account's own first session: of the names
+    #: clearing the 0.75 gate that morning, 6 of 17 were inside the traded 25
+    #: on the 13:00 bar and 1 of 4 on the 14:00 bar. The cap was excluding
+    #: about two thirds of what qualified.
+    #:
+    #: The mechanism is that the screen and the gate select on DIFFERENT
+    #: TIMESCALES. The screen ranks on liquidity, volatility and continuity --
+    #: slow properties, recorded daily. The gate asks whether an instrument
+    #: has a signal on this bar. Nothing makes those coincide, so narrowing
+    #: the eligible set by the slow criterion discards names the fast one
+    #: would have taken. That also reframes the size curve: widening buys
+    #: FEWER MISSED SIGNALS rather than diversification, which is why idle
+    #: bars fall from 65% at 25 names to 43% at 100.
+    #:
+    #: 70 rather than 100, and the distinction is smaller than it looks: the
+    #: viability ceiling computes 73 slots on the recorded balance (83 was
+    #: read on an earlier ticket set and is superseded), so
+    #: REMOVING this constant entirely would also select 70 today. It becomes
+    #: binding only once the balance grows enough for the ceiling to clear
+    #: 100, at which point raising it is a decision somebody takes rather
+    #: than one that happens.
+    #:
+    #: **What this has NOT had is the battery.** The 401.3% at 70 names is
+    #: one path on one dataset -- no leverage-matched control, no block
+    #: bootstrap, no per-quarter cut -- and the cost share rises from 24.2%
+    #: of gross at 25 names to 32.0% at 70, which is the direction that has
+    #: killed every other idea in this file. Adopted anyway, deliberately:
+    #: the account is a demo, it was taking zero trades, and an idle book
+    #: produces no forward evidence either way. The battery is still owed and
+    #: the figure must not be quoted as validated until it is run.
+    max_target: int | None = 70
 
     #: Measured CAGR against universe size, from which the traded count is
     #: derived. Data rather than configuration: it is the output of a sweep
