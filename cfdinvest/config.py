@@ -730,7 +730,31 @@ class UniverseConfig:
     #: the account is a demo, it was taking zero trades, and an idle book
     #: produces no forward evidence either way. The battery is still owed and
     #: the figure must not be quoted as validated until it is run.
-    max_target: int | None = 70
+    #: **70 was UNREACHABLE and cost a live session's book.** Set on
+    #: 2026-09-08 and reverted within the hour: `max_per_sector = 5`
+    #: displaces 62 of the 100 candidates, so the screen can assemble at
+    #: most **38 names**. A recorded selection whose size does not match the
+    #: intended target is refused whole by `traded_universe`, which falls
+    #: back to `market.tickers` -- so the account spent minutes on EIGHT
+    #: names, worse than the 25 it started from.
+    #:
+    #: 30 is the largest entry in `size_curve` the screen can actually
+    #: deliver. It is a real increase on 25 and it is deliverable, which 70
+    #: was not.
+    #:
+    #: **This also puts every size-curve entry above 38 in question.** The
+    #: curve was swept over the recorded rankings, which are the FULL
+    #: ranking before the sector cap; the screen applies the cap afterwards.
+    #: So 40, 50, 70 and 100 describe books the screen cannot select, and
+    #: the difference between 401.3% at 70 and 490.4% at 100 is a difference
+    #: between two universes that do not exist. Reaching them needs
+    #: `max_per_sector` raised, which is a separate decision with its own
+    #: evidence -- CLAUDE.md records the sector cap as measured to buy
+    #: nothing a rank-matched control did not, and separately credits sector
+    #: spread as the mechanism behind the curve's improvement. Those two
+    #: cannot both be right and neither has been re-measured on the
+    #: corrected engine.
+    max_target: int | None = 30
 
     #: Measured CAGR against universe size, from which the traded count is
     #: derived. Data rather than configuration: it is the output of a sweep
