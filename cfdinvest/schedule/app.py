@@ -612,6 +612,17 @@ def _with_screen_pool(tickers, app_config) -> list[str]:
     return wanted
 
 
+#: How the engine spells "close everything at the session end".
+#:
+#: ``overnight_profit_take`` banks a position whose gain clears a threshold on
+#: the last bar of a session, so a threshold below any reachable loss closes
+#: every position -- which is what the bridge's ``flatten_before_close`` does
+#: live. A sentinel rather than a second code path, so there is one
+#: implementation of the session-end close and the backtest cannot drift from
+#: the account.
+FLATTEN_AT_SESSION_END = -10_000.0
+
+
 def _execution_config(tickers, strategy=None, config=None, account=None):
     """The cost model, built from what the venue being traded charges.
 
@@ -675,6 +686,31 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
             open_delay_minutes=getattr(strategy, "open_delay_minutes", 0),
             # And the closing window, for the same reason.
             close_delay_minutes=getattr(strategy, "close_delay_minutes", 0),
+            # The account flattens before the bell; the engine must model it.
+            # Unwired until 2026-09-08, so every scheduled run described a
+            # book carrying overnight on an engine whose time stop cannot
+            # fire before the close -- worth 274 percentage points, measured.
+            # Closing an already-flat book is idempotent, so this cannot
+            # double-apply against the bridge's own flatten, which is what
+            # keeps `entry_recheck` deliberately unwired and this one not.
+            overnight_profit_take=(
+                FLATTEN_AT_SESSION_END
+                if getattr(strategy, "flatten_before_close", False) else None
+            ),
+            # And every remaining GATE, for the same reason again. Until
+            # 2026-09-08 this fallback dropped the entry confidence, the
+            # exposure and the rebalance threshold, so a run taken when the
+            # broker table could not be read traded a different strategy --
+            # at the engine's default gate rather than the configured one.
+            # The financing rates, the currency map and the earnings dates
+            # are still absent, and those are the things it genuinely could
+            # not read; a gate is not.
+            thresholds=HysteresisThresholds(
+                entry_confidence=strategy.entry_confidence,
+            ),
+            exposure_per_unit_size=strategy.exposure_per_unit_size,
+            rebalance_threshold=strategy.rebalance_threshold,
+            max_margin_usage=getattr(strategy, "max_margin_usage", None),
         confidence_sizing_strength=getattr(
             strategy, "confidence_sizing_strength", None
         ),
@@ -742,6 +778,19 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
         # And the same window at the other end, so they agree about when it
         # stops. Both are facts about the bar being dealt on.
         close_delay_minutes=getattr(strategy, "close_delay_minutes", 0),
+        # See the fallback construction above: both carry it, or the one
+        # taken when the broker table cannot be read models a different
+        # strategy exactly when something else has already gone wrong.
+        overnight_profit_take=(
+            FLATTEN_AT_SESSION_END
+            if getattr(strategy, "flatten_before_close", False) else None
+        ),
+        # The margin ceiling. Unwired until 2026-09-08: the bridge refuses
+        # an open that would breach it and the engine had the field but was
+        # never handed the value, so turning the setting on would have made
+        # the account more selective than any backtest of it. Harmless while
+        # the setting is None and a divergence the day it is not.
+        max_margin_usage=getattr(strategy, "max_margin_usage", None),
         time_stop_days=strategy.time_stop_days,
         earnings_dates=earnings or None,
         earnings_blackout_days=strategy.earnings_blackout_days,

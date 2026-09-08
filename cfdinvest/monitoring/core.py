@@ -1197,14 +1197,21 @@ def check_pipeline_anomalies(
                 type="pipeline",
                 severity="critical",
                 message=(
-                    f"The run drew down {abs(float(drawdown)):.0%} — the "
-                    "account was effectively wiped out."
+                    f"The SIMULATED run drew down "
+                    f"{abs(float(drawdown)):.0%}. This is the backtest, not "
+                    "the account — check the broker balance before acting."
                 ),
                 timestamp=moment,
                 details={"max_drawdown_fraction": drawdown},
                 remedy=(
-                    "At this magnitude it is a bug rather than a market. "
-                    "Check leverage and the stop distance."
+                    "At this magnitude it is usually a bug rather than a "
+                    "market. Check leverage and the stop distance -- and "
+                    "check what the run MODELS: the scheduled pipeline does "
+                    "not apply the last look or the close-of-session "
+                    "flatten, both of which the account applies, and on "
+                    "2026-09-08 that difference alone was 274 percentage "
+                    "points. A run that does not model the dealing path "
+                    "cannot tell you the account is in trouble."
                 ),
             )
         )
