@@ -1206,12 +1206,15 @@ def check_pipeline_anomalies(
                 remedy=(
                     "At this magnitude it is usually a bug rather than a "
                     "market. Check leverage and the stop distance -- and "
-                    "check what the run MODELS: the scheduled pipeline does "
-                    "not apply the last look or the close-of-session "
-                    "flatten, both of which the account applies, and on "
-                    "2026-09-08 that difference alone was 274 percentage "
-                    "points. A run that does not model the dealing path "
-                    "cannot tell you the account is in trouble."
+                    "check what the run MODELS. The scheduled pipeline "
+                    "does NOT apply the last look, which the account applies "
+                    "on every open and which was worth 274 percentage "
+                    "points when measured on 2026-09-08 -- so a large "
+                    "simulated drawdown is the expected reading rather than "
+                    "a signal. The close-of-session flatten IS modelled "
+                    "from that date. A run that does not model the dealing "
+                    "path cannot tell you the account is in trouble; the "
+                    "broker balance can."
                 ),
             )
         )
