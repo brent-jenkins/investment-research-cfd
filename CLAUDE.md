@@ -480,6 +480,243 @@ uses the shared root, exactly as before it existed. See
 The root `README.md` is out of date — it describes the project as
 "ingestion layer complete".
 
+### What changed on 2026-09-08
+
+The first live session of the day-trading configuration, and the day the
+size curve turned out never to have described this account.
+
+**The account opened its first trade at 15:22 UTC**, and the record of how
+it got there is the useful part:
+
+    14:41  BKNG   refused   no longer clears the bar
+    15:02  BKNG   refused   no longer clears the bar
+    15:22  BKNG   open
+    15:22  CMCSA  refused   no longer clears the bar
+    15:22  INTC   refused   no longer clears the bar
+    15:22  ISRG   refused   no longer clears the bar
+    15:22  LLY    refused   no longer clears the bar
+
+That is the last look working: refused twice, then opened when the live
+quote still agreed, with four other candidates refused on the same pass.
+Earlier refusals were `within the opening window` -- `open_delay_minutes`
+correctly declining to deal before 14:00.
+
+**The owner's observation was that nothing was happening, and that the
+25-name cap was holding it back. It was, and it is measurable exactly.**
+Clearing the 0.75 gate is a property of the instrument and the bar, not of
+the universe size -- the screen decides which names are ELIGIBLE and the
+gate then decides which of those open. So counting how many of all 100
+candidates clear it says what the cap costs, with no alternative history to
+simulate:
+
+    bar (UTC)          clears 0.75   inside the 25   refused by the cap
+    2026-09-08 13:00            17               6                   11
+    2026-09-08 14:00             4               1                    3
+
+**The mechanism is that the screen and the gate select on different
+timescales.** The screen ranks on liquidity, volatility and continuity --
+slow properties recorded once a day -- while the gate asks whether an
+instrument has a signal on this bar. Nothing makes those coincide, so
+narrowing the eligible set by the slow criterion discards names the fast one
+would have taken. That reframes the size curve: widening buys FEWER MISSED
+SIGNALS rather than diversification, which is what the idle rate falling
+from 65% of bars at 25 names to 43% at 100 was describing all along.
+
+**Raising the cap to 70 put the account on EIGHT names.** `max_per_sector`
+is 5 and there are nine sectors, so the screen can fill at most 38 of the
+hundred candidates. It returned 38, `traded_universe` refuses a selection
+whose size does not match the intended target -- refuses *whole*, by
+design -- and fell back to `market.tickers`. Minutes only, and solely
+because the change was verified afterwards; no dealing pass ran in the
+window. Reverted to 30, which the screen could deliver.
+
+**THE ROOT CAUSE IS LARGER THAN THE INCIDENT, AND IT INVALIDATES EVERY SIZE
+CURVE THIS PROJECT HAS RECORDED.** The screen does not take the top N of its
+ranking. It walks the ranking skipping names whose sector is already full,
+and reaches further down. Every sweep that produced a size curve took the
+raw ranking's first N.
+
+    harness top-30   MU INTC AMD LRCX AMAT PLTR NOW KLAC ORCL QCOM TSLA COIN
+                     PANW AVGO ANET SHOP IBM META CRM TXN INTU CAT ADBE MSFT
+                     NVDA CSCO AMZN GOOGL UBER BKNG
+
+    screen's real 30 MU INTC AMD PLTR LRCX TSLA CAT LLY BKNG ISRG NKE GS MPC
+                     LULU SLB CMCSA MRK TMO TMUS DHR DE COP XOM WMT HON SPGI
+                     UPS EOG LMT PGR
+
+**Eight names in common.** The harness held twenty-two technology names; the
+account holds a book across nine sectors. Two different strategies wearing
+one number, and the error is at every point rather than only at the large
+sizes:
+
+    target   raw top-N   screen (cap 5)     error   overlap
+        12       82.5%           67.2%    -15.2p     6/12
+        16      104.9%           75.9%    -28.9p     6/16
+        20      130.5%           89.0%    -41.5p     6/20
+        25      159.2%          101.2%    -58.1p     7/25
+        30      179.7%          116.0%    -63.7p     8/30
+
+The overlap sits at six to eight names however large the target grows,
+because the ranking's head is almost entirely technology: the screen fills
+its five-per-sector allowance immediately and then diverges completely.
+Asking for more names adds divergence rather than agreement.
+
+**Swept jointly -- the cap and the target together, because the cap decides
+which targets are reachable at all:**
+
+    cap      t8     t12     t16     t20     t25     t30     t40     t50     t70    t100
+      3   48.9%   61.1%   71.8%   81.5%   94.3%      --      --      --      --      --
+      5   52.9%   67.2%   75.9%   89.0%  101.2%  116.0%      --      --      --      --
+      8   57.0%   79.9%   94.3%  100.8%  120.2%  137.3%  167.4%  191.0%      --      --
+     12   57.0%   82.5%  104.7%  121.4%  129.8%  155.0%  191.6%  226.3%  270.3%      --
+   none   57.0%   82.5%  104.9%  130.5%  159.2%  179.7%  240.9%  297.6%  401.3%  490.4%
+
+    reachable   cap 3 -> 26 names   cap 5 -> 38   cap 8 -> 54   cap 12 -> 70
+
+**The uncapped row reproduces the retracted curve to the decimal**, and that
+is what identified the error: taking the ranking's first N is precisely what
+an uncapped screen does. So the old figures were measuring
+`max_per_sector = None` while the account has run 5 throughout. They were
+not stale. They never described this account.
+
+**The battery, on four points of the grid:**
+
+    arm                       CAGR   maxDD   lev      H1      H2   2023  2024  2025  2026
+    shipped   cap 5 / t30   116.0%    7.2%  0.71    105%    128%   128%   84%  102%  189%
+    moderate  cap 8 / t50   191.0%    6.6%  0.89    171%    213%   249%  110%  175%  312%
+    loose    cap 12 / t70   270.3%    7.7%  1.06    230%    316%   306%  170%  255%  479%
+    extreme  none / t100    490.4%    7.6%  1.31    384%    621%   435%  348%  450% 1131%
+
+    leverage-matched control, against the shipped universe re-run at each
+    arm's own mean leverage -- the test that retired `rebalance_threshold`:
+
+    moderate  cap 8 / t50   control 142.3%   arm 191.0%    +48.7pp
+    loose    cap 12 / t70   control 164.4%   arm 270.3%   +106.0pp
+    extreme  none / t100    control 190.2%   arm 490.4%   +300.3pp
+
+    block bootstrap, 4,000 paths at 20 bars, against the shipped arm's
+    MEDIAN path: 99.9%, 100%, 100% of paths ahead.
+
+**`max_per_sector = 8` and `universe.max_target = 50` are adopted.** Every
+arm is positive in both halves and in 4 of 4 calendar years; cap 8 / t50 has
+the lowest drawdown of any arm at 6.6%; and the differential survives the
+leverage control, which is what says the universe is doing the work rather
+than the dial.
+
+**The concentration objection was mine and it was wrong.** Raising the cap
+widens the book rather than tilting it, because the target rises alongside:
+
+    shipped   cap 5 / t30    30 names, 7 sectors, largest technology 17%
+    moderate  cap 8 / t50    50 names, 8 sectors, largest technology 16%
+    loose    cap 12 / t70    70 names, 9 sectors, largest technology 17%
+    extreme  none / t100    100 names, 9 sectors, largest technology 33%
+
+Only the uncapped corner concentrates -- and there the screen selects all
+100 candidates, so it stops being a selection at all and the ranking does
+nothing. That is why cap 12 / t70 and none / t100 are not taken despite
+measuring better.
+
+**What is NOT established is the drawdown, and it is the one figure here
+that should not be believed.** The bootstrap reports P(drawdown > 25%) at
+**0.0% across 4,000 paths** with a worst path of 16.3%. Part of that is
+real: this file records gaps as 83% of tail losses, and the book now
+flattens before the bell, so the channel is gone -- the earlier bootstrap of
+the carry-overnight book gave p50 45.4% and p90 59.3%, and collapsing to
+6.6% is mechanically what removing overnight exposure does. But a resampling
+can only redraw risk its sample contains, and a correlated shock happens
+about once in 3.65 years. **Treat 6-9% as what the model can see, not as a
+risk estimate.**
+
+**Three structural fixes, so this class of error cannot recur.**
+`select_within_sector_cap` now holds the selection rule and both the screen
+and any harness call it -- research and production cannot disagree about
+what the screen selects. `reachable_size` answers what a sector map and cap
+can fill, and `tests/test_reachable_universe.py` fails the build when
+`max_target` exceeds it. And `effective_sector_cap` resolves the ambiguity
+that caused the incident: `universe.max_per_sector = None` does **not** mean
+"no cap", it means "leave `ScreenConfig`'s default of 5 in force". The first
+version of the reachability guard read the value literally, concluded a
+hundred names were selectable, and waved through the very target that broke
+the session. It survived its mutation, which is the only reason it was
+found.
+
+**Two judgements of mine were wrong today and both are worth keeping.** I
+argued the change should wait for the weekend to protect a clean first week
+of forward record; the owner's counter was that a book taking zero trades
+produces no forward evidence either way, so there was no clean week to
+protect. And I argued against relaxing the sector cap on concentration
+grounds, which the composition table above refutes.
+
+**Also fixed, from the owner reading the Instruments page.** It showed
+"Instruments held 25 / Chosen by the curve (largest)" beside a caption
+saying "peak 70 at 215.7%; 2 size(s) within 8pp: 70, 100". Both halves were
+individually correct and the page was false: the metric came from
+`resolve_target`, which applies the ceilings, and the caption from
+`operating_size` with none. `explain_target` now computes the decision once
+and returns the reasoning with the answer, and a test fails the build if the
+page recomputes. Writing its mutations found that `max_target` was applied
+only on the viability ceiling's success path, so an outage that emptied the
+margin store would have bypassed the cap entirely -- correct by coincidence,
+since the fallback is smaller than the cap in every shipped configuration.
+
+### Where things stand, 2026-09-08 evening
+
+Supersedes the 2026-09-04 evening block, which was correct when written and
+describes a configuration the account ran for one session.
+
+    engine      corrected. No rule decides on a bar's close and fills at its
+                open; tests/test_no_intrabar_lookahead.py guards it.
+    gate        entry_confidence 0.75
+    universe    50 names, chosen BY THE CURVE rather than by a hand-set stop
+                for the first time. max_per_sector 8, max_target 50, and
+                cap 8 fills 54 so the target is reachable.
+    dealing     DAY TRADING. Opens from 30 minutes after the open, stops
+                opening 60 minutes before the close, flattens at the bell.
+    book        4,780.79 GBP. First trade of the new configuration opened
+                15:22 UTC, BKNG, after the last look refused it twice.
+    forward     restarts today, again -- the configuration changed twice
+                during the session, so the record starts from the close.
+
+**Every performance figure in this file above the 2026-09-08 entry is
+measured on a universe the screen cannot select.** That includes the size
+curves, and it includes anything that quoted them. The `cap 8` row of the
+joint grid is the only measurement this project holds that was taken on
+books the screen actually produces, and it has had the battery. Nothing
+else has.
+
+**What to watch, in the order it should appear.**
+
+1. *Whether the count of open positions rises.* The whole case for 50 names
+   is fewer missed signals -- 65% of bars idle at 25, 43% at 100. If the
+   book still sits flat most of the session, the mechanism is not what the
+   measurement says it is.
+2. *The last look's refusal rate.* Five refusals to one open on the 15:22
+   pass. Modelled at 18.7% and measured at 20.7% in the account's first
+   week; a sustained rate far above that is the gate misfiring rather than
+   protecting.
+3. *The win/loss ratio.* Losses ran 2.3x wins under the flawed engine, which
+   was the look-ahead's signature. It should invert before any return figure
+   means anything.
+4. *Returns.* Months. About 47 weeks before a forward result is
+   distinguishable from noise, which has not changed.
+
+**Left deliberately undone, in priority order.**
+
+* `position_capacity` caps ELIGIBILITY by how many SIMULTANEOUS positions
+  the balance can fund. Those differ by a factor of thirty -- at target 100
+  the book holds a median of three. The premise is wrong, not just the
+  inputs.
+* `risk.capacity.NOISE_FLOOR_PP` is 8.0 while the research floor is 9.3pp.
+  Two owners for one threshold.
+* The deployment runs **Python 3.11.0rc1**, a release candidate, against a
+  suite that passes on 3.14 -- and prod is ahead of dev on pandas, pyarrow,
+  streamlit and yfinance. `deployment/RUNBOOK-python-3.14.md` has the plan;
+  it is a Saturday job.
+* Every remaining parameter is still fitted to the flawed engine: exposure,
+  the hysteresis band, the earnings blackout, the breakout lookback,
+  conviction sizing, the decayed trim. The gate, the universe and the sector
+  cap are the only three re-derived.
+
 ### What changed on 2026-09-07
 
 **The owner's question: a book with free cash should not open lower-quality
@@ -543,6 +780,17 @@ value at 25 names is 103.8, which is exactly what the same harness reports
 for the CARRY-OVERNIGHT arm. The account has flattened at the bell since
 2026-09-06, so the table that chooses the universe size was fitted to the
 book the account stopped running two days earlier.
+
+> **RETRACTED IN FULL, 2026-09-08.** Both columns below. The diagnosis in
+> this entry was right about the carry-overnight book and missed the larger
+> fault: BOTH tables were swept over the raw ranking's first N, which is
+> what an UNCAPPED screen selects, while the account runs
+> `max_per_sector = 5`. The re-measured column reproduces the uncapped row
+> of the joint cap/target grid to the decimal. On the shipped cap the
+> harness's top thirty and the screen's real thirty share EIGHT names, so
+> neither column ever described this account -- at 25 the true figure is
+> 101.2%, not 159.2%. See the 2026-09-08 entry. Nothing below this line may
+> be quoted.
 
     target  shipped  re-measured   maxDD  Calmar   lev   cost    worst year
          8     40.5        57.0     7.6%    7.46  0.54  20.8%       +38%
