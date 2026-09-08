@@ -1394,6 +1394,35 @@ VZ = "telecom"
 # 12 span 8.5pp and are not separable, while 6 and 16 clearly are. The
 # operating size is a band, not a peak.
 [universe.size_curve]
+# ============================================================================
+# RETRACTED IN FULL, 2026-09-08. EVERY VALUE BELOW DESCRIBES A UNIVERSE THE
+# SCREEN CANNOT SELECT. Do not quote any of them.
+#
+# The screen does not take the top N of its ranking. It walks the ranking
+# skipping names whose sector is already full and reaches further down. Every
+# sweep that produced this table took the raw ranking's first N instead.
+#
+# Measured on the day: the harness's top thirty and the screen's real thirty
+# shared EIGHT NAMES. The harness held twenty-two technology names; the
+# account holds a book across nine sectors. Two different strategies wearing
+# one number, and the error is not confined to the large sizes -- it is at
+# every point, 25 included.
+#
+# So this is not "the figures are stale". It is that they were never
+# measuring this account. `select_within_sector_cap` now holds the rule and
+# both the screen and any harness must call it.
+#
+# THE VALUES ARE LEFT IN PLACE DELIBERATELY, and that is uncomfortable.
+# `resolve_target` reads this table live, so emptying it would drop the
+# universe to the traded count mid-session -- the same failure that put the
+# account on eight names this morning, arriving from the other direction.
+# They are wrong, they are load-bearing, and the replacement is being
+# measured. Nothing may be inferred from them meanwhile except the number of
+# names the book happens to hold.
+# ============================================================================
+#
+# Superseded history, kept because the same sweeps will otherwise be re-run
+# and the same numbers believed:
 # RE-MEASURED 2026-09-07 on the DAY-TRADING configuration.
 #
 # SUPERSEDED: the 2026-09-04 curve (40.5 / 48.4 / 54.5 / 70.8 / 93.1 / 103.8

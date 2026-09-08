@@ -216,7 +216,20 @@ JUSTIFICATIONS: tuple[Justification, ...] = (
                "70": 401.3, "100": 490.4},
         feed=CURRENT_FEED,
         cost_model=CURRENT_COST_MODEL,
-        source="scratchpad/curve.py: the screen target swept through the "
+        source="**RETRACTED 2026-09-08 -- MEASURED ON A UNIVERSE THE "
+               "SCREEN CANNOT SELECT.** The sweep took the raw ranking's "
+               "first N; the screen walks the ranking skipping names whose "
+               "sector is full and reaches further down. On the day this was "
+               "found the harness's top thirty and the screen's real thirty "
+               "shared EIGHT names -- twenty-two technology names against a "
+               "book across nine sectors. The error is at every point, 25 "
+               "included, so this is not a stale figure but one that never "
+               "described this account. The values remain configured because "
+               "resolve_target reads them live and emptying the table would "
+               "drop the universe mid-session; a replacement is being "
+               "measured through select_within_sector_cap, which both the "
+               "screen and any harness must now call. SUPERSEDED SOURCE: "
+               "scratchpad/curve.py: the screen target swept through the "
                "corrected engine on the DAY-TRADING configuration -- "
                "entry_confidence 0.75, flatten at the bell, no opens in the "
                "last hour, entry_recheck on -- screen-gated, measured "
