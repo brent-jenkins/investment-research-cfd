@@ -726,22 +726,55 @@ max_leverage = 3.5
 # two copies of a limit begin to drift.
 max_instrument_concentration = 0.20
 
-# Minutes after the bell before a *new* position may be taken. Closes and
-# resizes are never delayed -- being unable to leave is a worse failure than
-# entering badly.
+# **SET TO 0 on 2026-09-09.** The delay costs about 58 percentage points a
+# year and the reason it was set is a cost argument the cost model already
+# charges.
 #
-# Measured on Capital's own bars: the opening hour's median spread is 9.26bp
-# against 7.14bp in the core session, 1.22x, and 28.89bp on INTC. Against an
-# edge that breaks even near 6bp of friction, the auction gives away a fifth
-# of the budget before the position has done anything.
+# Measured through the engine on cap 8 / target 50 -- the only universe this
+# project has ever measured correctly -- with per-bar spreads applied, so the
+# opening auction's premium is PAID in every figure below:
 #
-# Asked of the market calendar -- "was this market also open thirty minutes
-# ago" -- rather than computed from a session start, so daylight saving,
-# holidays and per-instrument sessions are handled by the thing that already
-# knows about them. The calendar covers the regular session only: it reports
-# nothing open at 13:29 UTC and everything open at 13:31, so pre-market
-# cannot answer the question early.
-open_delay_minutes = 30
+#     open  close     CAGR   maxDD  Calmar  trades   lev    cost
+#        0      0   262.7%   13.5%   19.52   2,645  0.90   37.3%
+#        0     60   250.3%   11.9%   21.01   2,506  0.90   34.8%   <- shipped
+#        0    120   230.7%   11.8%   19.52   2,284  0.88   34.3%
+#       30      0   204.0%    9.4%   21.62   2,340  0.88   38.7%
+#       30     60   191.0%    6.6%   28.87   2,119  0.89   34.9%   <- was
+#       30    120   174.4%    7.1%   24.67   1,890  0.86   33.9%
+#
+# +59.2pp at close 60, +58.7pp at close 0, +56.3pp at close 120 -- consistent
+# whatever the other end does, and six times the 9.3pp floor. Positive in
+# both halves and in 4 of 4 years.
+#
+# **It is not bought with exposure.** Mean leverage is 0.90 against 0.89, so
+# the leverage-matched control that retired `rebalance_threshold` has nothing
+# to bite on. And the cost share is 34.8% against 34.9%: the opening hour IS
+# dearer to trade, and the trades it yields carry that cost without moving
+# the ratio.
+#
+# RETRACTED, the old justification: "the opening hour's median spread is
+# 9.26bp against 7.14bp in the core session, 1.22x, and 28.89bp on INTC.
+# Against an edge that breaks even near 6bp of friction, the auction gives
+# away a fifth of the budget before the position has done anything." Every
+# word of that spread measurement still stands. What does not follow is the
+# conclusion: the engine charges those spreads and taking the bar still wins.
+# A cost being real is not the same as it being decisive.
+#
+# ALSO RETRACTED: the +19.5pp recorded on 2026-09-01 for modelling this
+# delay. It was measured on the flawed engine AND on the raw-ranking
+# universe, so it is doubly superseded, and there is now no surviving
+# evidence in favour of a delay at all.
+#
+# WHAT IT COSTS: drawdown 6.6% to 11.9% and Calmar 28.87 to 21.01. The old
+# setting had the best risk-adjusted return of the six arms. This is a
+# risk-appetite decision the owner took on 2026-09-09, not a measurement
+# saying one is right -- and it was prompted by the live case that morning,
+# where BKNG fell 3.0% in the opening hour at confidence 1.000 and the delay
+# refused it. What is NOT yet done is the block bootstrap.
+#
+# Closes and resizes were never delayed and still are not -- being unable to
+# leave is a worse failure than entering badly.
+open_delay_minutes = 0
 
 # The most positions that may be opened in a single pass.
 #

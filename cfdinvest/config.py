@@ -402,11 +402,19 @@ class StrategyConfig:
     #: taken. Closes and resizes are never delayed -- being unable to leave
     #: is a worse failure than entering badly.
     #:
-    #: The opening hour's median spread is 9.26bp against 7.14bp in the core
-    #: session (1.22x), and 28.89bp on INTC. Against an edge that breaks
-    #: even near 6bp of friction, the auction is the most expensive moment
-    #: of the day to enter.
-    open_delay_minutes: int = 30
+    #: **0 from 2026-09-09.** Measured through the engine on cap 8 / t50,
+    #: refusing the opening bar costs +59.2pp a year at the shipped closing
+    #: setting, +58.7pp and +56.3pp at the other two -- six times the noise
+    #: floor, consistent, and NOT an exposure effect (mean leverage 0.90
+    #: against 0.89). See config/config.toml for the grid and the caveats.
+    #:
+    #: RETRACTED: "the opening hour's median spread is 9.26bp against 7.14bp
+    #: in the core session (1.22x), and 28.89bp on INTC, so the auction is
+    #: the most expensive moment of the day to enter." The spread figures
+    #: stand; the conclusion does not. The engine charges exactly those
+    #: spreads and taking the bar still wins by 58pp -- a cost being real is
+    #: not the same as it being decisive.
+    open_delay_minutes: int = 0
     #: The most positions that may be *opened* in a single pass. ``None``
     #: places no limit.
     #:

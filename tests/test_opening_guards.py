@@ -117,11 +117,19 @@ def test_the_window_closes_after_the_configured_delay():
     from cfdinvest.config import load_config
     from cfdinvest.schedule.market_calendar import describe
 
-    settings = load_config()
-    delay = settings.strategy.open_delay_minutes
-    assert delay > 0, "the opening delay is switched off"
+    """The calendar mechanism, tested across delays rather than at whatever
+    the shipped one happens to be.
 
+    This asserted ``delay > 0`` and broke on 2026-09-09 when the delay was
+    measured to cost 58 percentage points and set to zero. The mechanism was
+    fine; the test was pinned to a configured value, which is the
+    test-the-constant failure this project's own rules name. What matters is
+    that the calendar answers "was this market also open N minutes ago"
+    correctly for ANY N, including zero.
+    """
+    settings = load_config()
     tickers = list(settings.market.tickers)
+    delay = 30                       # explicit, not the shipped value
 
     def allowed(at):
         now = describe(tickers, at)["is_open"]
@@ -134,6 +142,16 @@ def test_the_window_closes_after_the_configured_delay():
     assert allowed(open_at + pd.Timedelta(minutes=1)) == 0
     assert allowed(open_at + pd.Timedelta(minutes=delay - 1)) == 0
     assert allowed(open_at + pd.Timedelta(minutes=delay + 1)) == len(tickers)
+
+    # And zero, which is what ships from 2026-09-09. A delay of nothing must
+    # permit dealing from the first minute -- not be read as falsy and
+    # silently disable the whole check, and not accidentally refuse
+    # everything. The dealing path spells this `settled = describe(...) if
+    # delay else None`, so the branch is real and worth an assertion.
+    delay = 0
+    assert allowed(open_at + pd.Timedelta(minutes=1)) == len(tickers), (
+        "a zero delay must allow dealing from the open"
+    )
 
 
 def test_a_cold_start_does_not_open_the_whole_book_at_once():
@@ -213,7 +231,11 @@ def test_both_settings_reach_the_bridge():
     from cfdinvest.schedule import app
 
     settings = load_config()
-    assert settings.strategy.open_delay_minutes > 0
+    # Configured and handed over -- NOT "switched on". Asserting a positive
+    # delay tested the shipped value rather than the seam, and zero is a
+    # legitimate setting from 2026-09-09.
+    assert isinstance(settings.strategy.open_delay_minutes, int)
+    assert settings.strategy.open_delay_minutes >= 0
     assert settings.strategy.max_opens_per_pass is not None
 
     source = inspect.getsource(app._command_trade_capital)
