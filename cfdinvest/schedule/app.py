@@ -617,9 +617,25 @@ def _with_screen_pool(tickers, app_config) -> list[str]:
 #: ``overnight_profit_take`` banks a position whose gain clears a threshold on
 #: the last bar of a session, so a threshold below any reachable loss closes
 #: every position -- which is what the bridge's ``flatten_before_close`` does
-#: live. A sentinel rather than a second code path, so there is one
-#: implementation of the session-end close and the backtest cannot drift from
-#: the account.
+#: live.
+#:
+#: **Kept, and deliberately NOT wired into `_execution_config`.** Wiring it
+#: on 2026-09-08 stopped the account dealing for a whole session, and the
+#: reason is worth stating precisely because the rule itself is correct.
+#:
+#: The engine derives "session end" from the DATA -- the last stamp of each
+#: calendar day. In a backtest that is exactly right: the final bar of a
+#: completed day really is the close. On a live run the newest bar is also
+#: the last stamp of today, so the engine flattened THE BAR IT WAS CURRENTLY
+#: DECIDING ON, every pass. `persist.intent` reads `positions.iloc[-1]`, so
+#: the daemon's intent became "hold nothing" permanently. Measured on the
+#: same data at the same moment: flatten wired, 0 positions on the last bar;
+#: flatten off, 6.
+#:
+#: Research may still pass it explicitly -- the day-trading measurements do,
+#: and must, because the account genuinely flattens. What it may not do is
+#: reach the config that generates live intents, until the research run and
+#: the intent generator stop sharing one.
 FLATTEN_AT_SESSION_END = -10_000.0
 
 
@@ -686,17 +702,6 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
             open_delay_minutes=getattr(strategy, "open_delay_minutes", 0),
             # And the closing window, for the same reason.
             close_delay_minutes=getattr(strategy, "close_delay_minutes", 0),
-            # The account flattens before the bell; the engine must model it.
-            # Unwired until 2026-09-08, so every scheduled run described a
-            # book carrying overnight on an engine whose time stop cannot
-            # fire before the close -- worth 274 percentage points, measured.
-            # Closing an already-flat book is idempotent, so this cannot
-            # double-apply against the bridge's own flatten, which is what
-            # keeps `entry_recheck` deliberately unwired and this one not.
-            overnight_profit_take=(
-                FLATTEN_AT_SESSION_END
-                if getattr(strategy, "flatten_before_close", False) else None
-            ),
             # And every remaining GATE, for the same reason again. Until
             # 2026-09-08 this fallback dropped the entry confidence, the
             # exposure and the rebalance threshold, so a run taken when the
@@ -778,13 +783,6 @@ def _execution_config(tickers, strategy=None, config=None, account=None):
         # And the same window at the other end, so they agree about when it
         # stops. Both are facts about the bar being dealt on.
         close_delay_minutes=getattr(strategy, "close_delay_minutes", 0),
-        # See the fallback construction above: both carry it, or the one
-        # taken when the broker table cannot be read models a different
-        # strategy exactly when something else has already gone wrong.
-        overnight_profit_take=(
-            FLATTEN_AT_SESSION_END
-            if getattr(strategy, "flatten_before_close", False) else None
-        ),
         # The margin ceiling. Unwired until 2026-09-08: the bridge refuses
         # an open that would breach it and the engine had the field but was
         # never handed the value, so turning the setting on would have made

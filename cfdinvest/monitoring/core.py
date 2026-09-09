@@ -1227,8 +1227,11 @@ def check_pipeline_anomalies(
                     "on every open and which was worth 274 percentage "
                     "points when measured on 2026-09-08 -- so a large "
                     "simulated drawdown is the expected reading rather than "
-                    "a signal. The close-of-session flatten IS modelled "
-                    "from that date. A run that does not model the dealing "
+                    "a signal. Nor does it apply the close-of-session "
+                    "flatten -- briefly wired on 2026-09-08 and unwired the "
+                    "next day, because the engine reads 'session end' from "
+                    "the data and so flattened the live bar it was deciding "
+                    "on. A run that does not model the dealing "
                     "path cannot tell you the account is in trouble; the "
                     "broker balance can."
                 ),

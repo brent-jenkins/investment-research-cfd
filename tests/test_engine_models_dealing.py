@@ -68,7 +68,6 @@ MODELLED_BY = {
     "exposure_per_unit_size": "exposure_per_unit_size",
     "limits": "concentration",
     "max_margin_usage": "max_margin_usage",
-    "flatten_before_close": "overnight_profit_take",
 }
 
 #: Gates whose engine field exists and is DELIBERATELY not populated by
@@ -82,6 +81,18 @@ MODELLED_BY = {
 #: drawdown and reported the ACCOUNT wiped out, while the account was up
 #: 0.94% on the day.
 NOT_WIRED = {
+    "flatten_before_close": (
+        "the engine models it as `overnight_profit_take` and research passes "
+        "it explicitly, but it may not reach the config that generates live "
+        "intents. The engine derives 'session end' from the DATA -- the last "
+        "stamp of each calendar day -- which is right in a backtest and "
+        "wrong on the final, in-progress day: the newest bar is also today's "
+        "last stamp, so the engine flattens the bar it is deciding on and "
+        "`persist.intent` reads that flattened bar. Wired on 2026-09-08 and "
+        "unwired on 2026-09-09 after it stopped the account dealing for a "
+        "session. Measured on one moment's data: wired, 0 positions on the "
+        "last bar; unwired, 6."
+    ),
     "recheck": (
         "the bridge applies the last look against a live broker quote. "
         "Wiring the engine's version into the live path would filter twice "
@@ -136,7 +147,6 @@ NOT_A_GATE = {
 #: first -- unset in config and unset in the engine, consistently off.
 #: ``flatten_before_close`` was the second, and cost a day.
 SETTING_FOR = {
-    "flatten_before_close": "flatten_before_close",
     "max_margin_usage": "max_margin_usage",
     "open_allowed": "open_delay_minutes",
     "entry_confidence": "entry_confidence",
@@ -286,7 +296,6 @@ def test_the_unwired_exemptions_carry_a_reason():
 #: A value that switches each gate ON, for the positive wiring test. Chosen to
 #: differ from the ExecutionConfig default so "the field moved" is unambiguous.
 SWITCHED_ON = {
-    "flatten_before_close": True,
     "max_margin_usage": 0.5,
     "open_delay_minutes": 45,
     "entry_confidence": 0.9,
