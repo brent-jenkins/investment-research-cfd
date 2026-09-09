@@ -43,6 +43,10 @@ TYPE_LABELS: dict[str, str] = {
     "pipeline": "Pipeline output",
     "system": "The machine",
     "credentials": "Broker credentials",
+    # Not "is the daemon running" -- "is the account being looked at". The
+    # two came apart on 2026-09-09 for 45 minutes of an open session while
+    # every other label here reported fine.
+    "dealing": "Dealing liveness",
     # The only entry here that is not a fault. It says the book is worth
     # looking at while everything is working exactly as built, so it reads
     # as a question rather than an alarm.

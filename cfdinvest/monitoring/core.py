@@ -98,6 +98,11 @@ TYPES: tuple[str, ...] = (
     "livequotes",
     "lake", "scheduler", "disk", "run", "confirm", "email", "pipeline", "system",
     "credentials",
+    # The daemon being ALIVE and the account being LOOKED AT are different
+    # facts, and until 2026-09-09 only the first was checked. A cgroup
+    # memory throttle stalled the daemon for 45 minutes of an open session
+    # while the unit stayed `active` and every existing type reported fine.
+    "dealing",
     # Not an operational fault. Every other type here says something is
     # broken; this one says the book is worth a human look while everything
     # is working exactly as built. Kept separate so it can never be read as
@@ -178,6 +183,17 @@ class MonitoringThresholds:
     #: both. Four trading hours is roughly sixteen missed ticks.
     scheduler_stale_hours: float = 4.0
     missed_run_grace_minutes: float = 90.0
+    #: How long the account may go unexamined DURING AN OPEN SESSION before
+    #: it is a fault. Dealing passes run every 15 minutes, so 45 is three
+    #: missed passes -- long enough that a slow pipeline or a restart does
+    #: not cry wolf, short enough to catch a stall inside one session.
+    #:
+    #: Sized by the failure it exists to catch: on 2026-09-09 the daemon sat
+    #: in cgroup memory throttling for 45 minutes of an open session. It was
+    #: `active`, its process was alive, `Restart=always` never fired and the
+    #: watchdog timer saw a healthy unit -- so every existing check reported
+    #: fine while the account was not being looked at.
+    dealing_stale_minutes: float = 45.0
     disk_free_gb: float = 1.0
     disk_free_fraction: float = 0.05
     disk_warning_multiple: float = 5.0
@@ -1241,6 +1257,110 @@ def check_pipeline_anomalies(
 # --------------------------------------------------------------------------- #
 # The machine
 # --------------------------------------------------------------------------- #
+def check_dealing_liveness(
+    last_dealing_at: Any,
+    market_open: bool | None,
+    thresholds: MonitoringThresholds | None = None,
+    *,
+    now: pd.Timestamp | None = None,
+) -> list[MonitoringIssue]:
+    """Is the account actually being looked at, or merely supervised?
+
+    Every other check here asks whether a component is *present*. This one
+    asks whether it is *working*, and the distinction is the whole reason it
+    exists.
+
+    On 2026-09-09 the daemon exceeded its cgroup ``MemoryHigh`` by one
+    megabyte. The kernel's response to ``memory.high`` is to sleep the task
+    on every allocation, proportional to the overage, so it was throttled
+    39,932 times and stopped finishing anything. It never reached
+    ``MemoryMax``, so it was never killed: the process stayed alive, the unit
+    stayed ``active``, ``Restart=always`` never fired, ``cfdinvest.timer``
+    saw a healthy service, and the monitoring snapshot reported fine. The
+    account went 45 minutes of an open session without a single dealing pass
+    and nothing anywhere said so.
+
+    ``last_dealing_at`` is the newest margin-usage reading, which the dealing
+    path writes on every pass -- so it records that the account was examined,
+    not merely that a process was running. A pass that examines the book and
+    correctly does nothing still writes one, which is what makes it a
+    liveness signal rather than an activity signal.
+
+    Silent when the market is closed, because not dealing is then correct.
+    **An unknown calendar is reported rather than assumed either way**: "we
+    could not tell whether the market was open" is a different statement from
+    "the market was shut", and only one of them is reassuring.
+    """
+    limits = thresholds or DEFAULTS
+    moment = _now(now)
+
+    if market_open is None:
+        return [_unreadable(
+            "dealing", "Dealing liveness",
+            "the market calendar could not be read, so a quiet daemon cannot "
+            "be told from a shut exchange",
+        )]
+    if not market_open:
+        return []
+
+    stamp = _utc(last_dealing_at)
+    if stamp is None:
+        return [
+            MonitoringIssue(
+                type="dealing",
+                # A WARNING, not critical, and the distinction is the same
+                # one check_scheduler_health draws about a first run: never
+                # having dealt is what a fresh install looks like, and a
+                # check that cries critical on every new deployment is one
+                # people learn to skip. Having dealt and then STOPPED is the
+                # fault, and that is the branch below.
+                severity="warning",
+                message=(
+                    "The market is open and no dealing pass has ever been "
+                    "recorded."
+                ),
+                timestamp=moment,
+                details={"last_dealing_at": None},
+                remedy=(
+                    "Expected on a fresh install, before the first dealing "
+                    "pass. If the deployment is not fresh, the daemon is not "
+                    "reaching the account -- check that cfdinvest.service is "
+                    "running and that the broker credentials resolve."
+                ),
+            )
+        ]
+
+    age = (moment - stamp).total_seconds() / 60.0
+    if age <= limits.dealing_stale_minutes:
+        return []
+
+    return [
+        MonitoringIssue(
+            type="dealing",
+            severity="critical",
+            message=(
+                f"The market is open and the account has not been examined "
+                f"for {age:.0f} minutes."
+            ),
+            timestamp=moment,
+            details={
+                "last_dealing_at": str(stamp),
+                "age_minutes": round(age, 1),
+                "threshold_minutes": limits.dealing_stale_minutes,
+            },
+            remedy=(
+                "Dealing passes run every 15 minutes while a market is open, "
+                "so this is at least three missed. The service being "
+                "`active` does not settle it -- a daemon throttled by its "
+                "cgroup memory limit stays alive and stops working, which is "
+                "what happened on 2026-09-09. Check "
+                "`systemctl show cfdinvest -p MemoryCurrent` against "
+                "MemoryHigh, and `memory.events` for a rising `high` count."
+            ),
+        )
+    ]
+
+
 def check_system_resources(
     cpu: float | None = None,
     memory: float | None = None,

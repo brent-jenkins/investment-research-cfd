@@ -203,8 +203,58 @@ def collect_issues(
         run_metadata, execution_metadata, limits, now=moment))
     issues += _guarded("system", "system resource", lambda: core.check_system_resources(
         machine.get("cpu_percent"), machine.get("memory_percent"), limits, now=moment))
+    # Last, and the only check that asks whether the thing WORKS rather than
+    # whether it exists. Everything above can report clean while the account
+    # goes unexamined for an entire session -- which is precisely what
+    # happened on 2026-09-09.
+    issues += _guarded("dealing", "dealing liveness",
+                       lambda: core.check_dealing_liveness(
+                           _last_dealing_at(config, account),
+                           _market_open(config, account, moment),
+                           limits, now=moment))
 
     return issues, machine
+
+
+def _last_dealing_at(config, account=None):
+    """When the dealing path last examined the account, or ``None``.
+
+    Read from ``persist.margin``, which writes a usage row on every dealing
+    pass -- including a pass that looks at the book and correctly does
+    nothing. That is what makes it a liveness signal: it records that the
+    account was EXAMINED, not that an order was placed.
+
+    ``None`` on any failure, which the check reports as "never recorded"
+    rather than treating as fresh.
+    """
+    try:
+        from cfdinvest.persist import margin as margin_store
+
+        rows = [
+            row for row in margin_store.load_margin(config, account)
+            if str(row.get("kind") or "") == "usage" and row.get("at")
+        ]
+        return rows[-1]["at"] if rows else None
+    except Exception:  # noqa: BLE001 - absence is not an outage
+        return None
+
+
+def _market_open(config, account=None, now=None):
+    """Whether any traded instrument is dealing, or ``None`` if unknown.
+
+    Deliberately three-valued. The daemon treats an unreadable calendar as
+    CLOSED, because trading on a guess is worse than pausing; monitoring must
+    treat it as UNKNOWN, because "the market was shut" and "we could not tell"
+    are different statements and only one of them excuses a silent daemon.
+    """
+    try:
+        from cfdinvest.schedule import scheduler as scheduler_module
+        from cfdinvest.universe.traded import traded_universe
+
+        names = list(traded_universe(config, account).names)
+        return bool(scheduler_module.any_open(names, now))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def run_monitoring(
