@@ -880,9 +880,54 @@ def _transport(args):
     return None                              # notify falls back to SMTP
 
 
+#: The scheduled run generates LIVE INTENTS, so it decides on the newest bar
+#: rather than the one before it.
+#:
+#: ``execution_lag = 1`` is correct in a backtest and wrong here, and the
+#: difference is not a detail. In a backtest, deciding on bar N's close and
+#: filling at bar N's open reads the future. Live at 13:36 you know the 13:36
+#: price and you deal at 13:36 -- there is no future in it. The lag is a
+#: simulation device that had leaked into the dealing path.
+#:
+#: What it cost, on 2026-09-10. ``persist.intent`` reads
+#: ``positions.iloc[-1]``, which carries the lag, so the account dealt on the
+#: PREVIOUS bar's decision. Across the overnight gap that is yesterday's
+#: 19:00 bar -- eighteen hours and one gap old:
+#:
+#:     UI showed (13:00 bar)   COP CVX BLK GM ABT HD HON
+#:     engine intended         AXP BKNG BLK CMCSA TGT     <- 2026-09-09 19:00
+#:
+#: One name in common, by coincidence. TGT's confidence had halved overnight,
+#: 0.798 to 0.463, and it was the one that opened. The owner's design was
+#: always that the proposed trades are the ones on the page, with the last
+#: look as a check that they still stand -- not as the only thing between an
+#: eighteen-hour-old signal and the account.
+#:
+#: It was invisible while the book carried positions overnight, because
+#: yesterday's view and today's holding were then the same thing. Day trading
+#: flattens nightly, so every morning now rebuilds from flat.
+#:
+#: **Research keeps the lag.** ``_backtest_config`` is untouched and every
+#: sweep, battery and recorded figure still runs at 1. Only this run -- the
+#: one whose output is read for intents -- drops it, which is why the two
+#: cannot be the same config. That shared config has now cost three sessions:
+#: the last look, the flatten, and this.
+#:
+#: The run's own metrics become look-ahead and must not be quoted. They
+#: already could not be: it models neither the last look nor the
+#: close-of-session flatten, and monitoring's own alert says so by name.
+INTENT_EXECUTION_LAG = 0
+
+
 def _command_run_once(args, app_config, smtp, transport) -> int:
     """Run the pipeline once, notify, and return an exit code."""
     backtest = _backtest_config(args, app_config)
+    backtest = dataclasses.replace(
+        backtest,
+        execution=dataclasses.replace(
+            backtest.execution, execution_lag=INTENT_EXECUTION_LAG
+        ),
+    )
     universe = backtest.tickers or []
 
     now = pd.Timestamp.now(tz="UTC")

@@ -55,7 +55,45 @@ from typing import Any, Mapping, Sequence
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["reevaluate", "ProvisionalRepository"]
+__all__ = [
+    "MIN_SESSION_MINUTES",
+    "reevaluate",
+    "ProvisionalRepository",
+]
+
+
+#: How much trading a session must have seen before the last look's opinion
+#: is worth having, in minutes.
+#:
+#: The check extends the lake with a PROVISIONAL bar built from one quote:
+#: ``open``, ``high``, ``low`` and ``close`` all the same number, so its range
+#: is zero by construction. Mid-session that sits behind well-formed bars and
+#: costs little -- measured on 2026-09-09 at 52 minutes into a bar, the live
+#: reading and the engine's agreed to three decimals on five of six names.
+#:
+#: **At the open it inverts.** On 2026-09-10, six minutes after the bell:
+#:
+#:     name   engine 13:00 bar   live last look   outcome
+#:     TGT           0.463          >= 0.75       OPENED, lost money
+#:     BLK           0.806           < 0.75       refused
+#:
+#: Wrong in both directions on one pass. The cause is not the provisional bar
+#: alone -- it is that the bar BEHIND it held six minutes of trading, so every
+#: range-based input was reading noise. The engine's own bar was equally young
+#: and disagreed with the live one because the two are built differently.
+#:
+#: So below this threshold the check declines rather than answering. That is
+#: the house rule applied where it was missing: an uncomputable reading caps
+#: the verdict, and "not checked" is not "passed". ``holds`` already refuses
+#: an instrument it has no reading for, so declining here fails closed with no
+#: new vocabulary.
+#:
+#: **30 is provisional and NOT measured.** It is the value ``open_delay_
+#: minutes`` used to carry, which kept dealing out of this window by accident
+#: while being justified on spreads. The honest threshold is where the live
+#: reading and the engine's stop diverging, and that is measurable from the
+#: 5-minute lake -- not yet done. Until it is, this errs long.
+MIN_SESSION_MINUTES = 30.0
 
 
 class ProvisionalRepository:
@@ -124,6 +162,41 @@ class ProvisionalRepository:
         extended = pd.concat([working, pd.DataFrame(rows)], ignore_index=True)
         extended = extended.sort_values([stamp_column, ticker_column])
         return extended.set_index(list(frame.index.names)) if frame.index.names[0] else extended
+
+
+def _too_early(tickers, moment, settings) -> set[str]:
+    """Instruments whose session is too young for the check to mean anything.
+
+    Returns the set to DECLINE. An unreadable calendar declines everything:
+    not being able to tell how long a market has been open is not a reason to
+    trust a reading that depends on it, and the alternative -- assume mature
+    -- is the inert-gate failure this project keeps finding.
+    """
+    import pandas as pd
+
+    from cfdinvest.schedule.market_calendar import describe
+
+    names = [str(t) for t in tickers]
+    try:
+        now = describe(names, moment)["is_open"]
+        before = describe(
+            names, pd.Timestamp(moment) - pd.Timedelta(minutes=MIN_SESSION_MINUTES)
+        )["is_open"]
+    except Exception as error:  # noqa: BLE001 - a check that cannot run refuses
+        logger.warning(
+            "Last look cannot read the calendar (%s); declining every "
+            "instrument rather than assuming the session is mature", error
+        )
+        return set(names)
+
+    # Open now but NOT open MIN_SESSION_MINUTES ago means the session started
+    # inside the window. Asked of the calendar rather than computed from a
+    # session start, for the same reason the dealing path does: holidays,
+    # half days and per-instrument sessions are already handled there.
+    return {
+        t for t in names
+        if bool(now.get(t, False)) and not bool(before.get(t, False))
+    }
 
 
 def reevaluate(
@@ -201,9 +274,27 @@ def reevaluate(
             return {}
 
         stamp = direction.index.max()
+
+        # How long each market has been trading. Below MIN_SESSION_MINUTES the
+        # provisional bar sits behind a stub rather than a bar, and the
+        # reading is not worth having -- so none is returned and `holds`
+        # refuses the instrument as "not re-checked".
+        #
+        # Asked per instrument rather than once, because the universe spans
+        # sessions: a name that opened an hour ago is checkable while one that
+        # opened five minutes ago is not, and a single answer for the book
+        # would be wrong for whichever half it did not describe.
+        immature = _too_early(wanted, moment, settings)
+        if immature:
+            logger.info(
+                "Last look declines %d instrument(s), under %.0f minutes into "
+                "the session: %s",
+                len(immature), MIN_SESSION_MINUTES, ", ".join(sorted(immature)),
+            )
+
         out: dict[str, dict[str, Any]] = {}
         for ticker in wanted:
-            if ticker not in direction.columns:
+            if ticker not in direction.columns or ticker in immature:
                 continue
             out[ticker] = {
                 "direction": str(direction.at[stamp, ticker]),
