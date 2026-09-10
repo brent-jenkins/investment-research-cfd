@@ -629,6 +629,57 @@ four names that cleared the gate at 13:00 and were missed, the two that
 were taken moved BETTER -- +1.18% against +0.35% held from 13:00. The fault
 was holding period and sizing, not choice of name.
 
+**AND THE HALT BLOCKED THE CLOSE THAT WOULD HAVE FIXED IT.** The third
+consequence of the same root cause, an hour after the first two, and the
+one that says something about the design rather than about a bug.
+
+At 19:22 the bridge halted on `unexplained: SPGI` -- a position in the
+account and not in the record. It was right that they disagreed. The reason
+is the same collapse: the flatten at 19:01 wrote ONE close row, `open_
+orders` is keyed by epic, and that row removed the instrument from the
+record while two legs were still open. Record flat, account not.
+
+**`plan_orders` halts before it plans**, so no intent of any kind is
+produced -- including the close. The `_other_legs` fix deployed at 19:05
+would have flattened both legs and never got the chance to run. A guard
+against acting on a misunderstood account prevented the one action that
+reduces exposure, thirty minutes before the bell, in the configuration
+whose whole purpose is to be flat overnight.
+
+**This project already knows the answer and applies it elsewhere.** The
+margin guard refuses opens and never refuses closes, for a reason written
+into `plan_orders`: "a book short of margin is exactly the one that most
+needs to reduce". A book the app does not understand is exactly the one
+that most needs to be reducible. The reconciliation halt should stop
+OPENING and let closing through -- the halt's own message already says
+"Existing positions were left alone. Nothing was closed", which reads as
+reassurance and is the defect.
+
+Not changed tonight. It is a change to the one guard standing between a
+misread account and a series of wrong orders, and it goes in with tests and
+a measured look at what a halt should permit, not at 19:50 with the market
+closing.
+
+**How it was resolved, on the owner's decision.** The record was corrected
+to match the account rather than the position closed by hand: every value
+read from the broker -- size, direction, level, deal id -- one row per leg,
+so nothing was averaged and no price that never traded was written. That
+cleared the halt and let the app do its own closing, which is what the
+owner has asked for throughout.
+
+`record_departure` exists for the other direction and this is its mirror.
+That the mirror had to be improvised at the console is itself the finding:
+the record can be behind the account in both directions, and only one of
+them had a way back.
+
+**THE ROOT CAUSE, STATED ONCE.** The record models ONE POSITION PER
+INSTRUMENT. Capital models one position per order, merging only opposing
+trades. Every guard built on the record inherits that mismatch, and today
+it produced three separate failures in six hours: a concentration cap that
+measured a third of the book, a flatten that closed a third of a position,
+and a halt that blocked its own remedy. Fixing the sizing dict alone would
+close one of the three.
+
 **WHICH BAR DOES THE DEALER DECIDE ON? Asked twice, answered wrongly twice,
 and the second answer was mine.** The owner's read was "TMUS was a bad
 choice, it should never have been chosen". They were right that something
