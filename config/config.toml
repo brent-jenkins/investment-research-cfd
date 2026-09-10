@@ -818,7 +818,44 @@ open_delay_minutes = 0
 flatten_before_close = true
 close_delay_minutes = 60
 
-max_opens_per_pass = 3            # 50% of the balance as margin, not 100%
+# **UNSET on 2026-09-10.** Its justification named two conditions and day
+# trading has falsified both.
+#
+# RETRACTED, the paragraph above: "a cold start would have taken thirteen
+# positions in one pass, at the widest spreads of the day, on a
+# seventeen-hour-old signal. It costs nothing when the book is warm... it
+# only binds on a restart."
+#
+#   * "a seventeen-hour-old signal" described a book that carried overnight
+#     and woke holding yesterday's view. It flattens at the bell now, so a
+#     morning entry is decided on the current bar.
+#   * "it costs nothing when the book is warm" and "it only binds on a
+#     restart" are one claim, and THE BOOK IS NEVER WARM -- it starts cold
+#     every session by design. The case where this was free has stopped
+#     occurring; the case where it binds is now every trading day.
+#   * "at the widest spreads of the day" is the argument that also justified
+#     open_delay_minutes, measured on 2026-09-09 to cost 58 percentage
+#     points. The spread figures were right; the conclusion was not.
+#
+# On 2026-09-09 six names cleared the gate on the opening bar and one on the
+# next. A throttle spreading six opens over two passes puts the last of them
+# fifteen minutes into a decay that fast.
+#
+# WHAT STILL BOUNDS THE BOOK, because this never did. It is a RATE limit,
+# not a SIZE limit: max_leverage 3.5 caps gross, max_instrument_concentration
+# 0.20 caps any one name, size comes from the balance, and the last look
+# adjudicates every open against a live quote. Unsetting it lets the book
+# reach the same bounded state faster, not become larger.
+#
+# NOT MEASURED, AND IT CANNOT BE. The engine expresses this per BAR, and at
+# 12 per bar -- which 3 per fifteen-minute pass permits -- it measured
+# exactly inert, identical on every figure and all 3,219 trades. Unset is
+# equally inert there. The difference lives in live pass-level timing, which
+# an hourly engine cannot express. The owner's judgement, 2026-09-10.
+#
+# Highest conviction first is retained in the bridge for the day this is set
+# again.
+# max_opens_per_pass = 3
 
 # The most of the balance that committed margin may consume, or unset to not
 # check it. OFF, and turning it on changes what the account does.

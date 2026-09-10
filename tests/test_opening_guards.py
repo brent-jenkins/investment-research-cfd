@@ -236,7 +236,12 @@ def test_both_settings_reach_the_bridge():
     # legitimate setting from 2026-09-09.
     assert isinstance(settings.strategy.open_delay_minutes, int)
     assert settings.strategy.open_delay_minutes >= 0
-    assert settings.strategy.max_opens_per_pass is not None
+    # `is not None` was the same test-the-constant mistake as the delay
+    # above: it asserted the throttle was SWITCHED ON, not that it reaches
+    # the bridge. Unset is a legitimate setting from 2026-09-10, and the
+    # seam is what this test is for -- the plumbing assertions below.
+    budget = settings.strategy.max_opens_per_pass
+    assert budget is None or (isinstance(budget, int) and budget > 0), budget
 
     source = inspect.getsource(app._command_trade_capital)
     assert "open_allowed=open_allowed" in source

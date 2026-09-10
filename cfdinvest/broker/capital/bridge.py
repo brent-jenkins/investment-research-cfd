@@ -93,9 +93,34 @@ class BridgeReport:
     unexplained: tuple[str, ...] = ()
     missing: tuple[str, ...] = ()
 
+    #: What the dealing pass places, and in what order.
+    #:
+    #: **Closes first, then resizes, then opens.** The planning stage already
+    #: knows about every intent at once, so this changes nothing about what
+    #: is decided -- only the sequence in which the account is moved, and
+    #: that sequence matters at the broker.
+    #:
+    #: A close frees margin; an open commits it. Placed in build order --
+    #: roughly ticker order -- an open could be sent before a close that
+    #: would have funded it, and Capital would reject it for margin. The
+    #: rejection would read as a broker error rather than as an ordering
+    #: mistake, which is the kind of fault that survives a long time.
+    #:
+    #: It has never bitten, because `max_margin_usage` is unset and the
+    #: gross ceiling has never fired on the account. That is correct by
+    #: coincidence rather than by design: the day either limit is switched
+    #: on, the coincidence ends. Resizes sit in the middle because a resize
+    #: may release margin or commit it, and the delta is usually small.
+    _ORDER = {"close": 0, "resize": 1, "open": 2}
+
     @property
     def actionable(self) -> tuple[Intent, ...]:
-        return () if self.halted else tuple(i for i in self.intents if i.acts)
+        if self.halted:
+            return ()
+        acting = [i for i in self.intents if i.acts]
+        # Stable, so instruments keep their relative order inside each group
+        # and a pass remains reproducible from its own record.
+        return tuple(sorted(acting, key=lambda i: self._ORDER.get(i.action, 9)))
 
 
 def _round_down(value: float, increment: float) -> float:

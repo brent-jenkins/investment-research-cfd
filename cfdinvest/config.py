@@ -418,13 +418,19 @@ class StrategyConfig:
     #: The most positions that may be *opened* in a single pass. ``None``
     #: places no limit.
     #:
-    #: A book starting from flat otherwise opens everything at once: on
-    #: 2026-08-28 a cold start would have taken thirteen positions in one
-    #: pass, at the widest spreads of the day, on a seventeen-hour-old
-    #: signal. Spreading them over successive passes costs nothing when the
-    #: book is already warm, because a warm book rarely opens more than one
-    #: or two at a time.
-    max_opens_per_pass: int | None = 3
+    #: **None from 2026-09-10.** RETRACTED: "a book starting from flat
+    #: otherwise opens everything at once: on 2026-08-28 a cold start would
+    #: have taken thirteen positions in one pass, at the widest spreads of
+    #: the day, on a seventeen-hour-old signal. Spreading them over
+    #: successive passes costs nothing when the book is already warm."
+    #:
+    #: Day trading falsified both halves. The book flattens at the bell, so
+    #: no signal is seventeen hours old -- and THE BOOK IS NEVER WARM, so
+    #: the case where this was free no longer occurs while the case where it
+    #: binds is now every morning. See config/config.toml for the argument
+    #: and for what still bounds the book, which this never did: it is a
+    #: rate limit, not a size limit.
+    max_opens_per_pass: int | None = None
     #: The most of the balance that committed margin may consume, or ``None``
     #: to not check it.
     #:
