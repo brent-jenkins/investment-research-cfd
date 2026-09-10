@@ -480,6 +480,157 @@ uses the shared root, exactly as before it existed. See
 The root `README.md` is out of date — it describes the project as
 "ingestion layer complete".
 
+### What changed on 2026-09-10
+
+The day the last look turned out not to be looking, and a permitted action
+turned out to jam the dealer. Both were found by measurement rather than by
+reading, and the first was found only because a suspiciously perfect number
+was treated as a bug.
+
+**THE LAST LOOK COULD NOT REACH ITS OWN PASS MARK, AND THEN COULD NOT MOVE
+AT ALL.** Two faults in one component, the second introduced while fixing
+the first.
+
+*The original.* `ProvisionalRepository` appended the broker's quote as a new
+bar with open, high, low and close all equal -- zero range by construction.
+Every range-scaled input read that bar as motionless, which barely moves a
+weak signal and collapses a strong one. Measured across the 50-name universe
+against the engine's own reading on the same bar:
+
+    engine band   n    mean engine   mean live      gap
+    >= 0.75       2        0.816       0.492     -0.324
+    0.60-0.75     1        0.650       0.656     +0.006
+    0.40-0.60    17        0.469       0.475     +0.006
+    < 0.40       26        0.316       0.306     -0.010
+
+Agreement to a hundredth everywhere except at the top, where it collapsed by
+a third. **Not one of the 46 could reach 0.75; the highest live reading in
+the book was 0.656.** The gate had a pass mark the check could not reach, so
+the account could barely open a position -- and the ones that did get
+through were the pathological cases where the dilution inverts.
+
+It went unnoticed because the last look was validated at `entry_confidence`
+0.35, where a shift of 0.32 rarely crosses the line -- the 18.7% modelled
+against 20.7% measured recorded on 2026-09-03 was taken on that scale.
+Raising the gate to 0.75 on 2026-09-04 silently moved the mark onto a scale
+the check could not reach.
+
+*The one I introduced while fixing it.* The fix updates the bar in progress
+instead of appending, and `load_market` then returned on
+`if not rows: return frame` -- so once every name took the update branch,
+`rows` was empty on every pass and the whole check returned the lake
+untouched. **The quote never reached the computation.** Between ab182c6 and
+67518a3 the last look approved whatever the engine proposed, which is
+fail-open in the one place this project has been careful to keep
+fail-closed.
+
+**The measurement that hid it was mine.** The first calibration fed the
+lake's own close in as the live price, so the update was a no-op by
+construction and every gap read exactly 0.000 -- which reads as a fix
+working perfectly. Re-run against real broker quotes it read 0.000 again,
+and that was the tell: the quotes differed from the lake on all 50 names, so
+zero was impossible. The decisive test is not a value but a response:
+
+    moving every quote by 5%, before the second fix    0 of 50 readings move
+    after                                             45 of 50 readings move
+                                                      mean absolute move 0.322
+
+The six that do not move read confidence 0.000 and direction flat -- names
+with no signal, where there is nothing to re-check and the gate refuses them
+anyway. Two of those (CAT, WMT) sit at 0.15 in the engine against 0.00 live,
+a real difference at the bottom of the range where nothing can open.
+
+After both fixes, band by band, against real quotes:
+
+    engine band   n    mean engine   mean live      gap
+    >= 0.75       1        0.803       0.804     +0.001
+    0.60-0.75     1        0.641       0.643     +0.002
+    0.40-0.60    20        0.463       0.464     +0.000
+    < 0.40       24        0.318       0.308     -0.010
+
+The gate is reachable again: the highest live reading is 0.804 against 0.656
+before.
+
+**This is the inert-gate failure again, and it arrived twice in one day
+wearing opposite signs.** First a gate so strict nothing could pass, then
+one so inert everything did. Both reported plausible numbers.
+`tests/test_livecheck_responds.py` therefore asserts the *property* -- two
+quotes that differ must produce panels that differ -- rather than a value,
+because a test asserting "the close equals the quote" passes against a write
+that lands on a throwaway copy.
+
+**A HAND CLOSURE JAMMED THE DEALER FOR A WHOLE SESSION AND NOTHING COULD
+CLEAR IT.** The account opened nothing all day and the last look was not
+why. Every pass from 13:36 halted on:
+
+    Capital: NOT TRADING -- the account and the record disagree
+    - missing: TGT. Opening nothing until a person has looked.
+
+TGT was closed by hand at the owner's instruction. That is a **permitted
+action** -- the owner's stated mode is that the app manages things except
+for an emergency closure -- and it went through the broker rather than the
+dealing path, so no result row was written. The record went on believing TGT
+was held, and the bridge refused to open anything for the rest of the day.
+
+The guard was doing exactly what it says. The fault is that it had no way
+back, and that the jam was indistinguishable from routine: one warning line
+every fifteen minutes while the book sat flat through a trading session.
+
+**The two directions are not symmetrical and are now treated differently.**
+An UNEXPLAINED position is money at risk nobody chose and still halts
+everything. A MISSING position is the record being behind the account, and
+the account is the truth about what is held.
+
+What makes healing the second safe was checked rather than assumed:
+**`placed` is read by `reconcile` and by nothing else in `plan_orders`.**
+Every position figure -- sizing, exposure, the leverage and concentration
+caps -- comes from `positions`, the broker's own answer. So a record behind
+the account cannot produce a wrong order; it can only stop the account
+trading. The bridge's docstring claimed a missing position means "the engine
+is reasoning about a position that does not exist", and that is **not true
+of this code**. The claim is struck.
+
+`persist.orders.record_departure` writes the close that happened, with the
+exit price **absent rather than invented** -- this app did not place the
+close, and `completed_trips` already skips a close with no level, so an
+unknown exit yields no P&L rather than one computed against zero. The row
+carries `reconciled: True` so a hand closure can never be read as a close
+the app placed, and so the two causes can be counted apart: a rising count
+of these is an order path recording fills it is not getting, which is worse
+and looks identical from here.
+
+**It worked on the first pass after the deploy, at 15:12 UTC:**
+
+    15:12:01  1 position(s) in the record are not on the account (TGT).
+              Recording them as closed
+    15:12:04  opened 1, resized 0, closed 0, refused 5, balance 4775.99
+
+    TGT   close    reconciled
+    BLK   refused  no longer clears the bar
+    HD    refused  no longer clears the bar
+    HON   refused  no longer clears the bar
+    MRK   refused  no longer clears the bar
+    SPGI  refused  no longer clears the bar
+    TMUS  open
+
+The session's first position, and the last look discriminating rather than
+blocking everything or approving everything.
+
+**What to watch, and it is not reassuring yet.** Five refusals to one open
+is 83% on this pass against 18.7% modelled and 20.7% measured in the
+account's first week. One pass is not a rate, and the engine's run bar was
+14:00 while the pass dealt at 15:12, so an hour of price movement separates
+the two readings -- which is the gate doing its job. But this file's own
+watch-list says a sustained rate far above 20.7% is the gate misfiring
+rather than protecting, and the refusal rate is the first thing to read
+tomorrow.
+
+**Left open.** `MIN_SESSION_MINUTES = 30.0` in the maturity guard is still
+provisional and unmeasured. And the 2026-09-03 last-look figures -- 18.7%
+modelled, 20.7% measured -- describe the 0.35-gate configuration on a check
+that has since been shown unable to reach 0.75. They must not be quoted
+against the current setup.
+
 ### What changed on 2026-09-08
 
 The first live session of the day-trading configuration, and the day the

@@ -33,13 +33,26 @@ increment, always: a size rounded up can breach the limit it was computed
 from. Below the minimum it is refused rather than raised, because a zero is
 the sizing step declining and rounding it up would override that decision.
 
-**Everything, when the account and the record disagree.** A position the
-bridge never opened, or one it opened that is not there, means something is
-wrong that is not yet understood -- and the most likely cause of a mismatch
-is the thing that would make the next order wrong too. It alerts and stops
+**Everything, when the account holds a position this app never opened.**
+That is money at risk nobody chose, and the most likely cause of it is the
+thing that would make the next order wrong too. It alerts and stops
 opening. It does not try to correct: acting on an account you have just
 demonstrated you do not understand is how one bad read becomes several bad
 trades.
+
+**The other direction is not the same fault, and treating it as one cost a
+session.** A position the RECORD holds and the account does not is simply
+gone -- the account is the truth about what is held. On 2026-09-10 the
+owner closed TGT by hand, which is a permitted action, no result row was
+written, and this bridge then refused every dealing pass for the rest of
+the day over a disagreement that had a benign and known cause. A permitted
+action jammed the dealer and nothing in the app could clear it.
+
+The caller now reconciles that direction before it asks -- see
+`persist.orders.record_departure` -- so by the time `plan_orders` runs, a
+departed position has been recorded as closed and announced. This module's
+rule is unchanged: it still refuses to act on any disagreement it is
+handed.
 
 Every decision is recorded, including the refusals. A refusal is the more
 interesting record: it is the only evidence of the limits doing their job.
@@ -143,9 +156,22 @@ def reconcile(
 
     ``held`` is what the broker says, keyed by epic; ``placed`` is what this
     bridge believes it opened. Both directions matter and they fail
-    differently: an unexplained position is money at risk nobody chose, and a
-    missing one means an order the app believes filled did not -- so the
-    engine is reasoning about a position that does not exist.
+    differently: an unexplained position is money at risk nobody chose,
+    while a missing one is the record being behind the account.
+
+    **RETRACTED 2026-09-10:** this said a missing position means "the engine
+    is reasoning about a position that does not exist". It does not, and the
+    claim was load-bearing for a halt that cost a full session. ``placed`` is
+    read HERE and nowhere else in ``plan_orders``; every position figure --
+    sizing, exposure, the leverage and concentration caps -- comes from
+    ``positions``, which is the broker's own answer. A record behind the
+    account cannot produce a wrong order. It can only stop the account
+    trading.
+
+    The asymmetry that survives is the real one: an unexplained position
+    must halt everything, and a missing one must be recorded as closed by
+    the caller and announced, because its causes range from a hand closure
+    to an order path recording fills it is not getting.
     """
     in_account = {str(k) for k in (held or {})}
     in_record = {str(k) for k in (placed or {})}
