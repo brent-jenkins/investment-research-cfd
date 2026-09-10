@@ -49,7 +49,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "write_manifest",
-    "INTERVAL", "DEFAULT_START", "SESSION_HOURS", "frame_from_rows",
+    "INTERVAL", "DEFAULT_START", "MAX_LOOKBACK_DAYS", "SESSION_HOURS",
+    "frame_from_rows",
     "backfill_ticker", "backfill", "restrict_to_session", "is_capital_interval",
 ]
 
@@ -80,6 +81,32 @@ INTERVAL = "capital_1h"
 #: Earliest hourly history the server holds. Measured, not assumed: asking
 #: for 2022 returns bars from 2023-01-03 and nothing before it.
 DEFAULT_START = "2023-01-01T00:00:00"
+
+#: The furthest back a request may reach, per resolution, in days.
+#:
+#: Capital serves fine resolutions for about 400 days -- probed on
+#: 2026-09-10, where 1m, 5m and 15m all returned bars from 400 days back and
+#: nothing from 980. ``DEFAULT_START`` of 2023-01-01 is beyond that, so every
+#: fine-resolution request asked for a window the server refuses and came
+#: back **HTTP 404 with nothing written**.
+#:
+#: That is why ``capital_1m`` holds 778 rows from January 2025 and has
+#: collected nothing since: ``ingest-minute`` ran nightly for eight months,
+#: resumed from a tail 615 days old, was refused, and logged a warning
+#: nobody read. A permission fault on 2026-08-30 then hid it further by
+#: producing a louder error for the same silent outcome.
+#:
+#: 180 days is well inside the served window and far more than any use here
+#: needs -- the confidence-path work wants weeks, not years. Daily and hourly
+#: are unbounded because the server does serve them from 2023 and the
+#: backtest genuinely spans that.
+MAX_LOOKBACK_DAYS: dict[str, int] = {
+    "1m": 180,
+    "5m": 180,
+    "15m": 180,
+}
+
+
 
 #: Re-read this much of the tail on a resume. The last bar on disk may have
 #: been written while its hour was still forming, so it is refetched rather
@@ -167,6 +194,28 @@ def backfill_ticker(
         resume = existing.index.max() - pd.Timedelta(hours=RESUME_OVERLAP_HOURS)
         if resume > pd.Timestamp(start, tz="UTC"):
             from_when = resume.strftime("%Y-%m-%dT%H:%M:%S")
+
+    # Never ask for more history than the server will serve at this
+    # resolution. Asking is not free: the request is refused outright with a
+    # 404, so the whole fetch returns nothing and the series stops advancing
+    # -- which is how capital_1m collected two days in January 2025 and
+    # nothing for the eight months after, one silent warning a night.
+    #
+    # Clamped rather than raising, because a stale tail is a normal state to
+    # resume from and the caller cannot know the server's window. Moving the
+    # start forward loses the bars between the tail and the window, and those
+    # are bars the server no longer has: the alternative is fetching nothing
+    # at all, forever.
+    horizon = MAX_LOOKBACK_DAYS.get(str(resolution))
+    if horizon:
+        floor = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=horizon)
+        if pd.Timestamp(from_when, tz="UTC") < floor:
+            logger.info(
+                "%s: %s history begins %s at the server; asking from there "
+                "rather than %s",
+                ticker, resolution, floor.strftime("%Y-%m-%d"), from_when[:10],
+            )
+            from_when = floor.strftime("%Y-%m-%dT%H:%M:%S")
 
     reader = fetch or capital_prices.fetch_prices
     rows = reader(
