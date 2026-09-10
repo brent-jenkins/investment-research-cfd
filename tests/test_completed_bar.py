@@ -210,3 +210,75 @@ def test_the_lag_is_unchanged_and_still_zero():
     past on top of the trim, which is the eighteen-hour fault again.
     """
     assert app.INTENT_EXECUTION_LAG == 0
+
+
+# --------------------------------------------------------------------------
+# The trim shipped INERT once, and these are the tests that would have caught
+# it. `--interval` defaults to None, which means "whatever market.interval
+# says" rather than "no bars", so reading the raw argument got None on every
+# scheduled run and `_completed_bar_end` returned None. Deployed 16:04 on
+# 2026-09-10, caught at 16:18 by reading the run on the box -- every test
+# above passed throughout.
+#
+# Mutations checked:
+#   M860 the configured default ignored, so a scheduled run goes untrimmed
+#   M870 the explicit interval ignored in favour of the default
+# --------------------------------------------------------------------------
+
+class Market:
+    def __init__(self, interval):
+        self.interval = interval
+
+
+class Config:
+    def __init__(self, interval):
+        self.market = Market(interval)
+
+
+class Backtest:
+    def __init__(self, interval):
+        self.interval = interval
+
+
+def test_a_missing_interval_falls_back_to_the_configured_one():
+    """M860: the bug that made the whole trim inert on the live path."""
+    from cfdinvest.schedule.app import _intent_interval
+
+    assert _intent_interval(Backtest(None), Config("1h")) == "1h"
+    assert _intent_interval(Backtest(""), Config("1h")) == "1h"
+
+
+def test_an_explicit_interval_wins():
+    """M870: a stated bar size must not be overridden by the default."""
+    from cfdinvest.schedule.app import _intent_interval
+
+    assert _intent_interval(Backtest("5m"), Config("1h")) == "5m"
+
+
+def test_the_resolved_interval_actually_produces_a_trim():
+    """The property end to end: a scheduled run must come out trimmed.
+
+    Asserting the resolver alone would not have caught the original bug
+    either -- what failed was the pair. So this asks the question the live
+    path asks: given a run with no interval and a config that has one, is
+    the bar in progress excluded?
+    """
+    from cfdinvest.schedule.app import _completed_bar_end, _intent_interval
+
+    resolved = _intent_interval(Backtest(None), Config("1h"))
+    end = _completed_bar_end(resolved, moment("2026-09-10 16:13"))
+
+    assert end == moment("2026-09-10 15:00"), (
+        "a scheduled run with no --interval is not trimmed, so the dealer "
+        "still decides on the bar in progress"
+    )
+
+
+def test_run_once_resolves_rather_than_reading_the_raw_argument():
+    """The call site is the half that was wrong, so assert on it."""
+    source = inspect.getsource(app._command_run_once)
+
+    assert "_intent_interval(" in source, (
+        "the trim reads the raw --interval, which is None on every "
+        "scheduled run, so the run goes untrimmed"
+    )

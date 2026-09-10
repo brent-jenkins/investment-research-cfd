@@ -919,6 +919,31 @@ def _transport(args):
 INTENT_EXECUTION_LAG = 0
 
 
+def _intent_interval(backtest, app_config):
+    """The bar size the run will actually use.
+
+    ``--interval`` defaults to ``None``, which does not mean "no bars" -- it
+    means "whatever ``market.interval`` says", and the repository resolves
+    it that way on every load. Reading the raw argument therefore gets
+    ``None`` on every scheduled run, which is exactly how the first version
+    of the completed-bar trim shipped INERT: `_completed_bar_end(None, ...)`
+    returns ``None``, so the run went untrimmed and the newest bar was
+    still the one in progress. Deployed at 16:04 on 2026-09-10 and caught
+    at 16:18 by reading the run on the box rather than trusting the tests,
+    which all passed.
+
+    That is this project's oldest failure wearing yet another hat: a gate
+    that reports success while doing nothing. The resolution is a named
+    function so it can be tested directly, rather than an ``or`` buried in
+    a call.
+    """
+    interval = getattr(backtest, "interval", None)
+    if interval:
+        return interval
+    market = getattr(app_config, "market", None)
+    return getattr(market, "interval", None)
+
+
 def _completed_bar_end(interval, now):
     """The newest bar boundary that is COMPLETE, or ``None`` if unknowable.
 
@@ -1013,7 +1038,9 @@ def _command_run_once(args, app_config, smtp, transport) -> int:
     trimmed = (
         backtest.end
         if backtest.end is not None
-        else _completed_bar_end(backtest.interval, pd.Timestamp.now(tz="UTC"))
+        else _completed_bar_end(
+            _intent_interval(backtest, app_config), pd.Timestamp.now(tz="UTC")
+        )
     )
     backtest = dataclasses.replace(
         backtest,
