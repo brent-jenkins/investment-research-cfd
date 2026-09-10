@@ -919,6 +919,46 @@ def _transport(args):
 INTENT_EXECUTION_LAG = 0
 
 
+def _completed_bar_end(interval, now):
+    """The newest bar boundary that is COMPLETE, or ``None`` if unknowable.
+
+    A bar labelled 14:00 on an hourly grid covers 14:00 to 15:00 and is not
+    finished until 15:00. So at 15:12 the newest COMPLETE bar is 14:00, and
+    the 15:00 bar carries twelve minutes of an hour.
+
+    Returns a bound for ``BacktestConfig.end``, which ``repository.slice_
+    range`` applies inclusively -- so 14:00 keeps the 14:00 bar and drops
+    the one in progress.
+
+    ``None`` when the interval cannot be parsed, which leaves the run
+    untrimmed rather than guessing at a grid. That is the weaker behaviour
+    and it is the safe direction: an untrimmed run is what shipped before.
+    """
+    import pandas as pd
+
+    # The lake's interval strings and pandas' spelling of them have drifted
+    # apart, and both spellings reach here. A bare unit -- "h", "d" -- is a
+    # ValueError to `Timedelta`, and "1d" is deprecated in favour of "1D".
+    # Neither is a reason to leave the run untrimmed, so they are
+    # normalised rather than refused: a deprecation warning raised from a
+    # dealing path is noise somebody will eventually learn to ignore.
+    text = str(interval or "").strip()
+    if not text:
+        return None
+    if text[0].isalpha():
+        text = "1" + text
+    if text.endswith("d"):
+        text = text[:-1] + "D"
+
+    try:
+        span = pd.Timedelta(text)
+    except (TypeError, ValueError):
+        return None
+    if not (span > pd.Timedelta(0)):
+        return None
+    return pd.Timestamp(now).floor(span) - span
+
+
 def _command_run_once(args, app_config, smtp, transport) -> int:
     """Run the pipeline once, notify, and return an exit code."""
     backtest = _backtest_config(args, app_config)
@@ -933,8 +973,51 @@ def _command_run_once(args, app_config, smtp, transport) -> int:
         if getattr(app_config.strategy, "flatten_before_close", False)
         else None
     )
+    # **Decide on completed bars.** The intent run stops at the newest bar
+    # that has finished, so the bar in progress is not decided on.
+    #
+    # `INTENT_EXECUTION_LAG = 0` alone was not enough and cost a trade the
+    # day it shipped. Dropping the lag stopped the dealer reading an
+    # eighteen-hour-old signal, and then pointed it at the newest bar --
+    # which is the bar IN PROGRESS. On 2026-09-10 the run at 15:11 read an
+    # eleven-minute-old 15:00 bar on which TMUS scored 0.771, clearing a
+    # 0.75 gate by 0.021. The account opened it. Twenty minutes later the
+    # same bar read 0.415 and the engine exited:
+    #
+    #     run                newest bar   age    TMUS confidence
+    #     20260910T144601Z   14:00        full             0.445
+    #     20260910T151118Z   15:00        11 min           0.771   <- opened
+    #     20260910T153148Z   15:00        31 min           0.415   <- exited
+    #
+    # Eleven minutes of an hourly bar is noise, and every figure this
+    # project holds was measured on completed bars. So the two faults were
+    # the same question asked twice -- WHICH BAR DOES THE DEALER DECIDE
+    # ON -- and both answers were wrong: lag 1 gave a bar eighteen hours
+    # stale at the open, lag 0 gave a bar eleven minutes old.
+    #
+    # Trimming answers it once. The newest bar of the run is now the newest
+    # completed bar, the lag stays at 0 so the dealer acts on it, and the
+    # page reads the same run -- so the page and the dealer still agree,
+    # which is what the lag change was for.
+    #
+    # The first hour of a session falls out correctly rather than needing a
+    # rule. Before 14:00 UTC no bar of today has finished, so the newest
+    # completed bar is the previous session's last -- and the book is
+    # FLATTENED there, so the intent is "hold nothing" and nothing opens.
+    # The first entry becomes possible when the 13:00 bar completes at
+    # 14:00, which is thirty minutes after the 13:30 open: the cadence the
+    # owner asked for, arrived at from the data rather than from a clock.
+    #
+    # An explicit `--end` wins, so a research run over a stated window is
+    # untouched.
+    trimmed = (
+        backtest.end
+        if backtest.end is not None
+        else _completed_bar_end(backtest.interval, pd.Timestamp.now(tz="UTC"))
+    )
     backtest = dataclasses.replace(
         backtest,
+        end=trimmed if trimmed is not None else backtest.end,
         execution=dataclasses.replace(
             backtest.execution,
             execution_lag=INTENT_EXECUTION_LAG,

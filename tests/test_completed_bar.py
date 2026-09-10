@@ -1,0 +1,212 @@
+"""The dealer decides on completed bars, never on the bar in progress.
+
+Two faults in two days were the same question asked twice -- WHICH BAR DOES
+THE DEALER DECIDE ON -- and both answers were wrong.
+
+``execution_lag = 1`` pointed it at the previous completed bar, which during
+a session is right and at the open is the previous session's last: eighteen
+hours and one gap stale. That opened TGT on 2026-09-10 on a signal whose
+confidence had halved overnight.
+
+Dropping the lag to 0 pointed it at the newest bar, which is the bar IN
+PROGRESS. The run at 15:11 read an eleven-minute-old 15:00 bar on which TMUS
+scored 0.771 against a 0.75 gate. The account opened it; twenty minutes
+later the same bar read 0.415 and the engine exited:
+
+    run                newest bar   age      TMUS confidence
+    20260910T144601Z   14:00        complete           0.445
+    20260910T151118Z   15:00        11 min             0.771   <- opened
+    20260910T153148Z   15:00        31 min             0.415   <- exited
+
+Eleven minutes of an hourly bar is noise, and every figure this project
+holds was measured on completed bars.
+
+Trimming the run to the newest COMPLETED bar answers the question once. The
+lag stays at 0, so the dealer still acts on the newest bar it is given, and
+the page reads the same run -- so page and dealer still agree, which is what
+the lag change was for.
+
+The first hour falls out rather than needing a rule: before 14:00 UTC no bar
+of the session has finished, the newest completed bar is the previous
+session's last, and the book is FLATTENED there -- so the intent is "hold
+nothing" and nothing opens until the 13:00 bar completes at 14:00, thirty
+minutes after the open.
+
+Mutations checked, each reintroduced as a bug and confirmed to fail:
+  M800 the span not subtracted, so the bar in progress is the end again
+  M810 rounding up instead of down, ending past the data
+  M820 an explicit --end overridden, so a research window is silently moved
+  M830 an unparseable interval guessed at rather than left alone
+  M850 the trim wired to the wrong field
+
+M840 -- the trim applied AFTER the pipeline runs -- is asserted by
+source order rather than mutated, because moving a block is not a
+string substitution and a half-moved one would not compile. Said here
+rather than left implied: an unmutated property is a weaker check, and
+this file's own rule is that the mutations listed are the ones run.
+"""
+
+from __future__ import annotations
+
+import inspect
+import warnings
+
+import pandas as pd
+import pytest
+
+from cfdinvest.schedule import app
+from cfdinvest.schedule.app import _completed_bar_end
+
+HOUR = pd.Timedelta(hours=1)
+
+
+def moment(text: str) -> pd.Timestamp:
+    return pd.Timestamp(text, tz="UTC")
+
+
+@pytest.mark.parametrize(
+    "now",
+    ["2026-09-10 13:36", "2026-09-10 14:00", "2026-09-10 14:05",
+     "2026-09-10 15:12", "2026-09-10 19:59"],
+)
+def test_the_bar_returned_has_finished(now):
+    """M800/M810: the property, stated as completeness rather than a value.
+
+    A bar labelled T on an hourly grid finishes at T + 1h. So whatever is
+    returned must satisfy `end + span <= now` -- that is what "completed"
+    means, and it is true at every moment rather than at the one the test
+    author happened to pick.
+    """
+    at = moment(now)
+    end = _completed_bar_end("1h", at)
+
+    assert end is not None
+    assert end + HOUR <= at, (
+        f"the bar labelled {end} has not finished at {at}; the run would "
+        "decide on a bar in progress"
+    )
+
+
+@pytest.mark.parametrize(
+    "now", ["2026-09-10 13:36", "2026-09-10 14:05", "2026-09-10 15:12"]
+)
+def test_it_is_the_NEWEST_completed_bar(now):
+    """Not merely a completed bar -- the latest one.
+
+    Trimming too far would throw away good data and make the dealer late,
+    which is the fault being fixed rather than a safe overshoot.
+    """
+    at = moment(now)
+    end = _completed_bar_end("1h", at)
+
+    assert end + HOUR + HOUR > at, (
+        f"{end} is not the newest completed bar at {at}; a later one had "
+        "also finished"
+    )
+
+
+def test_the_bar_in_progress_is_excluded():
+    """The concrete TMUS case, named.
+
+    `slice_range` is inclusive, so an end of 14:00 keeps the 14:00 bar and
+    drops the 15:00 one that carried eleven minutes of data.
+    """
+    assert _completed_bar_end("1h", moment("2026-09-10 15:12")) == moment(
+        "2026-09-10 14:00"
+    )
+
+
+def test_it_reads_the_grid_rather_than_assuming_an_hour():
+    """M810: the rule is about the interval, not about hours.
+
+    The lake holds 5- and 15-minute stores, and a rule hard-coded to an
+    hourly grid would silently mistrim any run over them.
+    """
+    assert _completed_bar_end("5m", moment("2026-09-10 15:12")) == moment(
+        "2026-09-10 15:05"
+    )
+    assert _completed_bar_end("15min", moment("2026-09-10 15:12")) == moment(
+        "2026-09-10 14:45"
+    )
+
+
+@pytest.mark.parametrize(
+    "interval,expected",
+    [("1h", "2026-09-10 14:00"), ("h", "2026-09-10 14:00"),
+     ("1d", "2026-09-09 00:00"), ("d", "2026-09-09 00:00"),
+     ("1D", "2026-09-09 00:00"), ("15min", "2026-09-10 14:45")],
+)
+def test_both_spellings_of_an_interval_are_read(interval, expected):
+    """The lake's spelling and pandas' spelling have drifted apart.
+
+    A bare unit is a ValueError to `Timedelta` and "1d" is deprecated in
+    favour of "1D". Refusing either would leave the run untrimmed on a
+    dealing path -- silently, and exactly where the trim matters.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        got = _completed_bar_end(interval, moment("2026-09-10 15:12"))
+
+    assert got == moment(expected)
+
+
+@pytest.mark.parametrize("interval", [None, "", "nonsense", 0, -1])
+def test_an_unreadable_interval_leaves_the_run_alone(interval):
+    """M830: absence is named, never guessed.
+
+    A grid that cannot be parsed means the trim cannot be computed, and the
+    honest answer is to leave the run as it shipped rather than invent a
+    boundary. Weaker, and the safe direction.
+    """
+    assert _completed_bar_end(interval, moment("2026-09-10 15:12")) is None
+
+
+def test_run_once_trims_before_it_runs():
+    """M840/M850: a trim applied late, or to the wrong field, is inert.
+
+    Asserted on the source because the effect -- a persisted run built from
+    a different window -- needs a lake to observe, and an inert trim looks
+    identical to a working one from outside.
+    """
+    source = inspect.getsource(app._command_run_once)
+
+    assert "_completed_bar_end" in source, (
+        "the scheduled run does not trim the bar in progress, so the dealer "
+        "can decide on a partial bar"
+    )
+    assert "end=trimmed" in source, (
+        "the trim is not applied to `end`; it is being wired to something "
+        "else and is inert"
+    )
+    assert source.index("_completed_bar_end") < source.index("run_pipeline("), (
+        "the trim is computed after the pipeline runs, which is too late"
+    )
+
+
+def test_an_explicit_window_wins():
+    """M820: a research run over a stated window must not be moved.
+
+    This project's figures are quoted against windows somebody chose. A
+    trim that silently overrode `--end` would shift every one of them by a
+    bar, which is the class of error this file's retraction rule exists for.
+    """
+    source = inspect.getsource(app._command_run_once)
+    trim = source.index("trimmed = (")
+
+    assert "backtest.end" in source[trim:trim + 400], (
+        "the trim does not consult the configured end, so an explicit "
+        "--end would be overridden"
+    )
+    assert "if backtest.end is not None" in source[trim:trim + 400], (
+        "the configured end is not preferred over the computed trim"
+    )
+
+
+def test_the_lag_is_unchanged_and_still_zero():
+    """The trim replaces the lag rather than joining it.
+
+    With the run stopping at the newest completed bar, lag 0 means "decide
+    on that bar". Putting the lag back would reach a further bar into the
+    past on top of the trim, which is the eighteen-hour fault again.
+    """
+    assert app.INTENT_EXECUTION_LAG == 0
