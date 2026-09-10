@@ -1,10 +1,15 @@
 """A position the record holds and the account does not must reconcile.
 
-On 2026-09-10 the owner closed TGT by hand -- a permitted action, and the
-one exception to "the app manages things" that they have stated. No result
-row was written, so `open_orders` went on reporting TGT held, `reconcile`
-reported it missing, and `plan_orders` halted **every dealing pass for the
-rest of the session**:
+On 2026-09-10 TGT was closed outside the dealing path -- an opposing BUY
+placed through the API on the owner's instruction to close it. (This
+docstring first said the OWNER closed it by hand; they did not, and the
+broker's activity log says `source: USER` at 13:44:55 with no matching plan
+or result row in this app's record.) The owner's stated mode does permit a
+hand closure in an emergency, so two causes share the signature.
+
+Either way no result row was written, so `open_orders` went on reporting
+TGT held, `reconcile` reported it missing, and `plan_orders` halted **every
+dealing pass for the rest of the session**:
 
     Capital: NOT TRADING -- the account and the record disagree
     — missing: TGT. Opening nothing until a person has looked.

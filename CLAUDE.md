@@ -566,11 +566,31 @@ why. Every pass from 13:36 halted on:
     Capital: NOT TRADING -- the account and the record disagree
     - missing: TGT. Opening nothing until a person has looked.
 
-TGT was closed by hand at the owner's instruction. That is a **permitted
-action** -- the owner's stated mode is that the app manages things except
-for an emergency closure -- and it went through the broker rather than the
-dealing path, so no result row was written. The record went on believing TGT
-was held, and the bridge refused to open anything for the rest of the day.
+**CORRECTED 2026-09-10, and the correction matters.** This first said the
+OWNER closed TGT by hand. They did not, and they said so. Read off the
+broker's own activity log rather than assumed the second time:
+
+    13:36:14  WORKING_ORDER  EXECUTED  USER  SELL 28.7  -> POSITION @ 156.10
+    13:44:55  WORKING_ORDER  EXECUTED  USER  BUY  28.7  -> closed @ 158.43
+
+    transaction: "Trade closed", -49.47 GBP, 13:44:55 UTC
+
+`source` is USER on every row, so it was neither a broker stop-out nor a
+margin close, and the app's own record holds no `close` plan or result for
+TGT at all -- so the dealing path never placed one either. **It was closed
+by ME, through the API, on the owner's instruction to close it.** Going
+round the dealing path instead of through it is what left no record.
+
+So the benign cause here was not a person at a screen. It was the assistant
+placing an order by a side channel, and that is a worse habit than the one
+originally written down, because it is entirely avoidable: a close the app
+places should go through the app.
+
+The **permitted action** the design must survive is still real -- the
+owner's stated mode is that the app manages things except for an emergency
+closure -- and it is now joined by a second cause with the same signature.
+Either way no result row was written, the record went on believing TGT was
+held, and the bridge refused to open anything for the rest of the day.
 
 The guard was doing exactly what it says. The fault is that it had no way
 back, and that the jam was indistinguishable from routine: one warning line
@@ -625,7 +645,15 @@ watch-list says a sustained rate far above 20.7% is the gate misfiring
 rather than protecting, and the refusal rate is the first thing to read
 tomorrow.
 
-**Left open.** `MIN_SESSION_MINUTES = 30.0` in the maturity guard is still
+**Left open.** The departure row carries no exit price, because
+`record_departure` refuses to invent one. The broker's activity log HAS it
+-- 158.43, against the 156.10 open -- so this trip could be paired properly
+rather than dropped from `completed_trips`. Reading the close back from the
+broker when a position departs is the right fix and is not built; until it
+is, an out-of-band close costs the forward record one trip, and the forward
+record is the only trustworthy evidence this project holds.
+
+`MIN_SESSION_MINUTES = 30.0` in the maturity guard is still
 provisional and unmeasured. And the 2026-09-03 last-look figures -- 18.7%
 modelled, 20.7% measured -- describe the 0.35-gate configuration on a check
 that has since been shown unable to reach 0.75. They must not be quoted

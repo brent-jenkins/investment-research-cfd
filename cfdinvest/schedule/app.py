@@ -1435,12 +1435,13 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     #
     # `plan_orders` halts on any disagreement, which is right for the other
     # direction -- an unexplained position is money at risk nobody chose --
-    # and is a trap in this one. The owner's stated operating mode includes
-    # closing by hand in an emergency, and on 2026-09-10 that happened: TGT
-    # was closed at the owner's instruction outside the dealing path, no
-    # result row was written, and the bridge then refused EVERY dealing pass
-    # for the rest of the session. A permitted action jammed the dealer, and
-    # nothing in the app could clear it.
+    # and is a trap in this one. On 2026-09-10 TGT was closed outside the
+    # dealing path -- an opposing BUY through the API on the owner's
+    # instruction to close it -- no result row was written, and the bridge
+    # then refused EVERY dealing pass for the rest of the session. The
+    # owner's stated operating mode also permits a hand closure in an
+    # emergency, which has the same signature. Either way the dealer jammed
+    # and nothing in the app could clear it.
     #
     # Safe to heal only because the record is not an input to any decision:
     # `placed` is read by `reconcile` and by nothing else in `plan_orders`,

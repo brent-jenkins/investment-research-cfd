@@ -101,13 +101,17 @@ def record_departure(
     record says held, the broker says no -- the position is gone, and the
     record has to learn that or it will disagree forever.
 
-    **Why this exists.** The owner's stated operating mode includes closing
-    a position by hand in an emergency, and on 2026-09-10 that happened:
-    TGT was closed at the owner's instruction outside the dealing path. No
-    result row was written, so `open_orders` went on reporting TGT held,
-    `reconcile` reported it missing, and `plan_orders` halted **every
-    dealing pass for the rest of the session**. A permitted action jammed
-    the dealer with no way for a person to unjam it.
+    **Why this exists.** On 2026-09-10 TGT was closed outside the dealing
+    path -- an opposing BUY placed through the API on the owner's
+    instruction to close it, rather than through this app's own dealing
+    pass. No result row was written, so `open_orders` went on reporting TGT
+    held, `reconcile` reported it missing, and `plan_orders` halted **every
+    dealing pass for the rest of the session**.
+
+    Two causes produce that signature and both are benign: the owner's
+    stated operating mode includes closing by hand in an emergency, and an
+    out-of-band close like the one above. Neither leaves a record, and
+    nothing in the app could clear the jam either way.
 
     **The exit price is not known and is not invented.** This app did not
     place the close, so it has no fill. `level` stays `None`, which
