@@ -248,6 +248,14 @@ def run_execution(signal_frame, analysis_frame, config):
         _ends = pd.Series(_s, index=_s).groupby(_s.normalize()).transform("max")
         remaining = (pd.DatetimeIndex(_ends) - _s).total_seconds() / 60.0
         allowed_late = np.asarray(remaining >= float(shut), dtype=bool)
+        # The frame's final bar is not near a close; it is simply the last
+        # bar there is. Same reasoning as `session_end` below, and the same
+        # failure without it: on a live run the newest bar is also its own
+        # day's maximum, so `remaining` is zero and the closing window
+        # refuses every entry on the bar being decided on. On 2026-09-10
+        # that emptied the intent completely -- the day had one bar so far,
+        # and it read as both the session's first and its last.
+        allowed_late[-1] = True
         late = np.repeat(allowed_late[:, None], len(columns), axis=1)
         entry_gate = late if entry_gate is None else (entry_gate & late)
 
