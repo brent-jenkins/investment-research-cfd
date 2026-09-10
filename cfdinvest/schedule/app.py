@@ -1430,6 +1430,45 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     # be joined afterwards.
     now = pd.Timestamp.now(tz="UTC")
 
+    # A position the record holds and the account does not is GONE, and the
+    # record has to learn that or it disagrees forever.
+    #
+    # `plan_orders` halts on any disagreement, which is right for the other
+    # direction -- an unexplained position is money at risk nobody chose --
+    # and is a trap in this one. The owner's stated operating mode includes
+    # closing by hand in an emergency, and on 2026-09-10 that happened: TGT
+    # was closed at the owner's instruction outside the dealing path, no
+    # result row was written, and the bridge then refused EVERY dealing pass
+    # for the rest of the session. A permitted action jammed the dealer, and
+    # nothing in the app could clear it.
+    #
+    # Safe to heal only because the record is not an input to any decision:
+    # `placed` is read by `reconcile` and by nothing else in `plan_orders`,
+    # while every position figure -- sizing, exposure, the leverage cap --
+    # comes from `positions`, which is the broker's own answer. So a record
+    # that is behind the account cannot make a wrong order; it can only stop
+    # the account trading.
+    #
+    # It is still announced every time. The benign cause is a hand closure;
+    # the alarming one is an order path recording fills it is not getting,
+    # and those look identical from here. `reconciled: True` on the row is
+    # what lets them be counted apart later.
+    departed = [epic for epic in placed if epic not in positions]
+    if departed:
+        logger.warning(
+            "Capital: %d position(s) in the record are not on the account "
+            "(%s). Recording them as closed -- the account is the truth "
+            "about what is held. If this app placed no hand closure, an "
+            "order path is recording fills it is not getting.",
+            len(departed), ", ".join(sorted(departed)),
+        )
+        for epic in departed:
+            order_store.record_departure(
+                epic, placed.get(epic), app_config, account_name, now=now,
+                reason="absent from the account at the dealing pass",
+            )
+        placed = order_store.open_orders(app_config, account_name)
+
     markets = {
         m.ticker: m
         for m in capital.fetch_market_details(

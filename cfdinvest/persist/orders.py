@@ -39,6 +39,7 @@ __all__ = [
     "ORDER_DIR",
     "record_plan",
     "record_result",
+    "record_departure",
     "load_orders",
     "open_orders",
 ]
@@ -87,6 +88,69 @@ def record_plan(report, config=None, account: str | None = None, *, now=None) ->
             "balance": getattr(report, "balance", None),
         })
     return _append(rows, config, account)
+
+
+def record_departure(
+    epic: str, prior, config=None, account: str | None = None, *,
+    now=None, reason: str = "",
+) -> int:
+    """Record that a position the app believed it held is no longer there.
+
+    The account is the truth about what is held; the record is only this
+    app's belief about it. When they disagree in this direction -- the
+    record says held, the broker says no -- the position is gone, and the
+    record has to learn that or it will disagree forever.
+
+    **Why this exists.** The owner's stated operating mode includes closing
+    a position by hand in an emergency, and on 2026-09-10 that happened:
+    TGT was closed at the owner's instruction outside the dealing path. No
+    result row was written, so `open_orders` went on reporting TGT held,
+    `reconcile` reported it missing, and `plan_orders` halted **every
+    dealing pass for the rest of the session**. A permitted action jammed
+    the dealer with no way for a person to unjam it.
+
+    **The exit price is not known and is not invented.** This app did not
+    place the close, so it has no fill. `level` stays `None`, which
+    `trips()` already reads as "cannot be paired" and skips -- an unknown
+    exit yields no P&L rather than a P&L computed from a zero. The row
+    carries `reconciled: True` so it can never be mistaken for a close this
+    app placed, and so a later reader can count them: a rising number of
+    departures is an order path reporting fills it is not getting, which is
+    a different and worse problem than a hand closure.
+
+    Deliberately NOT used for the other direction. A position on the account
+    the app never opened is money at risk nobody chose, and the bridge still
+    refuses to act at all on that -- healing it would be adopting a position
+    rather than reconciling a record.
+    """
+    size = direction = deal_id = None
+    try:
+        size = (prior or {}).get("size")
+        direction = (prior or {}).get("direction")
+        deal_id = (prior or {}).get("deal_id")
+    except Exception:  # noqa: BLE001 - a malformed record still needs closing
+        pass
+
+    return _append([{
+        "at": str(now or ""),
+        "kind": "result",
+        "ticker": str(epic),
+        "epic": str(epic),
+        "action": "close",
+        # The broker's own word for a closed position, so `_confirmed` reads
+        # this row from the observation like every other.
+        "status": "CLOSED",
+        "ok": True,
+        # Absent, not zero. This app did not see the fill.
+        "level": None,
+        "units": size,
+        "direction": direction,
+        "position_units": 0.0,
+        "position_direction": "",
+        "deal_id": deal_id,
+        "reconciled": True,
+        "reason": reason or "absent from the account; recorded to reconcile",
+    }], config, account)
 
 
 def _resulting_position(intent, result):
