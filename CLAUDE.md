@@ -559,6 +559,76 @@ quotes that differ must produce panels that differ -- rather than a value,
 because a test asserting "the close equals the quote" passes against a write
 that lands on a throwaway copy.
 
+**THE CONCENTRATION CAP WAS DEFEATED, AND NOTHING NOTICED.** Found at 19:00
+on the owner's observation that the day's trades looked like poor choices
+made from misinterpreted data. They were, and not in the way either of us
+first thought: the names were fine and the SIZING was not.
+
+Read off the account at 19:05, with the cap set to 20% of gross:
+
+    name   legs   notional GBP   share of gross
+    SPGI      3          5,275           100.0%
+
+    gross 5,275 = 1.10x equity, comfortably inside max_leverage 3.5
+
+One name, the whole book, against a cap that never fired once.
+
+**Capital nets only OPPOSING trades.** The account is in netting mode --
+confirmed by the owner on 2026-09-03 and verified with a real order on
+2026-09-04 -- and that means a BUY closes a SELL. It does not mean two
+SELLs merge. Same-direction opens on one epic stay separate positions with
+separate deal ids:
+
+    17:36:52  SPGI SELL 1.99 @ 414.93
+    18:18:36  SPGI SELL 8.64 @ 413.14
+    18:40:14  SPGI SELL 8.67 @ 412.13     total 19.30 units
+
+`_command_trade_capital` builds its view as ``{p.epic: ... for p in held}``
+-- a dict keyed by epic -- so three legs collapsed to whichever came last.
+**Every downstream limit was then measuring 8.67 units where the account
+held 19.30**, including the concentration cap, which is why it passed a
+book that was 100% one name.
+
+**And the collapse is what CREATED the legs.** Each pass saw a third of the
+position, measured it against the target and topped it up again. The three
+legs are the bug's own footprints; left running it would have kept adding.
+
+**A close shut one leg**, which is the half that had to be fixed during the
+session. `close_position` takes a single deal id, so the flatten before the
+bell would have closed 8.67 units and carried 10.63 overnight -- in the
+configuration whose entire purpose is not to hold overnight, on a record
+that would have said flat. `_other_legs` now closes the rest, each one
+recorded so the order store still matches the account.
+
+**It missed by four minutes.** The flatten ran at 19:01:57 under the old
+process; the fix restarted the service at 19:05:36. That pass closed TMUS,
+HD, LULU and one SPGI leg and left two.
+
+**The sizing half is NOT fixed, deliberately.** The collapsed dict still
+under-states what is held. Fixing it changes what the engine believes it
+owns, which changes sizing on every pass, and that is a measured change
+rather than a third edit to the dealing path minutes before a close.
+
+**What this says about the other limits.** `max_leverage` sums notional
+across the dict, so it under-states gross the same way -- it read 1.10x
+where the real figure was the same only because SPGI was the only name
+left. With several multi-leg positions it would read low and permit more.
+`reconcile` compares epics rather than sizes, so it cannot see this at all;
+that is recorded on 2026-09-04 as a known blind spot and this is the first
+time it has cost anything. Anything in this file that describes the
+concentration cap as binding was measured in a backtest, where one
+instrument is one position by construction, and has never been tested
+against a venue that splits a holding.
+
+**The day's realised loss was not the selection.** -66.62 GBP, entirely two
+positions closed within minutes of opening: TGT at eight minutes (a hand
+closure, mine, on the owner's instruction -- the short would have been
+roughly flat if held: 156.10 against 156.06 at 19:00) and TMUS at twenty
+minutes (the engine exiting on a half-filled bar). Measured against the
+four names that cleared the gate at 13:00 and were missed, the two that
+were taken moved BETTER -- +1.18% against +0.35% held from 13:00. The fault
+was holding period and sizing, not choice of name.
+
 **WHICH BAR DOES THE DEALER DECIDE ON? Asked twice, answered wrongly twice,
 and the second answer was mine.** The owner's read was "TMUS was a bad
 choice, it should never have been chosen". They were right that something
