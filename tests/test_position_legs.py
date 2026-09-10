@@ -30,6 +30,8 @@ Mutations checked, each reintroduced as a bug and confirmed to fail:
   M970 the record popping the whole epic on a close of one leg
   M980 the record keeping one leg's size rather than the total
   M990 an arrival recorded without a fill level, which the reader ignores
+  M995 an open taking its side from the caller's sign, inverting a short
+  M996 a resize taking its side from the fill, inverting a trimmed long
 """
 
 from __future__ import annotations
@@ -230,3 +232,80 @@ def test_an_arrival_without_a_level_is_refused(store):
 
     assert written == 0
     assert orders.open_orders() == {}
+
+
+# ---------------------------------------------------------------- the side
+
+class Order:
+    """What the broker said it did."""
+
+    def __init__(self, direction, size):
+        self.direction = direction
+        self.size = size
+
+
+class Ask:
+    """What the app asked for."""
+
+    def __init__(self, action, target, held=0.0):
+        self.action = action
+        self.target_units = target
+        self.held_units = held
+
+
+def test_an_open_records_the_side_the_broker_filled():
+    """The trap that inverted a live position on 2026-09-10.
+
+    The side used to come from the SIGN of the caller's target. A console
+    script recording two short SPGI legs passed an unsigned 8.64 -- because
+    a size read off the broker is a magnitude -- and the record said BUY for
+    a position the account held SELL. `reconcile` compares epics, so it
+    reported clean.
+    """
+    units, side = orders._resulting_position(
+        Ask("open", 8.64), Order("SELL", 8.64)
+    )
+
+    assert side == "SELL", (
+        "the record takes the side from the caller's sign convention, so an "
+        "unsigned target on a short inverts a live position"
+    )
+    assert units == pytest.approx(8.64)
+
+
+def test_a_signed_target_still_works():
+    """The old convention must keep working where callers use it."""
+    units, side = orders._resulting_position(
+        Ask("open", -8.64), Order("SELL", 8.64)
+    )
+    assert (units, side) == (pytest.approx(8.64), "SELL")
+
+    units, side = orders._resulting_position(
+        Ask("open", 8.64), Order("BUY", 8.64)
+    )
+    assert (units, side) == (pytest.approx(8.64), "BUY")
+
+
+def test_the_sign_is_the_fallback_when_the_broker_says_nothing():
+    """Absence named: no fill direction means fall back, not guess."""
+    units, side = orders._resulting_position(
+        Ask("open", -8.64), Order("", 8.64)
+    )
+    assert side == "SELL"
+
+
+def test_a_resize_still_takes_its_side_from_the_delta():
+    """A resize goes as an OPPOSING order, so the fill side is not the position.
+
+    Trimming a long from 100 to 60 sends SELL 40 and the position stays
+    LONG. Taking the side from the fill here would record it as short --
+    which is the bug fixed on 2026-09-04, and it must not come back through
+    this door.
+    """
+    units, side = orders._resulting_position(
+        Ask("resize", 60.0, held=100.0), Order("SELL", 40.0)
+    )
+
+    assert (units, side) == (pytest.approx(60.0), "BUY"), (
+        "a trimmed long is being recorded as a short"
+    )

@@ -247,7 +247,29 @@ def _resulting_position(intent, result):
         # The order moved the position by `size` in the direction of travel.
         # Using the filled size rather than the target means a partial fill
         # records what actually happened.
+        #
+        # The RESULT's direction cannot be used here: a resize goes as an
+        # opposing order, so trimming a long sends SELL while the position
+        # stays long.
         resulting = held + (size if target > held else -size)
+        return abs(resulting), ("SELL" if resulting < 0 else "BUY")
+
+    # For an open, the BROKER'S OWN fill direction is the evidence, and the
+    # sign of the caller's target is only a fallback.
+    #
+    # It was the other way round until 2026-09-10, and it inverted a live
+    # position that evening. A console script recording two short SPGI legs
+    # passed `target_units=8.64` -- unsigned, because the size read off the
+    # broker is a magnitude -- and this returned BUY for a position the
+    # account held SELL. Nothing downstream caught it: `reconcile` compares
+    # epics, so the record disagreed with the account about the SIDE of a
+    # live holding and reported clean.
+    #
+    # A sign convention every caller has to know is a convention some caller
+    # will not know. `result.direction` is what the venue says it did.
+    side = str(getattr(result, "direction", "") or "").upper()
+    if side in ("BUY", "SELL"):
+        resulting = size if side == "BUY" else -size
     else:
         resulting = size if target >= 0 else -size
     return abs(resulting), ("SELL" if resulting < 0 else "BUY")
