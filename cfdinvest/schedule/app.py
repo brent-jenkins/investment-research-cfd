@@ -944,6 +944,47 @@ def _intent_interval(backtest, app_config):
     return getattr(market, "interval", None)
 
 
+def _other_legs(held, epic, placed_deal_id):
+    """Every OTHER open position on ``epic``. Never raises.
+
+    **Capital nets only OPPOSING trades.** The account is in netting mode,
+    confirmed by the owner on 2026-09-03 and verified with a real order on
+    2026-09-04 -- but that means a BUY closes a SELL, not that two SELLs
+    merge. Three same-direction opens on one epic stay three positions with
+    three deal ids.
+
+    On 2026-09-10 the account held SPGI as 1.99 + 8.64 + 8.67 units in three
+    legs. `_command_trade_capital` builds its view as
+    ``{p.epic: ... for p in held}`` -- a dict keyed by epic -- so the three
+    collapsed to whichever came last, and the bridge planned against 8.67
+    units where the account held 19.30.
+
+    Two consequences, and the second is why this is fixed at the close
+    rather than left for the morning:
+
+      * it kept opening. Each pass saw a third of the position, measured it
+        against the target, and added the difference again.
+      * **a close would have closed one leg.** `close_position` takes a
+        single deal id, so the flatten before the bell would have shut 8.67
+        units and carried 10.63 overnight -- the exposure the day-trading
+        configuration exists to avoid, on a book that believed it was flat.
+
+    Returns ids only, so the caller decides what to do with them, and
+    swallows a malformed record rather than failing a close: a close that
+    raises is worse than a close that is incomplete.
+    """
+    try:
+        return [
+            str(getattr(position, "deal_id", "") or "")
+            for position in (held or ())
+            if str(getattr(position, "epic", "") or "") == str(epic)
+            and str(getattr(position, "deal_id", "") or "")
+            and str(getattr(position, "deal_id", "") or "") != str(placed_deal_id)
+        ]
+    except Exception:  # noqa: BLE001 - never block a close
+        return []
+
+
 def _completed_bar_end(interval, now):
     """The newest bar boundary that is COMPLETE, or ``None`` if unknowable.
 
@@ -1781,6 +1822,30 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         if intent.action == "close":
             result = dealing_module.close_position(intent.deal_id, session, settings)
             closed += 1 if result.ok else 0
+
+            # And the rest of the legs. Capital nets only OPPOSING trades,
+            # so several same-direction opens on one epic are several
+            # positions -- and the bridge, which keys positions by epic,
+            # named only one of them. Closing the named leg alone would
+            # carry the remainder overnight on a book that believes it is
+            # flat. See `_other_legs`.
+            #
+            # Done here rather than in the bridge deliberately: the bridge
+            # is pure and decides WHAT to do, and this is a fact about how
+            # the venue represents a holding. Every leg is recorded, so the
+            # order store still says what the account did.
+            for deal in _other_legs(held, intent.epic, intent.deal_id):
+                extra = dealing_module.close_position(deal, session, settings)
+                closed += 1 if extra.ok else 0
+                logger.info(
+                    "Capital: %s held in more than one position; closed a "
+                    "further leg %s (%s)",
+                    intent.epic, deal, "ok" if extra.ok else extra.error,
+                )
+                order_store.record_result(
+                    dataclasses.replace(intent, deal_id=deal),
+                    extra, app_config, account_name, now=now,
+                )
         else:
             # The side comes from the DELTA, not from the target.
             #
