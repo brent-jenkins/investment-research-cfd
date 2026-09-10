@@ -922,10 +922,23 @@ INTENT_EXECUTION_LAG = 0
 def _command_run_once(args, app_config, smtp, transport) -> int:
     """Run the pipeline once, notify, and return an exit code."""
     backtest = _backtest_config(args, app_config)
+    # And the account's own close-of-session flatten, so the run's book
+    # matches what the broker actually holds overnight. Safe to model now
+    # that the frame's final bar is never treated as a session end -- that
+    # was what zeroed the bar being decided on when this was first wired on
+    # 2026-09-08. Without it the run carries positions the account closed at
+    # the bell, and the intent asks to hold names that are not there.
+    flatten = (
+        FLATTEN_AT_SESSION_END
+        if getattr(app_config.strategy, "flatten_before_close", False)
+        else None
+    )
     backtest = dataclasses.replace(
         backtest,
         execution=dataclasses.replace(
-            backtest.execution, execution_lag=INTENT_EXECUTION_LAG
+            backtest.execution,
+            execution_lag=INTENT_EXECUTION_LAG,
+            overnight_profit_take=flatten,
         ),
     )
     universe = backtest.tickers or []

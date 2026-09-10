@@ -265,6 +265,24 @@ def run_execution(signal_frame, analysis_frame, config):
     # once here rather than per bar, and from the frame's own index: the
     # panel is session-restricted, so the last bar of a calendar day IS the
     # session's close.
+    #
+    # **Except the final bar of the frame, which is never a session end.**
+    # A bar is only the session's last once the session has finished, and
+    # for the newest bar in the data it has not -- it is simply the last
+    # thing that has happened yet. In a backtest the distinction never
+    # mattered, because the run ended on a day that was over.
+    #
+    # It matters live, and it cost a session on 2026-09-09. The scheduled
+    # run's newest bar is the one in progress, so treating it as a close
+    # flattened the very bar the engine was deciding on: `persist.intent`
+    # reads `positions.iloc[-1]`, found it zeroed, and the daemon's intent
+    # became "hold nothing" for the whole day. Measured on the same data at
+    # the same moment -- flatten treating the last bar as a close, 0
+    # positions; flatten excluding it, 6.
+    #
+    # Excluding one bar changes nothing in a backtest beyond the final day's
+    # close, which is the honest position anyway: a run stopping mid-session
+    # should not pretend the book was flattened.
     session_end = np.zeros(len(index), dtype=bool)
     if len(index):
         _stamps = pd.DatetimeIndex(index)
@@ -273,6 +291,7 @@ def run_execution(signal_frame, analysis_frame, config):
         session_end = np.asarray(
             _stamps == pd.DatetimeIndex(_closes), dtype=bool
         )
+        session_end[-1] = False
 
     if bool(getattr(config, "entry_recheck", False)):
         fresh_direction = _as_labels(signal_frame.direction, index, columns)
