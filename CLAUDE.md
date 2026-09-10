@@ -629,6 +629,76 @@ four names that cleared the gate at 13:00 and were missed, the two that
 were taken moved BETTER -- +1.18% against +0.35% held from 13:00. The fault
 was holding period and sizing, not choice of name.
 
+**THE PLUMBING, FIXED — five changes, one fault.** Done after the close on
+the owner's instruction, with the market shut so a restart cost nothing.
+
+The fault, once: **the record and the account view both modelled ONE
+POSITION PER INSTRUMENT, and Capital models one per order.** Everything
+below follows from that, and fixing four of five would have left the
+account wrong in the fifth way.
+
+    _aggregate_positions   the broker's legs summed per instrument, every
+                           deal id carried. Sizes summed SIGNED so an
+                           opposing pair nets rather than doubles.
+    open_orders            rows replayed per DEAL ID and summed per epic,
+                           so a close removes the leg it names. A close
+                           naming no known leg still clears the epic --
+                           after a resize the recorded id is the ORDER's,
+                           and believing a leg is open when it is not is
+                           the direction that halts dealing.
+    _other_legs            a close shuts every leg on the instrument.
+    actionable             **a halt stops OPENING and lets closing through.**
+    record_arrival         the mirror of `record_departure`.
+    _resulting_position    an open records the side the BROKER filled.
+
+**The halt change has the most reach and is the one to argue with first.**
+It permits an order on a book the app has just admitted it cannot
+reconcile. The argument for it is that this module already makes it about
+margin, in these words: closes are never refused, because a book short of
+margin is exactly the one that most needs to reduce. A close commits no
+capital, needs no sizing, cannot breach a limit, and acts on a deal id the
+BROKER supplied rather than on anything the record believes. Every argument
+for halting is an argument about taking on exposure.
+`test_a_halted_report_places_nothing_whatever_the_order` asserted the old
+contract and is rewritten rather than deleted, carrying what it cost.
+
+**The side bug was found by running the new reader against the LIVE record,
+not by a test.** Sizes agreed at 17.31 units and the side did not: the
+record said SPGI BUY where the account held SELL, because
+`_resulting_position` derived the side from the sign of the intent's target
+and the console script that wrote those rows passed an unsigned magnitude.
+`reconcile` compares epics, so the record disagreed with the account about
+the side of a live position and reported clean. That is the fifth time this
+week the real thing on real data found what the suite could not, and it is
+why the rule exists.
+
+**Verified on the box afterwards**, which is the whole point:
+
+    record   SPGI 17.31 SELL, 2 legs
+    account  SPGI 17.31 SELL, 2 legs
+    reconcile -> unexplained: none, missing: none
+
+**What is NOT fixed, and should be read as the honest state.**
+
+* **Nothing tells the owner when the app is wrong.** Every fault this week
+  was found because the owner noticed something or because I went digging.
+  A daily verification -- what the page showed, what the engine intended,
+  what the account did, what was refused and why, the position at the close
+  -- would have surfaced every one of them on day one in a form nobody has
+  to ask me about. That is worth more than any single fix here and it is
+  not built.
+* **The stale-intent loop.** The engine goes on intending positions it
+  entered on an earlier bar that the account never got, so every later pass
+  attempts an open the last look correctly refuses. Safe, noisy, and the
+  reason the refusal rate looked alarming.
+* `MIN_SESSION_MINUTES = 30.0` is still provisional and unmeasured.
+* **The account carried SPGI overnight**, 17.31 units short. The flatten at
+  19:01 ran four minutes before the multi-leg fix restarted the service,
+  and the reconciliation halt then blocked every later close. Tomorrow's
+  first pass should shut it: before 14:00 UTC the newest completed bar is
+  the previous session's last, where the book is flattened, so the intent
+  is "hold nothing" and opens are impossible.
+
 **AND THE HALT BLOCKED THE CLOSE THAT WOULD HAVE FIXED IT.** The third
 consequence of the same root cause, an hour after the first two, and the
 one that says something about the design rather than about a bug.
