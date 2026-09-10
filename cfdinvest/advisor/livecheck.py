@@ -96,6 +96,27 @@ __all__ = [
 MIN_SESSION_MINUTES = 30.0
 
 
+def _bar_spacing(working, stamp_column, ticker_column):
+    """The panel's own bar interval, or ``None`` when it cannot be told.
+
+    Read from the data because the check is handed whatever panel the caller
+    built. ``None`` means "do not assume the newest bar is the one in
+    progress", which falls back to appending -- weaker, and honest about it.
+    """
+    import pandas as pd
+
+    try:
+        stamps = pd.to_datetime(working[stamp_column], utc=True)
+        one = working[ticker_column].astype(str).iloc[-1]
+        series = stamps[working[ticker_column].astype(str) == one].sort_values()
+        if len(series) < 3:
+            return None
+        gap = series.diff().dropna().median()
+        return gap if pd.notna(gap) and gap > pd.Timedelta(0) else None
+    except Exception:  # noqa: BLE001 - an unreadable panel is not fatal here
+        return None
+
+
 class ProvisionalRepository:
     """The lake, plus one unfinished bar per instrument from a live quote.
 
@@ -131,6 +152,10 @@ class ProvisionalRepository:
         at = pd.Timestamp(self._at)
         at = at.tz_localize("UTC") if at.tz is None else at.tz_convert("UTC")
 
+        # How far apart the bars are, from the data rather than from config:
+        # the check must work on whatever panel it is handed.
+        spacing = _bar_spacing(working, stamp_column, ticker_column)
+
         rows = []
         for ticker, price in self._prices.items():
             try:
@@ -145,9 +170,62 @@ class ProvisionalRepository:
             # Never behind the lake. A quote older than the newest stored bar
             # would rewrite history rather than extend it, and a vendor that
             # returns a stale price is a thing that happens.
-            newest = pd.to_datetime(existing[stamp_column], utc=True).max()
+            stamps = pd.to_datetime(existing[stamp_column], utc=True)
+            newest = stamps.max()
             if at <= newest:
                 continue
+
+            # **Update the bar in progress rather than appending a point.**
+            #
+            # This appended a new bar with open, high, low and close all set
+            # to the quote -- zero range by construction. Every range-scaled
+            # input then read that bar as motionless, which does not dilute a
+            # weak signal (already near the floor) but collapses a strong one.
+            #
+            # Measured across the 50-name universe on 2026-09-10, against the
+            # engine's own reading on the same bar:
+            #
+            #     engine band   n    mean engine   mean live   gap
+            #     >= 0.75       2        0.816       0.492   -0.324
+            #     0.60-0.75     1        0.650       0.656   +0.006
+            #     0.40-0.60    17        0.469       0.475   +0.006
+            #     < 0.40       26        0.316       0.306   -0.010
+            #
+            # Agreement to a hundredth everywhere except at the top, where it
+            # collapsed by a third. NOT ONE of the 46 could reach 0.75; the
+            # highest live reading in the whole book was 0.656. The gate had
+            # a pass mark the check could not reach, so the account could
+            # barely open a position -- and the ones that did get through were
+            # the pathological cases where dilution inverts.
+            #
+            # It went unnoticed because the last look was validated at
+            # entry_confidence 0.35, where a shift of 0.32 rarely crosses the
+            # line. Raising the gate to 0.75 on 2026-09-04 moved the mark onto
+            # a scale the check could not reach, silently.
+            #
+            # The lake's newest bar IS the bar in progress and already carries
+            # a real open, high and low from the session so far. So the quote
+            # updates it -- close moves, high and low extend if the quote is
+            # outside them -- which is what a bar in progress actually looks
+            # like.
+            if spacing is not None and (at - newest) <= spacing:
+                where = existing.index[stamps == newest]
+                if len(where):
+                    index = where[0]
+                    working.at[index, "close"] = value
+                    if "high" in working.columns:
+                        working.at[index, "high"] = max(
+                            float(working.at[index, "high"]), value)
+                    if "low" in working.columns:
+                        working.at[index, "low"] = min(
+                            float(working.at[index, "low"]), value)
+                    continue
+
+            # The bar in progress is missing -- ingestion is behind, or the
+            # session has only just opened. Appending is all that is left, and
+            # it carries the dilution above, so the reading is honest about
+            # being weaker than the lake's own. `_too_early` already declines
+            # the session-open case for the same reason.
             row = {
                 stamp_column: at, ticker_column: str(ticker),
                 "open": value, "high": value, "low": value, "close": value,
