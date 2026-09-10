@@ -944,6 +944,67 @@ def _intent_interval(backtest, app_config):
     return getattr(market, "interval", None)
 
 
+def _aggregate_positions(held):
+    """The broker's positions, one entry per instrument, legs summed.
+
+    **Capital merges only OPPOSING trades.** Two SELLs on one epic are two
+    positions with two deal ids, and this used to be built as
+    ``{p.epic: {...} for p in held}`` -- a dict comprehension, so duplicate
+    epics silently collapsed to whichever came last.
+
+    That cost an evening on 2026-09-10 and defeated a risk limit. The
+    account held SPGI as 1.99 + 8.64 + 8.67 = 19.30 units in three legs and
+    the bridge planned against 8.67, so:
+
+      * the concentration cap measured a third of the exposure and passed a
+        book that was **100% of gross in one name** against a 20% cap;
+      * each pass saw a third of the holding, compared it to the target and
+        topped it up again -- the three legs are the bug's own footprints;
+      * `max_leverage` summed the same understated figures.
+
+    Sizes are summed SIGNED, so a hedged pair nets rather than doubling.
+    That should not arise in netting mode, where an opposing order closes
+    rather than opens -- but "should not arise" is how the original
+    collapse was reasoned about too, and a book that is actually flat must
+    not read as twice its size.
+
+    ``deal_ids`` lists every leg so a close can shut all of them. Never
+    raises: an unreadable position is skipped rather than failing the pass,
+    because a pass that dies opens nothing AND closes nothing.
+    """
+    positions: dict = {}
+    for item in (held or ()):
+        try:
+            epic = str(getattr(item, "epic", "") or "")
+            if not epic:
+                continue
+            size = float(getattr(item, "size", 0.0) or 0.0)
+            direction = str(getattr(item, "direction", "") or "")
+            deal_id = getattr(item, "deal_id", None)
+        except Exception:  # noqa: BLE001 - one bad row is not a broken book
+            continue
+
+        signed = -abs(size) if direction.upper() == "SELL" else abs(size)
+        entry = positions.setdefault(
+            epic, {"signed": 0.0, "deal_id": deal_id, "deal_ids": []}
+        )
+        entry["signed"] += signed
+        entry["deal_id"] = deal_id
+        if deal_id:
+            entry["deal_ids"].append(deal_id)
+
+    resolved = {}
+    for epic, entry in positions.items():
+        total = entry["signed"]
+        resolved[epic] = {
+            "size": abs(total),
+            "direction": "SELL" if total < 0 else "BUY",
+            "deal_id": entry["deal_id"],
+            "deal_ids": entry["deal_ids"],
+        }
+    return resolved
+
+
 def _other_legs(held, epic, placed_deal_id):
     """Every OTHER open position on ``epic``. Never raises.
 
@@ -1515,10 +1576,11 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         logger.warning("Capital: positions unreadable (%s); not trading", held_error)
         return EXIT_OK
 
-    positions = {
-        p.epic: {"size": p.size, "direction": p.direction, "deal_id": p.deal_id}
-        for p in held
-    }
+    # Legs summed rather than collapsed. A dict comprehension keyed by epic
+    # silently drops all but the last position on an instrument, and every
+    # limit downstream then measures a fraction of the book. See
+    # `_aggregate_positions`.
+    positions = _aggregate_positions(held)
     placed = order_store.open_orders(app_config, account_name)
 
     # What the account should hold comes from the ENGINE, read back from the
@@ -1811,10 +1873,24 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     order_store.record_plan(report, app_config, account_name, now=now)
 
     if report.halted:
+        # Announced exactly as before -- and no longer a return.
+        #
+        # `report.actionable` withholds every open while halted and lets
+        # closes through, so falling into the order loop places nothing new
+        # and can still reduce. Returning here is what left two SPGI legs
+        # open on 2026-09-10 with the market closing: the halt blocked the
+        # very close that would have cleared it.
         logger.warning("Capital: NOT TRADING -- %s", report.halt_reason)
         if not getattr(args, "no_email", False):
             _send_bridge_halt(report, smtp, transport)
-        return EXIT_OK
+        if not report.actionable:
+            return EXIT_OK
+        logger.warning(
+            "Capital: halted, but closing %d position(s) anyway -- a book "
+            "the app cannot reconcile is one that should still be able to "
+            "reduce",
+            len(report.actionable),
+        )
 
     opened = closed = resized = 0
     outcomes: list[tuple] = []

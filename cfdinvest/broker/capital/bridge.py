@@ -128,9 +128,35 @@ class BridgeReport:
 
     @property
     def actionable(self) -> tuple[Intent, ...]:
-        if self.halted:
-            return ()
         acting = [i for i in self.intents if i.acts]
+
+        # **A halt stops OPENING. It does not stop closing.**
+        #
+        # This returned nothing at all, and on 2026-09-10 that turned a
+        # guard into the problem it was guarding against. The record and the
+        # account disagreed about SPGI -- correctly, one close row had
+        # removed an instrument that still had two legs open -- and the
+        # bridge refused to act. It halts BEFORE it plans, so no close
+        # intent existed either, and a fix deployed seventeen minutes
+        # earlier that would have flattened both legs never ran. Half an
+        # hour before the bell, in a configuration whose whole purpose is
+        # being flat overnight.
+        #
+        # The margin guard already gets this right, and says why in this
+        # same module: closes are never refused, because "a book short of
+        # margin is exactly the one that most needs to reduce". A book the
+        # app does not understand is exactly the one that most needs to be
+        # reducible.
+        #
+        # Closing is also the safe direction on its own terms. It commits no
+        # capital, needs no sizing, cannot breach a limit, and acts on a
+        # deal id the BROKER supplied rather than on anything the record
+        # believes. Every argument for halting -- "acting on an account you
+        # have just demonstrated you do not understand" -- is an argument
+        # about taking on exposure.
+        if self.halted:
+            acting = [i for i in acting if i.action == "close"]
+
         # Stable, so instruments keep their relative order inside each group
         # and a pass remains reproducible from its own record.
         return tuple(sorted(acting, key=lambda i: self._ORDER.get(i.action, 9)))

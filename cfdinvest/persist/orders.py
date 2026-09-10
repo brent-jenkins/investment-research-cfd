@@ -40,6 +40,7 @@ __all__ = [
     "record_plan",
     "record_result",
     "record_departure",
+    "record_arrival",
     "load_orders",
     "open_orders",
 ]
@@ -154,6 +155,70 @@ def record_departure(
         "deal_id": deal_id,
         "reconciled": True,
         "reason": reason or "absent from the account; recorded to reconcile",
+    }], config, account)
+
+
+def record_arrival(
+    epic: str, position, config=None, account: str | None = None, *,
+    now=None, reason: str = "",
+) -> int:
+    """Record a position the account holds and the record does not.
+
+    The mirror of :func:`record_departure`, and the reason it exists is that
+    on 2026-09-10 the mirror had to be improvised at a console while the
+    market closed. The record can fall behind the account in BOTH
+    directions; only one of them had a way back.
+
+    **This is not the same act as recording a departure, and the difference
+    matters.** A departure is safe to write from nothing -- the account says
+    the position is gone, and gone is fully described. An arrival has a
+    size, a side, a level and a deal id, and inventing any of them would put
+    a number in the record that no trade ever made. So every value comes
+    from the broker's own position object, and a position that cannot supply
+    a fill level is REFUSED rather than recorded: `_confirmed` requires a
+    level on an open, so a row without one would be written, ignored, and
+    leave the disagreement in place while reporting success.
+
+    It does not adopt the position in any other sense. The bridge still
+    reads what is held from the broker, sizes from the broker, and closes
+    on the broker's deal ids. All this changes is that `reconcile` stops
+    reporting a disagreement that has already been understood.
+
+    Returns the number of rows written, so a caller can tell "nothing to do"
+    from "could not".
+    """
+    level = getattr(position, "level", None)
+    size = getattr(position, "size", None)
+    deal_id = getattr(position, "deal_id", None)
+    direction = getattr(position, "direction", None)
+
+    if level is None or size is None:
+        logger.warning(
+            "Not recording %s: the broker quotes no %s, and a position "
+            "recorded without one is a row the reader will ignore",
+            epic, "level" if level is None else "size",
+        )
+        return 0
+
+    return _append([{
+        "at": str(now or ""),
+        "kind": "result",
+        "ticker": str(epic),
+        "epic": str(epic),
+        "action": "open",
+        "status": "OPEN",
+        "ok": True,
+        "level": float(level),
+        "units": float(size),
+        "direction": str(direction or ""),
+        "position_units": float(size),
+        "position_direction": str(direction or ""),
+        "deal_id": str(deal_id or ""),
+        # So it can never be read as an order this app placed, and so the
+        # two can be counted apart later: arrivals should be rare, and a
+        # rising count is the dealing path losing track of what it opened.
+        "reconciled": True,
+        "reason": reason or "held on the account and absent from the record",
     }], config, account)
 
 
@@ -362,6 +427,15 @@ def _confirmed(row: Mapping[str, Any]) -> bool:
     return status == "OPEN" and row.get("level") is not None
 
 
+def _signed(size, direction) -> float:
+    """Units as a signed number, negative for a short. ``0.0`` if unreadable."""
+    try:
+        magnitude = abs(float(size))
+    except (TypeError, ValueError):
+        return 0.0
+    return -magnitude if str(direction or "").upper() == "SELL" else magnitude
+
+
 def open_orders(config=None, account: str | None = None) -> dict[str, dict[str, Any]]:
     """What this app believes it holds, keyed by epic. Never raises.
 
@@ -369,31 +443,83 @@ def open_orders(config=None, account: str | None = None) -> dict[str, dict[str, 
     confirmed is not a position — believing otherwise would put the record
     ahead of the account, and reconciliation would then report the account as
     missing something that was never there.
+
+    **One instrument can be several positions, and this tracks them
+    separately before aggregating.** Capital merges only OPPOSING trades, so
+    two SELLs on one epic are two positions with two deal ids. This used to
+    keep one entry per epic and pop the whole entry on any close, which cost
+    an evening on 2026-09-10: the flatten closed one of three SPGI legs, the
+    single close row removed the instrument from the record entirely, and
+    `reconcile` then reported the two surviving legs as an UNEXPLAINED
+    position. The bridge halted, and because it halts before it plans it
+    could never emit the close that would have cleared it.
+
+    So rows are replayed per DEAL ID and summed per epic. A close removes
+    the leg it names and leaves the others standing.
+
+    A close whose deal id matches no known leg still clears the whole epic,
+    which is the old behaviour and is kept deliberately: after a resize the
+    record's `deal_id` is the ORDER's id rather than the surviving
+    position's (recorded 2026-09-04), so an unrecognised id means "something
+    closed here and the record cannot say which leg" — and believing a leg
+    is still open when it is not is the direction that halts dealing.
+
+    ``size`` is the total across legs and ``deal_ids`` lists them, newest
+    last. ``deal_id`` stays the newest single id so existing callers are
+    unchanged.
     """
-    live: dict[str, dict[str, Any]] = {}
+    legs: dict[str, dict[str, dict[str, Any]]] = {}
     for row in load_orders(config, account):
         if row.get("kind") != "result" or not _confirmed(row):
             continue
         epic = str(row.get("epic") or "")
         if not epic:
             continue
+        deal = str(row.get("deal_id") or "")
+
         if row.get("action") == "close":
-            live.pop(epic, None)
-        else:
-            # The position, not the order. `units` is what was SENT, which
-            # for a resize is the delta and for a reduction carries the
-            # opposing side; `position_units` is what the account now holds.
-            # Older rows have neither, and for them the two agreed.
-            size = row.get("position_units")
-            direction = row.get("position_direction") or row.get("direction")
-            if size is None:
-                size, direction = row.get("units"), row.get("direction")
-            live[epic] = {
-                "size": size,
-                "direction": direction,
-                "deal_id": row.get("deal_id"),
-                "level": row.get("level"),
-            }
+            known = legs.get(epic) or {}
+            if deal and deal in known:
+                known.pop(deal, None)
+                if not known:
+                    legs.pop(epic, None)
+            else:
+                legs.pop(epic, None)
+            continue
+
+        # The position, not the order. `units` is what was SENT, which
+        # for a resize is the delta and for a reduction carries the
+        # opposing side; `position_units` is what the account now holds.
+        # Older rows have neither, and for them the two agreed.
+        size = row.get("position_units")
+        direction = row.get("position_direction") or row.get("direction")
+        if size is None:
+            size, direction = row.get("units"), row.get("direction")
+        legs.setdefault(epic, {})[deal] = {
+            "size": size,
+            "direction": direction,
+            "deal_id": row.get("deal_id"),
+            "level": row.get("level"),
+        }
+
+    live: dict[str, dict[str, Any]] = {}
+    for epic, held in legs.items():
+        if not held:
+            continue
+        rows = list(held.values())
+        total = sum(_signed(r["size"], r["direction"]) for r in rows)
+        newest = rows[-1]
+        live[epic] = {
+            # The aggregate, because a limit reading one leg of three is a
+            # limit measuring a third of the exposure -- which is how the
+            # concentration cap passed a book that was 100% one name.
+            "size": abs(total) if total else newest["size"],
+            "direction": ("SELL" if total < 0 else "BUY") if total
+                         else newest["direction"],
+            "deal_id": newest["deal_id"],
+            "deal_ids": [r["deal_id"] for r in rows],
+            "level": newest["level"],
+        }
     return live
 
 #: The refusals that come from the last look, as opposed to a limit.

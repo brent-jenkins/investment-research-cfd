@@ -104,15 +104,52 @@ def test_refusals_and_no_ops_are_never_placed():
     assert all(i.action in ("close", "resize", "open") for i in report.actionable)
 
 
-def test_a_halted_report_places_nothing_whatever_the_order():
-    """M484: the halt outranks the ordering.
+def test_a_halted_report_opens_nothing_whatever_the_order():
+    """M484: the halt outranks the ordering, for OPENS.
 
-    A halt means the account and the record disagree, so nothing is
-    understood well enough to act on -- including a close. Reordering must
-    not become a route around that.
+    **This test asserted the opposite until 2026-09-10, and the old
+    contract is what it was changed for.** It read "a halt means the
+    account and the record disagree, so nothing is understood well enough
+    to act on -- including a close", and that reasoning does not survive
+    what it cost.
+
+    The record and the account disagreed about SPGI: correctly, because one
+    close row had removed an instrument that still had two legs open. The
+    bridge halted. `plan_orders` halts before it plans, so no close intent
+    existed, and even the one it would have produced was withheld here. Two
+    legs stayed open into the night in a configuration whose whole purpose
+    is being flat overnight, and the fix that would have closed them had
+    been deployed seventeen minutes earlier.
+
+    Closing is the safe direction and this module already says so about the
+    margin guard: closes are never refused, because a book short of margin
+    is exactly the one that most needs to reduce. A book the app cannot
+    reconcile is exactly the one that most needs to be reducible. A close
+    commits no capital, needs no sizing, cannot breach a limit, and acts on
+    a deal id the BROKER supplied rather than on anything the record
+    believes.
+
+    So the halt withholds opens and resizes -- everything that takes on
+    exposure -- and lets closes through.
     """
     report = BridgeReport(
-        intents=(intent("AAA", "close"), intent("BBB", "open")),
+        intents=(
+            intent("AAA", "close"), intent("BBB", "open"),
+            intent("CCC", "resize"),
+        ),
+        halted=True, halt_reason="reconciliation failed",
+    )
+
+    assert actions(report) == ["close"], (
+        "a halt must withhold every intent that takes on exposure and let "
+        "closes through"
+    )
+
+
+def test_a_halt_with_nothing_to_close_still_places_nothing():
+    """The ordinary halt is unchanged: no closes, no orders."""
+    report = BridgeReport(
+        intents=(intent("AAA", "open"), intent("BBB", "resize")),
         halted=True, halt_reason="reconciliation failed",
     )
     assert report.actionable == ()
