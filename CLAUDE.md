@@ -559,6 +559,101 @@ quotes that differ must produce panels that differ -- rather than a value,
 because a test asserting "the close equals the quote" passes against a write
 that lands on a throwaway copy.
 
+**WHICH BAR DOES THE DEALER DECIDE ON? Asked twice, answered wrongly twice,
+and the second answer was mine.** The owner's read was "TMUS was a bad
+choice, it should never have been chosen", and they were right.
+
+TMUS read 0.398, 0.464 and 0.415 across today's three completed hourly bars
+against a 0.75 gate. The runs that opened it read something else:
+
+    run                newest bar   age of that bar   TMUS confidence
+    20260910T144601Z   14:00        complete                    0.445
+    20260910T151118Z   15:00        11 min                      0.771   <- opened
+    20260910T153148Z   15:00        31 min                      0.415   <- exited
+    20260910T155248Z   15:00        52 min                      0.770   <- opened again
+
+**The same bar read 0.771, then 0.415, then 0.770 as it filled in.** That is
+not a signal changing its mind; it is eleven minutes of an hour being
+treated as an hour. The account opened, exited and re-opened on it.
+
+`INTENT_EXECUTION_LAG = 0` was shipped on 2026-09-09 to stop the dealer
+acting on an eighteen-hour-old signal -- the TGT trade -- and it does. But
+the newest bar is the bar IN PROGRESS, so the two faults are one question
+with two wrong answers: lag 1 gives a bar eighteen hours stale at the open,
+lag 0 gives a bar eleven minutes old. Every figure this project holds was
+measured on completed bars.
+
+**The intent run now stops at the newest bar that has FINISHED.**
+`repository.slice_range` is inclusive, so an end of 14:00 keeps the 14:00
+bar and drops the partial 15:00. The lag stays at 0, so the dealer acts on
+the newest bar it is given, and the page reads the same run -- page and
+dealer still agree, which is what the lag change was for. No new threshold
+and no new clock: the rule is that a decision uses data that exists.
+
+**The first hour falls out rather than needing a rule**, which is what says
+the shape is right. Before 14:00 UTC no bar of the session has finished, so
+the newest completed bar is the previous session's last -- and the book is
+flattened there, so the intent is "hold nothing" and nothing can open. The
+first entry becomes possible when the 13:00 bar completes at 14:00, thirty
+minutes after the 13:30 open: the cadence the owner asked for on
+2026-09-09, arrived at from the data rather than from `open_delay_minutes`,
+which stays at 0 and is now redundant rather than wrong.
+
+**IT SHIPPED INERT TWICE, AND THAT IS THE MORE USEFUL HALF OF THIS ENTRY.**
+
+    16:04  deployed.  The run at 16:13 still had a newest bar of 16:00.
+    16:22  deployed.  The run at 16:34 still had a newest bar of 16:00.
+    16:45  deployed.  Trimmed.
+
+First, `--interval` defaults to `None`, which does not mean "no bars" but
+"whatever `market.interval` says" -- so the trim read `None` on every
+scheduled run and took the deliberate "leave it alone rather than guess"
+path. Second, `market.interval` is **`capital_1h`**, a LAKE STORE NAME kept
+distinct so Capital's hourly bars never collide with yfinance's `1h`;
+`pd.Timedelta("capital_1h")` is a ValueError, and the same safe fallback
+fired again.
+
+**Every test passed through both**, because every test handed the helper a
+frequency string of its own choosing. The live path never passes one. So
+the test that matters reads the SHIPPED CONFIGURATION and asserts that
+whatever `market.interval` declares resolves to a bar span -- "test the
+property, not the constant" applied to a fixture rather than a threshold:
+the input has to come from where the live path gets it.
+
+`capital_prices.resolution_for` is the existing single owner of the
+store-name mapping and is used rather than a second parser.
+
+Both inert deploys were caught by reading the run on the box, minutes
+apart, rather than by trusting a green suite. This is the project's oldest
+failure -- a gate reporting success while doing nothing -- committed twice
+in ninety minutes by the person writing about it.
+
+**And the deploying itself cost the session.** Each deploy restarts the
+daemon, and a restart runs ingestion, macro, earnings and filings before it
+can deal again -- about nine minutes. Nine restarts today, and **five
+dealing passes ran where roughly nine were due**:
+
+    13:36  opened TGT, refused 4        <- the broken last look
+    14:18  NOT TRADING (TGT jam)
+    14:46  NOT TRADING (TGT jam)
+    15:12  opened TMUS, refused 5       <- an eleven-minute bar
+    15:32  closed TMUS, refused 5
+    16:14  refused 5
+    16:34  refused 5
+
+**Do not deploy during a session.** The fix is worth less than the passes it
+costs, unless what is running is actively placing wrong trades -- which was
+the case today, and is the only reason these went out.
+
+**What the refusals were, and why they were right.** BLK, HD, HON and SPGI
+all cleared the gate at 13:00 and collapsed within the hour -- 0.815 to
+0.471, 0.787 to 0.445, 0.763 to 0.398, 0.846 to 0.517. The engine entered
+them in simulation at that bar and went on intending them; the account was
+jammed and flat, so every later pass tried to OPEN them fresh and the last
+look correctly refused. Those trades existed for one pass and were gone by
+14:00. The 83% refusal rate on those passes is not the gate misfiring: it
+is the account trying to buy yesterday's opportunity.
+
 **A HAND CLOSURE JAMMED THE DEALER FOR A WHOLE SESSION AND NOTHING COULD
 CLEAR IT.** The account opened nothing all day and the last look was not
 why. Every pass from 13:36 halted on:
