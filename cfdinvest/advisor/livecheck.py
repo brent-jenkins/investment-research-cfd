@@ -156,6 +156,15 @@ class ProvisionalRepository:
         # the check must work on whatever panel it is handed.
         spacing = _bar_spacing(working, stamp_column, ticker_column)
 
+        # Whether the bar in progress was updated in place. Without this the
+        # early return below discards `working` -- and once every name takes
+        # the update branch, `rows` is empty on every pass, so the whole
+        # check silently returns the lake untouched. That is what it did
+        # between ab182c6 and this commit: measured on 2026-09-10, moving
+        # every quote by 5% moved 0 of 50 readings. A check that cannot move
+        # is not a check, whatever number it reports.
+        touched = False
+
         rows = []
         for ticker, price in self._prices.items():
             try:
@@ -219,6 +228,7 @@ class ProvisionalRepository:
                     if "low" in working.columns:
                         working.at[index, "low"] = min(
                             float(working.at[index, "low"]), value)
+                    touched = True
                     continue
 
             # The bar in progress is missing -- ingestion is behind, or the
@@ -234,10 +244,13 @@ class ProvisionalRepository:
                 row["volume"] = float("nan")
             rows.append(row)
 
-        if not rows:
+        if not rows and not touched:
             return frame
 
-        extended = pd.concat([working, pd.DataFrame(rows)], ignore_index=True)
+        extended = (
+            pd.concat([working, pd.DataFrame(rows)], ignore_index=True)
+            if rows else working
+        )
         extended = extended.sort_values([stamp_column, ticker_column])
         return extended.set_index(list(frame.index.names)) if frame.index.names[0] else extended
 
