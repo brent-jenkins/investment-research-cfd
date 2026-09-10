@@ -678,6 +678,39 @@ why the rule exists.
     account  SPGI 17.31 SELL, 2 legs
     reconcile -> unexplained: none, missing: none
 
+**A sixth change, on the owner's objection, and it caught a bug in itself.**
+Asked whether the system should evaluate a carried position before closing
+it -- what if SPGI is a candidate again tomorrow? Closing a trade only to
+immediately open a new one does not make sense.
+
+It does not, and the completed-bar rule shipped hours earlier is what would
+have caused it. `intended_positions` reads `positions.iloc[-1]`, and on a
+session's last bar that book is FLAT BY CONSTRUCTION because the flatten is
+modelled. Before this session's first bar completes, the newest COMPLETED
+bar IS the previous session's last, so the intent reads "hold nothing" when
+it means "yesterday ended flat". SPGI, carried overnight at 0.901 on its
+last completed bar, would have been closed about 13:35 and bought back
+about 14:05 -- the spread twice, to arrive where it started.
+
+`decision_is_a_previous_session_close` declines to act on it, and waits at
+most one bar. It decides nothing about the position: once this session's
+first bar completes, `plan_orders` does what it always did -- target
+against held, `none` when they agree, a close when they do not. That
+machinery was being denied the chance to run.
+
+**The first version of the rule asked the wrong question and its own test
+caught it.** It tested whether the bar was the last of its session, which
+cannot be told apart from "the last bar we happen to have, because
+ingestion stopped at 15:00" -- so a stale lake would have silently stopped
+the account ever closing anything. The rule is now about the harm: an
+earlier day AND a flat intent, so acting would EMPTY the book on another
+day's view. A stale bar still holding positions keeps the old behaviour.
+
+The test fixture was wrong too, and in the same family: it held a position
+on every bar, which is not a book this engine can produce. Testing against
+a shape the code cannot see proves nothing -- the same mistake that let the
+completed-bar trim ship inert twice the same afternoon.
+
 **What is NOT fixed, and should be read as the honest state.**
 
 * **Nothing tells the owner when the app is wrong.** Every fault this week
