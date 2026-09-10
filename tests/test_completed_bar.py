@@ -17,9 +17,18 @@ later the same bar read 0.415 and the engine exited:
     20260910T144601Z   14:00        complete           0.445
     20260910T151118Z   15:00        11 min             0.771   <- opened
     20260910T153148Z   15:00        31 min             0.415   <- exited
+    20260910T155248Z   15:00        52 min             0.770   <- re-opened
+    20260910T165458Z   15:00        complete           0.779
 
 Eleven minutes of an hourly bar is noise, and every figure this project
 holds was measured on completed bars.
+
+That the hour ENDED at 0.779 -- clearing the gate -- is luck rather than
+vindication, and it is why the churn is the fault rather than the answer.
+One bar drove three account actions in forty minutes, and at 15:31 the
+engine exited a position it would have kept had it waited, paying a spread
+each way to find out. A decision that is right by coincidence is the
+shadow-book failure with better manners.
 
 Trimming the run to the newest COMPLETED bar answers the question once. The
 lag stays at 0, so the dealer still acts on the newest bar it is given, and

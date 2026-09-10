@@ -561,20 +561,47 @@ that lands on a throwaway copy.
 
 **WHICH BAR DOES THE DEALER DECIDE ON? Asked twice, answered wrongly twice,
 and the second answer was mine.** The owner's read was "TMUS was a bad
-choice, it should never have been chosen", and they were right.
+choice, it should never have been chosen". They were right that something
+was wrong and right to say so before I had finished measuring -- and the
+specific claim turned out not to hold: on completed data TMUS clears at
+0.779. What was wrong was the BASIS of the decision, not its answer. The
+retraction below is part of the entry rather than a footnote to it.
 
-TMUS read 0.398, 0.464 and 0.415 across today's three completed hourly bars
-against a 0.75 gate. The runs that opened it read something else:
+**RETRACTED WITHIN THE HOUR, and the retraction is the point.** This first
+said "TMUS read 0.398, 0.464 and 0.415 across today's three completed
+hourly bars", and that 0.415 is not a completed reading. It is the 15:00
+bar at thirty-one minutes old, taken from the 15:31 run and mistaken for
+the finished value. **Completed, the 15:00 bar reads 0.779, and TMUS clears
+the gate legitimately.** So the position the account holds is correct, and
+"TMUS should never have been chosen" is NOT supported.
+
+The correct completed sequence, and the same bar read repeatedly as it
+filled in:
+
+    completed bars    13:00  0.398    14:00  0.464    15:00  0.779
 
     run                newest bar   age of that bar   TMUS confidence
     20260910T144601Z   14:00        complete                    0.445
     20260910T151118Z   15:00        11 min                      0.771   <- opened
     20260910T153148Z   15:00        31 min                      0.415   <- exited
     20260910T155248Z   15:00        52 min                      0.770   <- opened again
+    20260910T165458Z   15:00        complete                    0.779
 
-**The same bar read 0.771, then 0.415, then 0.770 as it filled in.** That is
-not a signal changing its mind; it is eleven minutes of an hour being
-treated as an hour. The account opened, exited and re-opened on it.
+**What survives is the churn, and it is enough on its own.** One bar drove
+three account actions -- open, exit, re-open -- inside forty minutes, on
+readings of 0.771, 0.415 and 0.770 that are the same hour being sampled
+before it finished. That the hour happened to END above the gate is luck,
+not correctness: at 15:31 the engine exited a position it would have kept
+had it waited, paying a spread each way to find out.
+
+Eleven minutes of an hour is not an hour. The decision was invalid however
+the bar closed, and a rule that is right by coincidence is the shadow-book
+failure with better manners.
+
+I nearly wrote the wrong number into this file permanently, an hour after
+writing the section above about doing exactly that. The figure was read
+from a run whose newest bar was still in progress -- which is the very
+fault the entry is about.
 
 `INTENT_EXECUTION_LAG = 0` was shipped on 2026-09-09 to stop the dealer
 acting on an eighteen-hour-old signal -- the TGT trade -- and it does. But
