@@ -1384,6 +1384,9 @@ def _advisor_inputs(app_config, account):
     return book, prices, latest, as_of
 
 
+from cfdinvest.persist import intent as intent_store
+
+
 def _engine_rows(app_config, account=None) -> list[dict]:
     """What the engine says to hold. See ``persist.intent`` for the why.
 
@@ -1869,6 +1872,43 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
             getattr(app_config.strategy, "flatten_before_close", False)
         ),
     )
+
+    # **Do not act on yesterday's closing state.**
+    #
+    # Between the open and the completion of this session's first bar, the
+    # newest COMPLETED bar is the previous session's last -- where the book
+    # is flat by construction, because the account flattens before the bell
+    # and the engine models it. Read as an instruction that says "hold
+    # nothing", and a position carried into the morning is closed on it
+    # before any bar of the new day exists.
+    #
+    # The owner's objection, 2026-09-10: closing a trade only to
+    # immediately open a new one does not make sense. SPGI was carried
+    # overnight reading 0.901 on its last completed bar, so it was likely to
+    # be wanted again -- and the round trip would have paid the spread twice
+    # to arrive back where it started.
+    #
+    # Waiting costs at most one bar. When the session's first bar completes
+    # the engine forms a real view, and `plan_orders` already does the right
+    # thing with it: target against held, `none` when they agree, a close
+    # when they do not. Nothing here decides whether to keep the position --
+    # it only declines to decide on evidence that is not about today.
+    #
+    # Narrow on purpose: this is the last bar of an EARLIER session, which
+    # is the case the flatten manufactures. Ordinary staleness keeps the old
+    # behaviour rather than quietly never closing anything.
+    if intent_store.decision_is_a_previous_session_close(
+        app_config, account_name, now=now
+    ):
+        logger.info(
+            "Capital: the newest completed bar is the previous session's "
+            "close, where the book is flat by design. Holding %d position(s) "
+            "until this session's first bar completes rather than acting on "
+            "yesterday's closing state.",
+            len(positions),
+        )
+        order_store.record_plan(report, app_config, account_name, now=now)
+        return EXIT_OK
 
     order_store.record_plan(report, app_config, account_name, now=now)
 

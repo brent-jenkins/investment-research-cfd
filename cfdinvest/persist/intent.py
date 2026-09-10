@@ -168,6 +168,83 @@ def intended_positions(
     return rows
 
 
+def decision_is_a_previous_session_close(config, account=None, now=None):
+    """Would acting on the intent LIQUIDATE the book on an earlier day's view?
+
+    ``intended_positions`` reads ``positions.iloc[-1]``. On the last bar of
+    a session that book is **flat by construction** -- the account flattens
+    before the bell and the engine models it -- so the intent there is
+    "hold nothing".
+
+    That is true of 19:59 and false of 13:35 the next morning. Between the
+    open and the completion of this session's first bar, the newest
+    COMPLETED bar IS the previous session's last, and reading it says "hold
+    nothing" when what it means is "yesterday ended flat". A position
+    carried into the morning is then closed before any bar of the new day
+    exists -- and if the instrument is still wanted an hour later it is
+    bought straight back, paying the spread twice to arrive where it
+    started. The owner's objection on 2026-09-10, and it is right.
+
+    **The test is the harm, not the calendar.** An earlier draft asked
+    whether the bar was the last of its session, and could not tell that
+    apart from "the last bar we happen to have, because ingestion stopped
+    at 15:00" -- so it would have suppressed dealing whenever the lake went
+    stale, and the account would quietly never close anything again. Its
+    own test caught that.
+
+    What actually matters is whether acting would EMPTY the book on
+    evidence from another day. So: an earlier day, and a flat intent. A
+    stale bar that still holds positions is a different fault with a
+    different answer, and it keeps the old behaviour.
+
+    Nothing here decides whether to keep a position. It declines to decide
+    on evidence that is not about today, and waits at most one bar for
+    evidence that is -- after which ``plan_orders`` does what it already
+    does: target against held, ``none`` when they agree, a close when they
+    do not.
+
+    Returns ``False`` when it cannot be told: absence of evidence is not a
+    reason to stop acting.
+    """
+    import pandas as pd
+
+    from cfdinvest.persist import readers
+
+    try:
+        frames = readers.load_execution_frame(None, config, account)
+        positions = frames.get("positions")
+        if positions is None or getattr(positions, "empty", True):
+            return False
+
+        index = pd.DatetimeIndex(positions.index)
+        bar = index[-1]
+        moment = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
+        if moment.tz is None:
+            moment = moment.tz_localize("UTC")
+        if bar.tz is None:
+            bar = bar.tz_localize("UTC")
+
+        # Within today the bar is this session's own, and the bell must
+        # still be able to flatten.
+        if bar.date() >= moment.date():
+            return False
+
+        # Only when acting would empty the book. A previous day's view that
+        # still holds something is ordinary staleness, and acting on it
+        # closes some things rather than everything.
+        book = positions.iloc[-1]
+        for value in book.tolist() if hasattr(book, "tolist") else list(book):
+            try:
+                if abs(float(value)) > 1e-9:
+                    return False
+            except (TypeError, ValueError):
+                continue
+        return True
+    except Exception as error:  # noqa: BLE001 - never block a pass
+        logger.warning("Could not date the intent's decision bar: %s", error)
+        return False
+
+
 def apply_prices(rows, prices) -> list[dict]:
     """Fill each row's share of the balance, once marks are known.
 
