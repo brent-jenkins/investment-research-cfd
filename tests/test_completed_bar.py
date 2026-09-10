@@ -282,3 +282,77 @@ def test_run_once_resolves_rather_than_reading_the_raw_argument():
         "the trim reads the raw --interval, which is None on every "
         "scheduled run, so the run goes untrimmed"
     )
+
+
+# --------------------------------------------------------------------------
+# The trim shipped inert TWICE, and both times because it was tested with
+# interval strings the live path never passes it.
+#
+#   1st  the raw --interval, which is None on every scheduled run
+#   2nd  `market.interval`, which is "capital_1h" -- a LAKE STORE NAME, not
+#        a pandas frequency. `pd.Timedelta("capital_1h")` is a ValueError,
+#        so the deliberate "leave it alone rather than guess" path fired on
+#        every run.
+#
+# Every test above passed through both. They all handed the helper a
+# frequency string. So the test that matters is the one that asks the
+# SHIPPED CONFIGURATION what it declares, rather than one that picks its own
+# input -- which is this project's "test the property, not the constant"
+# rule applied to a fixture instead of a threshold.
+#
+# Mutations checked:
+#   M890 the store-name branch removed, so the shipped interval goes untrimmed
+#   M900 an unknown store guessed at rather than left alone
+# --------------------------------------------------------------------------
+
+def test_the_shipped_interval_actually_produces_a_trim():
+    """M890: the test that would have caught both inert deploys.
+
+    Reads what the configuration really says rather than naming a value
+    here. If `market.interval` moves to `capital_5m`, or to anything else
+    the lake can serve, this still asserts the thing that matters: the
+    dealer must not decide on the bar in progress.
+    """
+    from cfdinvest.config import load_config
+    from cfdinvest.schedule.app import _completed_bar_end, _intent_interval
+
+    settings = load_config()
+    resolved = _intent_interval(Backtest(None), settings)
+
+    assert resolved, "the shipped config declares no market interval"
+
+    at = moment("2026-09-10 16:34")
+    end = _completed_bar_end(resolved, at)
+
+    assert end is not None, (
+        f"the shipped interval {resolved!r} cannot be turned into a bar "
+        "span, so every scheduled run goes untrimmed and the dealer "
+        "decides on the bar in progress"
+    )
+    assert end < at, "the trim did not move the end back at all"
+
+
+@pytest.mark.parametrize(
+    "store,expected",
+    [("capital_1h", "2026-09-10 15:00"), ("capital_5m", "2026-09-10 16:25"),
+     ("capital_15m", "2026-09-10 16:15"), ("capital_1m", "2026-09-10 16:33"),
+     ("capital_1d", "2026-09-09 00:00")],
+)
+def test_every_capital_store_resolves_to_its_bar(store, expected):
+    """A store name is a directory, and the lake serves several of them.
+
+    Resolved through `capital_prices.resolution_for`, which is the existing
+    single owner of that mapping -- a second parser here is how the two
+    would drift.
+    """
+    assert _completed_bar_end(store, moment("2026-09-10 16:34")) == moment(expected)
+
+
+@pytest.mark.parametrize("store", ["capital_9z", "capital_", "capital_2y"])
+def test_an_unknown_store_is_left_alone(store):
+    """M900: absence named rather than guessed.
+
+    A store this project does not serve is not a licence to invent a bar
+    size -- that would trim a run to a window nobody chose.
+    """
+    assert _completed_bar_end(store, moment("2026-09-10 16:34")) is None

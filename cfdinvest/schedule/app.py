@@ -961,15 +961,33 @@ def _completed_bar_end(interval, now):
     """
     import pandas as pd
 
-    # The lake's interval strings and pandas' spelling of them have drifted
-    # apart, and both spellings reach here. A bare unit -- "h", "d" -- is a
-    # ValueError to `Timedelta`, and "1d" is deprecated in favour of "1D".
-    # Neither is a reason to leave the run untrimmed, so they are
-    # normalised rather than refused: a deprecation warning raised from a
-    # dealing path is noise somebody will eventually learn to ignore.
+    from cfdinvest.ingestion.capital_prices import (
+        is_capital_interval, resolution_for,
+    )
+
+    # **An interval here is a LAKE STORE NAME, not a pandas frequency.**
+    # The shipped config says `capital_1h`, which is a directory -- kept
+    # distinct so Capital's hourly bars never collide with yfinance's `1h`
+    # in the same lake. `pd.Timedelta("capital_1h")` is a ValueError, so
+    # the first two versions of this trim returned None on every scheduled
+    # run and did nothing at all.
+    #
+    # `resolution_for` is the existing single owner of that mapping and is
+    # used rather than a second parser here, because two places that know
+    # how a store name is spelled is exactly how the pair drifts.
     text = str(interval or "").strip()
     if not text:
         return None
+    if is_capital_interval(text):
+        try:
+            text = resolution_for(text)
+        except ValueError:
+            return None
+
+    # The lake's spellings and pandas' have also drifted. A bare unit --
+    # "h", "d" -- is a ValueError to `Timedelta`, and "1d" is deprecated in
+    # favour of "1D". Neither is a reason to leave a dealing run untrimmed,
+    # so they are normalised rather than refused.
     if text[0].isalpha():
         text = "1" + text
     if text.endswith("d"):
