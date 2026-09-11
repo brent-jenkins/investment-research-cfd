@@ -239,6 +239,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prune.add_argument("--account", default=None)
 
+    deal = commands.add_parser(
+        "trade-capital",
+        help="deal on the Capital demo account from the latest persisted run",
+    )
+    deal.add_argument(
+        "--force", action="store_true",
+        help="deal even when no market in the universe is open",
+    )
+    deal.add_argument("--account", default=None, help="account name to deal for")
+
     commands.add_parser("send-test-email", help="prove the mail path works")
     commands.add_parser("market-status", help="show session state for the universe")
 
@@ -1063,44 +1073,15 @@ def _completed_bar_end(interval, now):
     """
     import pandas as pd
 
-    from cfdinvest.ingestion.capital_prices import (
-        is_capital_interval, resolution_for,
-    )
+    from cfdinvest.ingestion.capital_prices import bar_span
 
-    # **An interval here is a LAKE STORE NAME, not a pandas frequency.**
-    # The shipped config says `capital_1h`, which is a directory -- kept
-    # distinct so Capital's hourly bars never collide with yfinance's `1h`
-    # in the same lake. `pd.Timedelta("capital_1h")` is a ValueError, so
-    # the first two versions of this trim returned None on every scheduled
-    # run and did nothing at all.
-    #
-    # `resolution_for` is the existing single owner of that mapping and is
-    # used rather than a second parser here, because two places that know
-    # how a store name is spelled is exactly how the pair drifts.
-    text = str(interval or "").strip()
-    if not text:
+    # The store-name-to-duration pairing has ONE owner, `bar_span`, because
+    # every caller that reimplemented it got it wrong in its own way -- this
+    # trim shipped inert twice on 2026-09-11 doing exactly that.
+    span = bar_span(interval)
+    if span is None:
         return None
-    if is_capital_interval(text):
-        try:
-            text = resolution_for(text)
-        except ValueError:
-            return None
 
-    # The lake's spellings and pandas' have also drifted. A bare unit --
-    # "h", "d" -- is a ValueError to `Timedelta`, and "1d" is deprecated in
-    # favour of "1D". Neither is a reason to leave a dealing run untrimmed,
-    # so they are normalised rather than refused.
-    if text[0].isalpha():
-        text = "1" + text
-    if text.endswith("d"):
-        text = text[:-1] + "D"
-
-    try:
-        span = pd.Timedelta(text)
-    except (TypeError, ValueError):
-        return None
-    if not (span > pd.Timedelta(0)):
-        return None
     return pd.Timestamp(now).floor(span) - span
 
 
@@ -1514,6 +1495,48 @@ def _dealing_tickers(tickers, book_rows, held_positions) -> list[str]:
     return sorted(names)
 
 
+def _command_deal(args, app_config, smtp, transport) -> int:
+    """Deal on the account, as a process of its own.
+
+    **The dealing pass must not live behind the analysis.** In the daemon
+    the jobs run sequentially -- ingest, then the pipeline, then this -- so
+    anything slow or stuck upstream stops the account being dealt for at
+    all. On 2026-09-11 the pipeline wedged at 13:35 and this never ran for
+    the rest of the session: not one open, and, far worse, not one CLOSE.
+    A position that needed flattening at the bell was waiting on a
+    three-and-a-half-year backtest to finish.
+
+    Nothing here computes a rule. It reads the target units the engine
+    already persisted -- `persist.intent` remains the single owner of what
+    should be held -- and turns them into orders. That is what makes it
+    safe to run separately: the "one engine" constraint is about who
+    decides a position, and this decides none.
+
+    The market gate lives here rather than in the caller, because a timer
+    has no idea what a session is. Absence is treated as closed: a dealer
+    that cannot tell whether the exchange is open must not guess.
+    """
+    import pandas as pd
+
+    universe = _traded(app_config, getattr(args, "account", None)) or []
+    if not universe:
+        logger.warning("No traded universe; not dealing")
+        return EXIT_OK
+
+    if not getattr(args, "force", False):
+        try:
+            open_now = scheduler_module.any_open(universe, pd.Timestamp.now(tz="UTC"))
+        except Exception as error:  # noqa: BLE001 - unknown is not open
+            logger.warning("Could not read the session calendar (%s); not dealing",
+                           error)
+            return EXIT_OK
+        if not open_now:
+            logger.info("Every market in the universe is closed; not dealing")
+            return EXIT_OK
+
+    return _command_trade_capital(args, app_config, smtp, transport)
+
+
 def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     """One pass of the demo account: decide, then place what survives.
 
@@ -1833,6 +1856,31 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         session_open = {}
         open_allowed = {}
         closing_soon = {}
+
+    # **A stale run may not OPEN, and must never stop a CLOSE.**
+    #
+    # While dealing sat behind the pipeline in one loop this was impossible
+    # by construction: the run had just been written by the job before it.
+    # Now the dealer is its own process -- which is what stops a wedged
+    # pipeline preventing a close, as it did all day on 2026-09-11 -- the
+    # analysis can fall behind while this carries on acting on whatever was
+    # last written.
+    #
+    # The asymmetry is the one the margin guard and the reconciliation halt
+    # already make: a book the app cannot form a current view about is
+    # exactly the book that most needs to be reducible. So `open_allowed` is
+    # cleared rather than the pass being skipped -- closes still flow, and
+    # every refusal is recorded with its reason.
+    #
+    # Placed HERE, before `plan_orders` is handed `open_allowed`. An earlier
+    # draft put it after the planning call, where it would have been inert.
+    if intent_store.decision_is_stale(app_config, account_name, now=now):
+        logger.warning(
+            "Capital: the latest run's decision bar is %s old -- opening "
+            "nothing until the analysis catches up. Closes are unaffected.",
+            intent_store.decision_age(app_config, account_name, now=now),
+        )
+        open_allowed = {name: False for name in open_allowed}
 
     # The last look, over the instruments that might open. Priced from the
     # broker's own mid, which is the price an order would actually meet.
@@ -3027,6 +3075,8 @@ def main(argv: list[str] | None = None) -> int:
             return _command_monitor(args, app_config, smtp, transport)
         if args.command == "risk-snapshot":
             return _command_risk_snapshot(args, app_config)
+        if args.command == "trade-capital":
+            return _command_deal(args, app_config, smtp, transport)
         if args.command == "send-test-email":
             return _command_send_test_email(args, smtp, transport)
         if args.command == "market-status":

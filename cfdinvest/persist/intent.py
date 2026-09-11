@@ -168,6 +168,80 @@ def intended_positions(
     return rows
 
 
+#: How old the decision bar may be before the dealer stops OPENING on it.
+#:
+#: Two bar-spacings on the shipped hourly grid. One is not enough -- the
+#: newest completed bar is by construction up to one spacing old the moment
+#: it is written, so a one-spacing limit would refuse on a perfectly fresh
+#: run. Two gives the analysis a full cycle to miss and be noticed.
+STALE_DECISION_SPACINGS = 2.0
+
+
+def decision_age(config, account=None, now=None):
+    """How old the bar the dealer would act on is, or ``None`` if unknowable.
+
+    Returned as a ``Timedelta`` from the decision bar to ``now``. ``None``
+    means there is no readable run at all, which is a different statement
+    from "the run is old" and the caller must treat it as such.
+    """
+    import pandas as pd
+
+    from cfdinvest.persist import readers
+
+    try:
+        frames = readers.load_execution_frame(None, config, account)
+        positions = frames.get("positions")
+        if positions is None or getattr(positions, "empty", True):
+            return None
+        bar = pd.DatetimeIndex(positions.index)[-1]
+        if bar.tz is None:
+            bar = bar.tz_localize("UTC")
+        moment = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
+        if moment.tz is None:
+            moment = moment.tz_localize("UTC")
+        return moment - bar
+    except Exception as error:  # noqa: BLE001 - never block a pass
+        logger.warning("Could not date the decision bar: %s", error)
+        return None
+
+
+def decision_is_stale(config, account=None, now=None, interval=None):
+    """Is the run too old to OPEN a position on?
+
+    **This guard exists because the dealer runs in its own process.** While
+    dealing sat behind the pipeline in one loop, a stale run was impossible
+    by construction: the run had just been written by the job before it. Once
+    the two are separated, the analysis can fail, hang or fall behind while
+    the dealer carries on perfectly happily, acting on whatever was last
+    written. That is a better failure than the one it replaces -- on
+    2026-09-11 a wedged pipeline meant the account could not CLOSE for an
+    entire session -- but it is only better if opening is guarded.
+
+    So the asymmetry is deliberate and matches the rest of this codebase:
+    **a stale run must not OPEN anything, and must never stop a CLOSE.** A
+    book the app cannot form a current view about is exactly the book that
+    most needs to be reducible -- the same argument the margin guard and the
+    reconciliation halt already make.
+
+    ``True`` only when the age is known AND beyond the limit. An unreadable
+    run returns ``False`` here and is refused elsewhere: `plan_orders`
+    already declines an instrument it has no intent for, so absence does not
+    need to be punished twice.
+    """
+    from cfdinvest.ingestion.capital_prices import bar_span
+
+    age = decision_age(config, account, now=now)
+    if age is None:
+        return False
+
+    spacing = bar_span(
+        interval or getattr(getattr(config, "market", None), "interval", None)
+    )
+    if spacing is None:
+        return False
+    return age > spacing * STALE_DECISION_SPACINGS
+
+
 def decision_is_a_previous_session_close(config, account=None, now=None):
     """Would acting on the intent LIQUIDATE the book on an earlier day's view?
 

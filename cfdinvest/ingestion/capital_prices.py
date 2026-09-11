@@ -51,7 +51,7 @@ __all__ = [
     "write_manifest",
     "INTERVAL", "DEFAULT_START", "MAX_LOOKBACK_DAYS", "SESSION_HOURS",
     "frame_from_rows",
-    "backfill_ticker", "backfill", "restrict_to_session", "is_capital_interval",
+    "backfill_ticker", "backfill", "restrict_to_session", "is_capital_interval", "bar_span",
 ]
 
 #: New York hours whose bars are the regular session. Capital quotes from
@@ -421,6 +421,51 @@ def resolution_for(interval) -> str:
     if resolution not in {"1m", "5m", "15m", "1h", "1d"}:
         raise ValueError(f"no known Capital resolution for {label!r}")
     return resolution
+
+
+def bar_span(interval):
+    """How long one bar of ``interval`` lasts, or ``None`` if it cannot be told.
+
+    **One owner.** An interval in this project is a LAKE STORE NAME --
+    ``capital_1h`` is a directory, kept distinct so Capital's hourly bars
+    never collide with yfinance's ``1h`` in one lake -- and
+    ``pd.Timedelta("capital_1h")`` is a ValueError. Every caller that needs
+    a duration has to go through `resolution_for` first, and each one that
+    reimplemented that pairing got it wrong in its own way:
+
+    * the completed-bar trim shipped INERT TWICE on 2026-09-11, first
+      reading a ``None`` argument and then handing the store name straight
+      to ``Timedelta``;
+    * the staleness guard written the same evening promptly grew a second
+      copy of the same parsing.
+
+    The lake's spellings and pandas' have also drifted -- a bare unit is a
+    ValueError and ``"1d"`` is deprecated for ``"1D"`` -- so both are
+    normalised here rather than at each call site.
+
+    ``None`` means "cannot be told", never a guess: a caller that cannot
+    learn the bar size must fall back to its own safe behaviour rather than
+    act on an invented one.
+    """
+    import pandas as pd
+
+    text = str(interval or "").strip()
+    if not text:
+        return None
+    if is_capital_interval(text):
+        try:
+            text = resolution_for(text)
+        except ValueError:
+            return None
+    if text[0].isalpha():
+        text = "1" + text
+    if text.endswith("d"):
+        text = text[:-1] + "D"
+    try:
+        span = pd.Timedelta(text)
+    except (TypeError, ValueError):
+        return None
+    return span if span > pd.Timedelta(0) else None
 
 
 def restrict_to_session(frame, *, hours: tuple[int, int] = SESSION_HOURS):
