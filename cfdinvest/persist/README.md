@@ -105,14 +105,32 @@ default change instead of moving every file on disk.
 
 ## Retention
 
-A complete run is about 31MB and 98% of it is one artefact — the analysis
-frame, mostly correlation rows. Everything that says what the system *did*
-(trades, positions, equity, P&L, signals, regimes, metadata) is under half a
-megabyte together.
+Measured on the deployment on 2026-09-11, at a 50-name universe:
+
+    a complete run                54MB
+      analysis.parquet            46MB   85%
+      signals.parquet            3.9MB
+      trades.parquet             2.9MB
+      positions / pnl / equity / regime   under 1MB together
 
 So they are kept on different terms: the last few runs keep everything, every
 run keeps its light artefacts for a long time, and beyond that the directory
-goes. Roughly 11GB a year becomes roughly 280MB.
+goes.
+
+**Two figures here were superseded and the second matters.** This said a run
+was 31MB and 98% of it correlation rows; correlations were removed from the
+analysis frame on 2026-09-11 (they are quadratic in the universe, and
+stacking them is what wedged the daemon for a session), so the frame is now
+prices, returns and volatility — still 85% of the run, because the universe
+grew from 10 names to 50 at the same time.
+
+And it said the light artefacts were "under half a megabyte together". They
+are **8.0MB**, sixteen times that, on the same universe growth. At 21 runs in
+today's session that is about 170MB a day of what retention deliberately
+keeps, so the old "roughly 11GB a year becomes roughly 280MB" no longer
+holds. The replacement figure is **not computed here**, because the right
+number depends on a retention window nobody has re-chosen against these
+sizes. 2.0GB is on disk across 30 runs as this is written.
 
 Two refusals. **The newest run is never touched**, whatever the settings say
 — it is what every reader defaults to, and a retention policy able to delete

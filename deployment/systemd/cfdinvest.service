@@ -1,26 +1,48 @@
-# The cfdinvest scheduler. One long-running loop that owns every scheduled
-# job: live quotes every five minutes, ingestion at 03:00 UTC, the pipeline
-# at 03:05, and the monitoring and risk snapshots after each run.
+# The cfdinvest analysis pass. ONE TICK, then it exits.
 #
-#   sudo systemctl enable --now cfdinvest.service
+#   sudo systemctl enable --now cfdinvest.timer
 #   journalctl -u cfdinvest -f
 #
-# This SUPERSEDES cfdinvest-pipeline.timer and cfdinvest-monitor.timer.
-# Disable both before enabling this, or two schedulers will write the same
-# lake on different schedules:
+# It places no trades and calls no broker. Dealing is
+# `cfdinvest-dealer.service`, on its own five-minute timer.
 #
-#   sudo systemctl disable --now cfdinvest-pipeline.timer cfdinvest-monitor.timer
+# WHAT THIS USED TO BE, AND WHY IT CHANGED
+# ----------------------------------------
+# Until 2026-09-11 this was `Type=simple` with `Restart=always`: one
+# long-running loop that owned every scheduled job and never exited. That
+# design is what made the leak fatal rather than untidy.
 #
-# It places no trades and calls no broker. See deployment/systemd/README.md.
+# The daemon leaked about 360MB an hour -- measured from a clean start,
+# every ten-minute sample higher than the last, 900MB at 17:23 to 1796MB at
+# 19:53, linear. A ratchet plateaus; this did not. Running the pipeline
+# three times in one process retains +511MB, +23MB, +6MB, converging to
+# nothing, so `run_pipeline` is not the leak; it is somewhere in the
+# recurring jobs around it and it has NOT been identified.
+#
+# **A process that exits cannot accumulate.** Sixteen hours of uptime is
+# what turned a 360MB/hour leak into the 5.7GB that could not allocate a
+# correlation panel and stalled the account through a whole trading session.
+# One tick is seconds. This bounds the leak structurally rather than waiting
+# to find it, and it holds whatever the cause turns out to be.
+#
+# The scheduling did not move: `daemon.jobs_due` is pure and reads what ran
+# last from `persist.scheduler_state` on disk, so a tick that starts cold
+# computes exactly what the resident loop would have. `--max-ticks 1` was
+# built for tests and dry runs and is now a PRODUCTION path -- do not delete
+# it as test-only scaffolding.
+#
+# Measured on the box on 2026-09-11: a tick with nothing due takes 0.76s and
+# peaks at 127MB.
+#
+# If a tick overruns its interval, systemd will not start a second while the
+# first is still running. That self-throttling is deliberate and replaces
+# the loop's own sequencing.
 
 [Unit]
-Description=cfdinvest scheduler
+Description=cfdinvest analysis pass
 Documentation=https://github.com/brent-jenkins/cfdinvest
 After=network-online.target
 Wants=network-online.target
-# Refuse to start alongside the units this replaces, rather than trusting
-# whoever deploys to have read the note above. Two schedulers writing one
-# lake is the failure this guards.
 # The PIPELINE service would run ingestion a second time on its own
 # schedule against one lake, so it genuinely conflicts.
 #
@@ -30,88 +52,62 @@ Wants=network-online.target
 # nothing, and it finishes in about a second. Conflicting with it meant the
 # monitor timer could not be enabled without stopping the dealer every
 # thirty minutes -- so it was left disabled, and the one check that detects
-# this daemon hanging was left running INSIDE this daemon, on a daily
-# snapshot at 03:05 when the market is shut and `market_open` is always
-# False.
+# this process hanging was left running INSIDE it, on a daily snapshot at
+# 03:05 when the market is shut and `market_open` is always False.
 #
 # It failed exactly as that arrangement predicts. On 2026-09-09 the daemon
 # was throttled into a 45-minute stall and nothing said so. On 2026-09-11 it
 # stalled for NINETEEN HOURS -- from 19:43 the previous evening through most
-# of a trading session -- and nothing said so. `check_dealing_liveness` was
-# written for the first of those and could not fire during the second,
-# because a monitor inside the process it monitors stops when that process
-# stops.
+# of a trading session -- and nothing said so.
 Conflicts=cfdinvest-pipeline.service
 
+# A failing tick must never stop the timer. The old unit set
+# StartLimitBurst=5 in 300s and systemd then gave up PERMANENTLY, which is
+# the failure mode this whole file is about: the scheduler stayed down until
+# somebody noticed. One tick a minute is not a hot loop even when every one
+# of them fails, the failure is in the journal, and
+# `cfdinvest-monitor.service` alerts on it from outside.
+StartLimitIntervalSec=0
+
 [Service]
-Type=simple
+Type=oneshot
 User=cfdinvest
 Group=cfdinvest
 WorkingDirectory=/opt/cfdinvest
 EnvironmentFile=/etc/cfdinvest/env
 
-ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule daemon
+ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule daemon --max-ticks 1
 
-Restart=always
-RestartSec=5
+# A tick that hangs is killed rather than left to wedge the timer. The
+# longest legitimate tick is a full intraday run, measured at 26 seconds
+# after correlations were removed from the analysis frame; the daily ingest
+# is slower and vendor-bound. Fifteen minutes is generous against both and
+# far short of the nineteen hours a wedged pass cost.
+TimeoutStartSec=900
 
 # Memory. The ceiling exists to protect the *neighbours*. This box also runs
-# other sites, and an unbounded pipeline spike would have the kernel
-# choosing a victim by heuristic rather than by intent. Capped, the only
-# thing that can die under memory pressure here is this service, which is
-# restartable. That reasoning is unchanged and still right.
+# other sites, and an unbounded spike would have the kernel choosing a
+# victim by heuristic rather than by intent.
 #
-# RESIZED 2026-09-09, after the old limits stalled the daemon through a live
-# session. Two things had gone stale and one was never true.
+# **MemoryHigh is deliberately NOT set, and that is the lesson of
+# 2026-09-09.** `memory.high` does not degrade gracefully: it sleeps the
+# task on every allocation past the limit, proportional to the overage, and
+# a process meaningfully over it never finishes anything again. The pipeline
+# peaked at 1801MB against MemoryHigh=1800M -- one megabyte over, 39,932
+# throttle events, 45 minutes in mem_cgroup_handle_over_high during an open
+# session. It never reached MemoryMax, so it was never killed, so
+# Restart=always never fired and the unit stayed `active` while the account
+# silently stopped dealing. The safety mechanism prevented the safety
+# mechanism from working.
 #
-#   * The old figures were sized for a 4GB box that was OOM-killed four
-#     times during the first deployment. The box has 8GB now (7747MB) and
-#     nobody revisited them, so the service was confined to 23% of a machine
-#     twice the size it was written for.
-#   * They were sized for "43 instruments over eight years of DAILY bars".
-#     The pipeline now runs 55 series (50 names plus 5 FX pairs) on HOURLY
-#     bars, which is a far larger frame.
-#   * "MemoryHigh throttles and pushes pages to swap first" was believed to
-#     be graceful degradation. IT IS NOT. `memory.high` sleeps the task on
-#     every allocation past the limit, proportional to the overage, and a
-#     process meaningfully over it never finishes anything again.
-#
-# On 2026-09-09 the pipeline peaked at 1801MB against MemoryHigh=1800M. One
-# megabyte over, 39,932 throttle events, and the daemon sat in
-# mem_cgroup_handle_over_high for 45 minutes of an open session. It never
-# reached MemoryMax, so it was never killed -- `max` events were ZERO --
-# which meant Restart=always never fired, cfdinvest.timer saw an active
-# unit, the monitoring snapshot reported healthy, and the account silently
-# stopped dealing. The safety mechanism prevented the safety mechanism from
-# working: the comment above argues the service is safe because its FAILURE
-# is reported, and throttling means it never fails.
-#
-# MEASURED, on the 8GB box: every other service totals about 1,100MB
-# (journald 457, the dashboard 375, rsyslog 87, caddy 59, the rest under 40
-# each). The pipeline peaks at 1801MB -- and that reading was taken WHILE
-# THROTTLED, so the unconstrained peak is higher and this sizing assumes it
-# is. 3G high leaves roughly 60% headroom over the measured peak; 4G max
-# plus 1.1G of neighbours is 5.1G of 7.7G, leaving the kernel its page
-# cache.
-#
-# The gap between the two is deliberate and now small enough to be crossed.
-# A transient spike is reclaimed at MemoryHigh; a genuine runaway reaches
-# MemoryMax and is KILLED, which is the loud failure the whole design
-# assumed it would get. Sizing MemoryHigh at the normal peak, as before, put
-# the process permanently in the throttle zone -- the one state that is
-# neither working nor dead.
-MemoryHigh=3G
-MemoryMax=4G
+# So there is one limit and crossing it KILLS, which is the loud failure the
+# design assumes it will get. Sized against the measured peak: 941MB for a
+# full intraday run after correlations were removed, 127MB for an idle tick.
+MemoryMax=2G
 # Swap is bounded because it was not. The stalled daemon consumed all 2047MB
 # of the box's swap, degrading exactly the neighbours these limits protect,
-# and thrashing made the stall harder to diagnose rather than easier. 512M
-# absorbs a spike; it cannot absorb a leak, which is the point.
+# and thrashing made the stall harder to diagnose rather than easier.
 MemorySwapMax=512M
-# A crash loop against a vendor endpoint is worse than a stopped daemon:
-# it looks like it is working. Five failures in five minutes stops it, and
-# the monitoring snapshot then reports stale quotes and a stale lake.
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # Binds nothing. The dashboard is a separate unit and this must never
 # acquire a port -- an accidental listener behind Caddy's basic auth would
@@ -141,5 +137,6 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=cfdinvest
 
-[Install]
-WantedBy=multi-user.target
+# No [Install] section. This unit is started by cfdinvest.timer and by
+# nothing else; a WantedBy=multi-user.target here would start one stray tick
+# at boot, outside the schedule, for no reason.

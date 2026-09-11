@@ -1,8 +1,15 @@
 # cfdinvest
 
-A multi-asset CFD backtesting engine, a **forward-testing shadow book**, and
-a manual-trading assistant. It models strategies, measures risk, deals on a
-Capital.com **demo** account, and tells you what it did.
+A multi-asset CFD backtesting engine, an automated dealer on a Capital.com
+**demo** account, and a manual-trading assistant. It models strategies,
+measures risk, deals, and tells you what it did.
+
+The **demo account is the forward record**. The shadow book that used to
+fill that role was removed on 2026-08-30 -- it ran a different rule set from
+the engine, so every forward figure it produced described a strategy nobody
+chose. This sentence described it for twelve days after it was deleted,
+which is worth noticing: the opening line of the most-read file in the
+project was advertising a component that did not exist.
 
 It placed its first order on 2026-08-27. Everything below about gates,
 naming and demo-before-live stopped being ceremony on that date.
@@ -45,9 +52,11 @@ These are standing instructions from the project owner, not preferences.
   `advisor/papertrade_run.py`, the `paper-book` job, the arms, the store and
   every page that read it.
 
-  It was kept for two stated reasons and neither survived. The four arms
-  were to answer whether raising the confidence bar helps — a question the
-  engine now sweeps in three minutes, and the arms were set at 0.50/0.60/0.70,
+  It was kept for two stated reasons and neither survived. The book ran
+  **eight** arms — four on the confidence bar and four varying one other
+  setting each (`ts14`, `ts60`, `cool0`, `blk0`). The four confidence arms
+  were to answer whether raising the bar helps — a question the
+  engine now sweeps in three minutes, and the raised ones sat at 0.50/0.60/0.70,
   all inside the range measured the same day as destructive (0.45 returns
   82.8%, 0.55 returns 36.1%). And the `c35` arm was meant to hold the same
   intended positions as the demo account, so the gap between them would
@@ -240,7 +249,7 @@ under `deployment/`.
 ## Commands
 
 ```bash
-pytest                      # ~2,500 tests, offline, about two minutes
+pytest                      # 3,528 tests, offline; 85% covered
 pytest -m live              # hits the real FRED API; excluded by default
 pytest tests/test_risk.py -q
 
@@ -477,8 +486,291 @@ report *unverified*, which is correct rather than a gap.
 uses the shared root, exactly as before it existed. See
 `deployment/README.md` for the migration.
 
-The root `README.md` is out of date — it describes the project as
-"ingestion layer complete".
+**The services, since 2026-09-11.** `cfdinvest.service` runs the analysis;
+`cfdinvest-dealer.service` deals every five minutes in its own process;
+`cfdinvest-monitor.service` checks health every thirty minutes out of
+process and alerts. Exactly one of them places orders, and **all three are
+`Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
+
+### What changed on 2026-09-11
+
+The day the architecture changed, and the day it turned out the alarm had
+never been switched on.
+
+**THE ACCOUNT DID NOT DEAL FOR NINETEEN HOURS AND NOTHING SAID SO.** Last
+dealing pass 19:43 the previous evening; the market opened at 13:30 and
+nothing happened. The daemon was `active` the whole time, and busy.
+
+`run-intraday` began at 13:35 and was still inside ONE call at 14:24, in
+uninterruptible sleep, thrashing against its memory cgroup. A stack dump
+named it exactly:
+
+    _to_long              persist/writers.py:256
+    write_analysis_frame  persist/writers.py:277
+    _persist_extras       schedule/runner.py:399
+
+`write_analysis_frame` stacks the rolling CORRELATION panel, which is every
+asset against every other and therefore QUADRATIC in the universe. Measured
+from the lake rather than guessed:
+
+    instruments                109
+    session bars             6,464
+    cells        6,464 x 11,881 = 76,798,784
+    as float64                614 MB
+    stacked to long, string labels alone         3.8 GB
+
+It is a sweep-time cache, written on the fifteen-minute trading cadence.
+`trade-capital` ran after it in the same tick, so it was never reached.
+
+**I raised the memory limit before taking the dump, and that was wrong.**
+3.55GB at 14:19 became 5.59GB four minutes later and carried on thrashing.
+A limit is not a diagnosis. The dump took thirty seconds and named the
+function.
+
+**And it reframes 2026-09-09.** The unit file records the pipeline "peaking
+at 1801MB against MemoryHigh=1800M". That was not a peak, it was the
+ceiling. The run had been memory-starved for days and each raise simply let
+it grow into the new room.
+
+`ANALYSIS_PANEL_GROUPS` now excludes correlations. Nothing is lost but a
+convenience -- they are derived from `returns`, which IS written.
+Afterwards: **941MB peak, zero throttle events, the run in 26 seconds.**
+
+**THE ALARM EXISTED, RAN OUT OF PROCESS, AND WAS NEVER SWITCHED ON.**
+`check_dealing_liveness` was written after the 2026-09-09 stall and its
+docstring describes this one exactly -- "the process stayed alive, the unit
+stayed active, Restart=always never fired... and nothing anywhere said so".
+
+It runs inside `monitoring-snapshot`, which the daemon schedules at
+**03:05 UTC**. `market_open` is False every time it runs, so the condition
+it detects is unobservable at the only moment it looks. Worse, it runs
+inside the daemon's own sequential loop -- a monitor inside the thing it
+monitors stops when that thing stops.
+
+The out-of-process version already existed. `cfdinvest-monitor.service`
+runs `monitor --alert` every 30 minutes on its own timer. On the box that
+timer was `disabled`, `inactive`, and had last run on **2026-08-26**.
+
+It could not be enabled: `cfdinvest.service` declared
+`Conflicts=cfdinvest-pipeline.service cfdinvest-monitor.service`, so
+starting it would have stopped the dealer every half hour. That line is
+over-broad -- the stated reason, ingestion running twice against one lake,
+is true of the PIPELINE service and false of a monitor that reads, alerts
+and finishes in about a second. **One word in a Conflicts line disabled the
+alarm for both stalls.**
+
+Fixed, enabled, and proven not to stop the dealer by triggering it by hand.
+
+**THE ARCHITECTURE CHANGED, ON THE OWNER'S DIAGNOSIS.** Their framing:
+opening, monitoring and closing trades should be very light; the analysis
+should look at a bounded window; nothing should need much CPU or RAM.
+
+The defect was concrete. The daemon runs its jobs SEQUENTIALLY, so the
+lightest and most time-critical work queued behind the heaviest -- and when
+the pipeline wedged, the account could not be CLOSED at all.
+
+    cfdinvest.service         every 1 min  ingest, pipeline, spreads, daily
+    cfdinvest-dealer.service  every 5 min  DEALING ONLY
+    cfdinvest-monitor.service every 30 min health, out of process, alerting
+
+All three are `Type=oneshot`. Nothing is resident; each starts, does what is
+owed and exits. The one-minute figure is not a job cadence -- every job owns
+its own, and this only decides how often "what is owed?" is ASKED.
+
+`trade-capital` is a command of its own with its own market gate, removed
+from the daemon's JOBS and due-logic so exactly one thing deals. It
+computes no rule -- it reads the units `persist.intent` owns -- which is
+what keeps it inside "one engine, and it is the production one".
+
+**Separation creates one new risk and it is guarded.** A stale run may not
+OPEN and must never stop a CLOSE: `decision_is_stale` refuses opens on a
+decision bar older than two bar spacings. Two rather than one because the
+newest COMPLETED bar is already up to one spacing old when written.
+
+**Proven rather than argued.** With the daemon frozen by SIGSTOP -- state
+`Tsl`, unit still `active`, the exact signature of the morning's stall --
+the dealer read the run, reconciled against the broker, ran the freshness
+checks and the last look, and completed a full pass in about a second.
+
+**AND THEN THE ANALYSIS STOPPED BEING RESIDENT TOO, which is the half I had
+wrongly treated as blocked.** I had the periodic analysis waiting on the
+six-month window measurement. They are independent and conflating them was
+my error: the window question is how much CPU and RAM ONE RUN needs, and the
+leak is about process LIFETIME. A pass that exits every minute cannot
+accumulate 5.7GB over sixteen hours however many bars it reads. So the
+window failing does not block this, and nothing was waiting on it.
+
+It needed **no code change at all**. `daemon.jobs_due` is already pure and
+already reads what ran last from `persist.scheduler_state` on disk, so a
+tick that starts cold computes exactly what the loop would have; and
+`--max-ticks` already existed, built for tests and dry runs. The change is
+`Type=oneshot`, `ExecStart=... daemon --max-ticks 1`, and a timer that fires
+one minute after each pass FINISHES rather than after each pass starts, so a
+slow pass delays the next instead of queueing behind itself.
+
+    measured on the box, a tick with nothing due   0.76s, 127MB peak
+    a full intraday run, after the panel fix       26s, 941MB peak
+    MemoryMax                                      2G, and NO MemoryHigh
+
+`--max-ticks` being documented as "for tests and dry runs" is now a hazard
+rather than a note: the production unit depends on it, and a tidy-up that
+removed it would restore the resident loop silently. So the guard is against
+the PARSER rather than the help text, and
+`tests/test_analysis_is_periodic.py` fails the build on any of seven
+mutations -- `Type=simple` restored, `--max-ticks` dropped from either the
+unit or the parser, `Restart=always` on a oneshot, the timer pointed
+elsewhere, `MemoryHigh` reintroduced, or the interval measured from the
+start of a pass instead of its end. All seven were checked by breaking them.
+
+**`Type=oneshot` and `--max-ticks` are two halves of one guarantee.** Either
+alone is inert: systemd waits on the process, so a oneshot running a loop
+that never returns simply activates forever and looks healthy -- the exact
+signature of both stalls.
+
+**THE DAEMON LEAKS ~360 MB/HOUR, AND THE PIPELINE IS NOT WHAT LEAKS.**
+Measured from a clean start, every ten-minute sample higher than the last:
+900MB at 17:23 to 1796MB at 19:53, linear. A ratchet plateaus; this does
+not.
+
+That closes the morning's diagnosis. The daemon had been up sixteen hours,
+so ~5.7GB had accumulated against a 3GB ceiling -- the correlation panel
+was simply the allocation that could not fit.
+
+Running the pipeline three times in one process retains +511MB, +23MB,
++6MB: **converging to nothing.** So the leak is in the recurring jobs
+around it, not in `run_pipeline`. Not yet identified. A `tracemalloc` run
+did not finish -- it made a 26-second pipeline take over 900 seconds.
+
+**Also fixed today.** The fallback provisional bar was motionless --
+`open = high = low = close = quote` -- and fired whenever ingestion was
+more than one bar behind, which on an hourly grid is the first ~20 minutes
+of every hour. Measured at 16:04 with the lake at 15:00: ABT 0.789 -> 0.457,
+LMT 0.774 -> 0.415, REGN 0.777 -> 0.438. Every intended name refused,
+uniformly ~0.34 low. It now opens at the last completed close so the range
+is the real move since. Verified live in the append window at 17:06:
++0.016, -0.006, +0.021.
+
+**And the live corrections became properties of the RUN rather than of one
+command.** `_command_run_continuous` called `run_pipeline` directly and
+applied none of them, so a run it persisted would have reached the dealer
+at `execution_lag = 1` over an untrimmed panel -- the TGT fault and the
+TMUS fault at once, from a path nobody would check. Latent, never live,
+found while checking a definition. `for_live_intent` now owns them and a
+test parses the module and fails the build on any caller that persists a
+run without them.
+
+**Trading:** -22.01 GBP realised over five closes, two of them gains. The
+three losses were all "flattened before the session close" -- positions the
+clock closed, not positions the strategy gave up on. The account ended
+FLAT, record and account agreeing on size and side, which is the first time
+this week the close worked as designed.
+
+**THE DOCUMENTATION PASS FOUND CODE, NOT JUST PROSE.** Asked to make the
+docs lean and correct. Two of the findings are not documentation at all.
+
+**`schedule/paper_alert.py` was still in the tree** -- 115 statements, the
+email describing what the paper book just did, for a book deleted on
+2026-08-30. **Zero percent covered and no importers anywhere**, which is how
+it survived twelve days. It was found by measuring coverage to check a
+figure in the README, not by looking for it. Deleted.
+
+**And a test fixture referenced two things that do not exist.**
+`tests/test_ui.py`'s `dashboard_with_a_position` imports
+`cfdinvest.advisor.papertrade` and patches `sources.load_paper_book`; the
+module was deleted and the function does not exist. It never failed because
+**no test requests the fixture**, so pytest never executes it. A fixture
+nothing uses is not coverage, which is precisely what its own docstring was
+written to warn about. Deleted.
+
+**Six figures were wrong, and they were wrong in the direction that
+flatters.** Every one re-measured rather than adjusted:
+
+    tests            "~2,500" / "~2,830"        3,528
+    coverage         "88%"                      85%
+    schedule/app.py  "73% covered"              54%  -- the worst in the
+                                                project, and the file that
+                                                carries dealing, the live
+                                                corrections and the
+                                                staleness guard
+    a persisted run  "about 31MB"               54MB
+      of which       "98%, mostly correlation   85%, and correlations were
+                      rows"                     removed today
+    light artefacts  "under half a megabyte"    8.0MB, sixteen times that
+    monitoring       "nine checks"              twelve
+
+The run-size figures were measured at a 10-name universe and never revisited
+when it became 50. The consequence is operational rather than cosmetic: the
+light artefacts are what retention deliberately KEEPS, and at 21 runs a
+session that is about 170MB a day, so "roughly 11GB a year becomes roughly
+280MB" no longer holds. No replacement figure is stated, because the right
+one depends on a retention window nobody has re-chosen against these sizes.
+
+**And the headline of the two most-read files described a component deleted
+twelve days earlier.** `CLAUDE.md` and `README.md` both opened "a multi-asset
+CFD backtesting engine, a **forward-testing shadow book**, and a
+manual-trading assistant". `README.md` then contradicted itself: line 3
+advertised the book, line 209 correctly said it was removed on 2026-08-30.
+
+**Left open.**
+
+* **The leak's SOURCE.** It is bounded rather than found, and the
+  distinction matters: every process is now `Type=oneshot` on a timer, so
+  nothing lives long enough to accumulate, but something still leaks about
+  360MB an hour while it runs. If a single tick ever grows long enough to
+  matter the problem returns. `tracemalloc` did not finish -- it made a
+  26-second pipeline take over 900 seconds. The suspects are the recurring
+  jobs around `run_pipeline`, which is exonerated: three runs in one process
+  retain +511MB, +23MB, +6MB.
+* **THE SIX-MONTH WINDOW DOES NOT REPRODUCE THE DECISION, AND IS NOT
+  ADOPTED.** It is the owner's own diagnosis -- the analysis should look at a
+  rolling six months at most -- so it is worth being exact about what was
+  measured and what it says.
+
+  The test: for each of five recent mid-session bars, run the engine twice,
+  full span and six months, identical in every other respect, and compare the
+  final bar's target as a SHARE OF EQUITY -- which is what `persist.intent`
+  carries and `apply_prices` turns into a real order.
+
+      end bar    full   six months   verdict
+      09-04         5            2   DIFFERENT NAMES: BKNG, LMT, NOC
+      09-08         9            9   same names, sizes differ (to 2.4x)
+      09-09         9            9   same names, one size differs 2.4x
+      09-10         6            6   IDENTICAL
+      09-11         4            4   IDENTICAL
+
+  **Identical on two of five.** On 09-04 the six-month run does not open
+  three names the full run holds, which is a different account rather than a
+  rounding difference. The decision rule was stated before the numbers were
+  seen -- anything short of identical on all five means the window is not
+  safe at six months -- and it is not met.
+
+  The arithmetic said it should be: the longest lookback in the pipeline is
+  252 bars on a 63-bar window, about 315 bars of warm-up, against roughly 880
+  session bars in six months. So something the decision depends on is NOT a
+  fixed-length lookback. The candidate is any quantity ranked against its own
+  available history -- a percentile over 3.65 years is not a percentile over
+  six months, and that would move confidence and therefore size, which is the
+  shape of the 2.4x differences. **Untested.** It is not the carried position
+  state: `time_stop_days` is 0.29, so nothing is held across a window
+  boundary.
+
+  Until that is identified the window cannot be bounded safely, and bounding
+  it is the remaining half of the owner's architectural change. The dealer is
+  already out of the daemon and already light; this is about the analysis.
+
+  **Two earlier attempts measured nothing, and both were mine.** The first
+  compared RAW UNITS, which are proportional to each run's own simulated
+  equity -- a 3.65-year run compounds to 1.26e17 -- so the two MUST differ by
+  that ratio whatever the decision is. The second reported IDENTICAL on 5 of
+  5 while reading `execution.equity`, an attribute that does not exist (it is
+  `equity_curve`), so the scale was 0.0, every comparison returned nothing,
+  and "no book on either side" was scored as agreement. Inert-gate failure,
+  in the tool built to check a fix, on the same day as two other inert-gate
+  findings. The script now raises on an unreadable denominator rather than
+  reporting an empty book, and refuses to score two empty books as a pass.
+* The memory limits are 5G/6G via a live drop-in and the unit file says
+  3G/4G. Two owners for one threshold, pending a real measurement.
+* `MIN_SESSION_MINUTES = 30.0` remains provisional and unmeasured.
 
 ### What changed on 2026-09-10
 

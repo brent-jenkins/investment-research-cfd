@@ -201,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     daemon_parser.add_argument(
         "--max-ticks", type=int, default=None,
-        help="stop after this many ticks; for tests and dry runs",
+        help="stop after this many ticks (production uses 1)",
     )
 
     advise = commands.add_parser(
@@ -2783,13 +2783,25 @@ def _command_ingest_minute(args, app_config) -> int:
 
 
 def _command_daemon(args, app_config, smtp, transport) -> int:
-    """Every scheduled job, in one loop, until stopped.
+    """Every scheduled job that is owed, once per tick.
 
     The decision about what is owed lives in
     :func:`cfdinvest.schedule.daemon.jobs_due` and is pure; this is the part
     that sleeps. A job that raises is logged and does not stop the loop --
-    the whole point of a daemon is that tomorrow's run still happens after
-    today's failed.
+    the whole point is that tomorrow's run still happens after today's
+    failed.
+
+    **Production runs this with ``--max-ticks 1``, so it does ONE tick and
+    exits.** `cfdinvest.service` became `Type=oneshot` on 2026-09-11: the
+    resident version leaked about 360MB an hour, and sixteen hours of that
+    is what wedged the daemon and left the account undealt through a whole
+    session. The leak has not been found; a process that exits cannot
+    accumulate one, which holds whatever the cause turns out to be.
+
+    That works because nothing here holds state between ticks. ``last_run``
+    is seeded from `persist.scheduler_state` on disk and every job's
+    completion is recorded there, so a tick starting cold computes exactly
+    what the loop would have.
     """
     import time
 

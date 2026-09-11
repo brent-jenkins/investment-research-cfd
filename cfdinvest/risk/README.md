@@ -59,11 +59,11 @@ careful about.
 | Source | When it is used | What it is |
 | --- | --- | --- |
 | `confirmed` | any confirmation has ever been recorded | the real account, replayed |
-| `paper:<arm>` | otherwise, if the paper book exists | the baseline arm, £1,000 notional a position |
+| `paper:<arm>` | **never — the paper book was removed on 2026-08-30** | kept in the table because old snapshots on disk still carry the label |
 | absent | neither | reported absent, not flat |
 
 **Only the account's own book can breach the account's limits.** The paper
-book has no position cap on purpose — it measures signal quality, not
+book had no position cap on purpose — it measured signal quality, not
 portfolio construction — so its gross exposure passes a £2,000 account's
 £3,000 limit as soon as it holds four positions and stays past it for good.
 On the afternoon this shipped the baseline arm held eight, £8,010 against

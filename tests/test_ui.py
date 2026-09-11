@@ -2375,43 +2375,6 @@ def test_the_snapshots_stay_daily():
         assert job in daily
 
 
-@pytest.fixture
-def dashboard_with_a_position(monkeypatch, populated):
-    """A paper book holding one open position, so the marking path runs.
-
-    Patched at the source rather than at the storage path.
-    The first version of this patched ``papertrade._path``, which the cached
-    bundle never consulted, so the page found no book, stopped early, and
-    the whole open-positions block went unexercised -- the fixture looked
-    like coverage and was not. A missing import inside that block survived
-    the entire suite because of it.
-    """
-    from cfdinvest.advisor import papertrade
-    from cfdinvest.livehelper.t212_rules import load_rules
-    from cfdinvest.ui import sources
-
-    trade = papertrade.open_trade(
-        "AAPL", "long", 200.0, "2026-08-26T14:00:00Z",
-        rules=load_rules("config/t212_rules.toml"), fx_rate=0.7355,
-        cohort="c50", state={"confidence": 0.72, "regime": "risk_on"},
-    )
-    book = [trade.as_row()]
-
-    monkeypatch.setattr(
-        sources, "load_paper_book",
-        lambda config, account=None: sources.Source(
-            value={
-                "book": book,
-                "cohorts": papertrade.summarise_all(book),
-                "pooled": papertrade.summarise(book),
-                "min_closed": papertrade.MIN_CLOSED_FOR_RATE,
-                "stake": papertrade.STAKE_GBP,
-            }
-        ),
-    )
-    return book
-
-
 def test_the_daily_housekeeping_is_not_judged_against_the_intraday_run():
     """M161: two false warnings for a scheduler doing as it was told.
 

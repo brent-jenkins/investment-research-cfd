@@ -28,7 +28,7 @@ run sitting there. A half-written run directory looks exactly like a whole one
 from the outside. Every page in the dashboard will render perfectly against
 data that is quietly wrong, and none of these announce themselves.
 
-Nine checks, run after every pipeline run:
+Twelve checks, run after every pipeline run:
 
 | Check | The failure it catches |
 | --- | --- |
@@ -41,6 +41,18 @@ Nine checks, run after every pipeline run:
 | Email delivery | Alerts that stopped arriving, silently |
 | Pipeline anomalies | A NaN equity, a wiped-out account, zero bars |
 | System resources | A box under strain |
+| Dealing liveness | The market open, the unit `active`, and no order placed |
+| Credential expiry | A broker session that will stop working on a known date |
+| Live quote freshness | A quote feed still answering, with stale numbers |
+
+**Run this one OUT OF PROCESS or it cannot work.** `check_dealing_liveness`
+catches a daemon that is alive and wedged -- the process up, the unit
+`active`, `Restart=always` never firing. A check running inside that daemon's
+own loop stops when the daemon stops, so it is exactly the failure it cannot
+report on. `cfdinvest-monitor.service` runs on its own thirty-minute timer
+for that reason. It was written after the 2026-09-09 stall, scheduled only
+inside the daemon at 03:05 UTC where `market_open` is always False, and so
+was silent through a second nineteen-hour stall on 2026-09-11.
 
 ---
 

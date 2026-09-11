@@ -10,9 +10,17 @@ hears about it*; the pipeline itself is `cfdinvest.backtest`.
 python -m cfdinvest.schedule.app market-status          # what's open right now
 python -m cfdinvest.schedule.app run-once               # run and exit
 python -m cfdinvest.schedule.app run-continuous         # wait for market events
+python -m cfdinvest.schedule.app trade-capital          # deal, and nothing else
 python -m cfdinvest.schedule.app send-test-email --dry-run
 python -m cfdinvest.schedule.app crontab                # print crontab lines
 ```
+
+`trade-capital` is the DEALER, and it runs in its own unit on its own
+five-minute timer rather than as a job of the resident daemon. It reads the
+newest persisted run, reconciles against the broker and places what survives
+the guards; it decides no rule of its own. It was a job inside the daemon's
+sequential loop until 2026-09-11, when the daemon wedged mid-session and the
+account could not be closed for nineteen hours.
 
 **Exit codes** matter unattended — cron mails on non-zero, and a monitor can
 alert on it: `0` ran, `1` failed, `2` bad arguments or configuration.

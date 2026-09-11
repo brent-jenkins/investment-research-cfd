@@ -6,9 +6,11 @@ numbers away from the real one's.
 ```
 deployment/
     caddy/Caddyfile                     HTTPS, basic auth, reverse proxy
+    systemd/cfdinvest.service           the analysis pass, ONE TICK
+    systemd/cfdinvest-dealer.service    DEALING ONLY, every five minutes
+    systemd/cfdinvest-monitor.service   the health check, on its own timer
     systemd/cfdinvest-dashboard.service Streamlit, bound to localhost
     systemd/cfdinvest-pipeline.service  one run, driven by its timer
-    systemd/cfdinvest-monitor.service   the health check, on its own timer
     scripts/make-basicauth-hash.sh      the only way a password is handled
     scripts/cfdinvest.env.example       every variable, no values
     scripts/logrotate-cfdinvest
@@ -79,8 +81,10 @@ sudo systemctl reload caddy
 sudo cp deployment/systemd/* /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now cfdinvest-dashboard
-sudo systemctl enable --now cfdinvest-pipeline.timer
+sudo systemctl enable --now cfdinvest.timer
+sudo systemctl enable --now cfdinvest-dealer.timer
 sudo systemctl enable --now cfdinvest-monitor.timer
+sudo systemctl enable --now cfdinvest-pipeline.timer
 ```
 
 Point the DNS `A` record for `cfd.example.com` at the box first. Caddy obtains
@@ -88,7 +92,30 @@ the certificate on first request, and cannot if the name does not resolve.
 
 ---
 
-## Two details worth knowing
+## Three details worth knowing
+
+**Nothing here is resident any more.** All three units are `Type=oneshot`
+on timers: the analysis every minute, the dealer every five, the monitor
+every thirty. Each starts, does what is owed, and exits.
+
+That is what bounds the leak. The analysis daemon leaked about 360MB an hour
+and the cause has NOT been found; sixteen hours of uptime is what turned
+that into the 5.7GB that could not allocate and left the account undealt for
+nineteen hours. A process that exits cannot accumulate, whatever the cause
+turns out to be. `cfdinvest.timer` used to be a watchdog for a resident loop
+and is now the schedule.
+
+**Dealing is a separate unit, and that is the point.** `cfdinvest-dealer`
+is `Type=oneshot` on a five-minute timer and does nothing but read the
+newest persisted run, reconcile against the broker and place what survives
+the guards. It shares no process with the analysis, has no `Conflicts=`
+line against it, and carries its own memory ceiling.
+
+Until 2026-09-11 dealing was a job inside the analysis daemon's sequential
+loop. The daemon wedged mid-session, and because the two shared a process
+the account could not be CLOSED for nineteen hours while the unit sat
+`active`. The lightest and most time-critical work must not queue behind
+the heaviest.
 
 **`SuccessExitStatus=0 1` on the monitor unit.** A red status exits `1`. That
 is the check working, not the unit failing — without this line systemd marks
@@ -158,13 +185,13 @@ its history is a bad way to find out about a new feature.
 To migrate an existing install:
 
 ```bash
-sudo systemctl stop cfdinvest-dashboard cfdinvest-pipeline.timer
+sudo systemctl stop cfdinvest-dashboard cfdinvest.timer                     cfdinvest-dealer.timer cfdinvest-pipeline.timer
 cd /var/lib/cfdinvest
 sudo -u cfdinvest mkdir -p virtual
 sudo -u cfdinvest mv runs confirmations monitoring risk assessments virtual/ 2>/dev/null
 # leave raw/ metadata/ processed/ where they are -- the lake is shared
 echo 'CFD_ACCOUNT_MODE=virtual' | sudo tee -a /etc/cfdinvest/env
-sudo systemctl start cfdinvest-dashboard cfdinvest-pipeline.timer
+sudo systemctl start cfdinvest-dashboard cfdinvest.timer                      cfdinvest-dealer.timer cfdinvest-pipeline.timer
 ```
 
 Check it before trusting it:

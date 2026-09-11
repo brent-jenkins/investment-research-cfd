@@ -1,8 +1,13 @@
 # cfdinvest
 
-A multi-asset CFD backtesting engine, a forward-testing shadow book, and a
-manual-trading assistant. It models strategies, measures risk, deals on a
-demo account, and tells you what it did.
+A multi-asset CFD backtesting engine, an automated dealer on a Capital.com
+demo account, and a manual-trading assistant. It models strategies, measures
+risk, deals, and tells you what it did.
+
+The demo account is the forward record. The shadow book that used to fill
+that role was removed on 2026-08-30 and this line described it anyway until
+2026-09-11 -- while the section further down correctly said it was gone, so
+the file contradicted itself from the first paragraph.
 
 **It deals, on one demo account, and nowhere else.** From 2026-08-27 the
 daemon may open and close positions on a Capital.com *demo* account. A live
@@ -173,11 +178,24 @@ The venue is **Capital.com**, on a demo account.
   `CFD_CAPITAL_DEALING_ENABLED` must be explicitly truthy, and a live
   account needs `CFD_CAPITAL_ALLOW_LIVE` as well. Anything that is not the
   exact string `live` resolves to demo.
-- `broker/capital/bridge.py` decides and places nothing. It mirrors the
-  shadow book rather than reading the signals itself, so there is one
-  decision and not two that can disagree.
-- The **shadow book imports none of them**, and a test enforces it. Its
-  worth is being a record nobody could edit once the outcome was known.
+- `broker/capital/bridge.py` decides what to place and places nothing
+  itself. It reads the target units `persist/intent.py` takes from the
+  engine's own persisted run, so there is one decision and not two that can
+  disagree. It used to mirror the shadow book, which is precisely how the
+  account came to trade rules no backtest described.
+- **Dealing runs in its own process.** `cfdinvest-dealer.service` reads that
+  run every five minutes and places orders; the analysis runs separately.
+  They were one sequential loop until 2026-09-11, when a wedged pipeline
+  meant the account could not be CLOSED for an entire session.
+- **The dealer checks freshness before it places anything, and the two
+  directions are not symmetrical.** Separating the processes means the
+  analysis can stop while the dealer carries on, so the dealer must not act
+  on a decision that has gone stale. `decision_is_stale` refuses to OPEN on a
+  decision bar older than two bar spacings — two rather than one because the
+  newest completed bar is already up to one spacing old when it is written.
+  It never refuses a CLOSE. A book the app cannot form a current view on is
+  exactly the one that most needs to be reducible, which is the same rule the
+  margin guard and the reconciliation halt already follow.
 
 **IG was measured, rejected, and removed on 2026-08-28.** CFD commission was
 a $15 minimum per side — 222bp round trip on £1,000, against a ~6bp budget.
@@ -263,7 +281,11 @@ read.
 ## Deployment
 
 A single VM. Caddy terminates HTTPS and proxies to Streamlit on 127.0.0.1;
-`cfdinvest.service` is a resident daemon owning every scheduled job;
+`cfdinvest.service` runs the analysis, `cfdinvest-dealer.service` deals every
+five minutes in its own process and `cfdinvest-monitor.service` checks health
+every thirty minutes in a third — all three are `Type=oneshot` on timers, so
+nothing is resident and nothing accumulates. One resident daemon owned all
+three until 2026-09-11, and when it wedged the account could not be closed;
 `cfdinvest-deploy.path` watches for a GitHub webhook and runs `deploy.sh`,
 which pulls, installs unit files, enables timers, restarts everything and
 then **proves it took** — services active, dashboard answering, disk under
@@ -279,8 +301,8 @@ Secrets live in `/etc/cfdinvest/env` and never in the repository.
 
 ## Testing
 
-Tests are the deliverable, not a formality. ~2,830 of them, offline, about
-two minutes. Coverage is 88%.
+Tests are the deliverable, not a formality. **3,528 of them**, offline.
+Coverage is **85%**, measured 2026-09-11.
 
 - **Mutation-check every suite.** Reintroduce each property as a bug and
   confirm a test fails. Roughly 200 mutations have been checked; each
@@ -299,13 +321,25 @@ two minutes. Coverage is 88%.
 
 ## Known limits
 
-- Two years of hourly history is all the vendor serves. One market regime.
+- **3.65 years of hourly history**, from Capital, starting 2023-01-02. Still
+  close to one market regime, and a correlated shock arrives about once in
+  that span, so the tail is drawn from roughly one observation. (This said
+  "two years, all the vendor serves"; that described yfinance's 730-day
+  window, which stopped being the decision feed on 2026-08-31.)
 - The universe is hindsight-selected; the benchmark is always quoted with it.
-- Spread is estimated per asset class, not measured per instrument. It is the
-  largest single cost line.
-- Real slippage is unmeasured, and the edge breaks even near 6bp.
-- `schedule/app.py` is 73% covered — the daemon dispatch, where several
-  defects have hidden.
+- **Spread is measured per instrument per bar**, from the Capital archive,
+  and it is the largest single cost line at 46.6% of modelled cost. (This
+  said "estimated per asset class"; per-bar measured spreads replaced the
+  flat 5bp on 2026-08-28 and cost about nine points of CAGR.)
+- Real slippage is unmeasured, and the edge breaks even near 6bp. Market
+  impact is unmodelled entirely — `slippage_fraction` is a scalar, so a
+  million-pound order pays the same basis points as a thousand-pound one.
+- **`schedule/app.py` is 54% covered** — the daemon dispatch, where several
+  defects have hidden, and the least-covered module of any size in the
+  project. It said 73%; measured on 2026-09-11 it is 54%, and this is the
+  file that carries the dealing command, the live-intent corrections and the
+  staleness guard. Nearly every fault this week was found by reading a run on
+  the box rather than by a test, and this number is why.
 
 The root of all of these is the same: the system has barely traded. The
 Capital.com demo account is the instrument built to change that, and it

@@ -1,39 +1,46 @@
-# A watchdog for cfdinvest.service.
+# The schedule for the analysis pass.
 #
 #   sudo systemctl enable --now cfdinvest.timer
 #
-# What this is NOT for
+# WHAT THIS USED TO BE
 # --------------------
-# It does not schedule the work. cfdinvest.service is a long-running loop
-# that owns its own cadences -- quotes every five minutes, ingestion at
-# 03:00, the pipeline at 03:05 -- and Restart=always already brings it back
-# from an ordinary crash. A timer firing at a service that is continuously
-# active would do nothing at all: starting a running unit is a no-op.
+# Until 2026-09-11 this was a WATCHDOG rather than a schedule.
+# `cfdinvest.service` was a resident loop that owned its own cadences, so a
+# timer firing at it did nothing while it was healthy -- starting a running
+# unit is a no-op -- and existed only to recover the one case
+# `Restart=always` did not cover, a permanent stop after the start limit
+# tripped.
 #
-# What it IS for
+# The service is now `Type=oneshot`: one tick, then it exits, so the leak
+# cannot accumulate across a session. That makes this the thing that decides
+# when the analysis runs.
+#
+# WHY ONE MINUTE
 # --------------
-# The one case Restart=always does not cover. cfdinvest.service sets
-# StartLimitBurst=5 in 300s, deliberately: a daemon crash-looping against a
-# vendor endpoint is worse than a stopped one, because it looks like it is
-# working. But when that limit trips, systemd gives up *permanently* and the
-# scheduler stays down until someone notices.
+# It is not the job cadence. Every job owns its own -- quotes every five
+# minutes, signals every fifteen while a market is open, ingestion at 03:00,
+# snapshots at 03:05 -- and `daemon.jobs_due` is a pure function of the
+# clock and what ran last, read from disk. This interval only decides how
+# often that question is ASKED, so it must be finer than the finest cadence
+# and is otherwise free: a tick with nothing due takes 0.76 seconds and
+# peaks at 127MB, measured on the box.
 #
-# This fires every minute and starts the unit if it is not running. During
-# normal operation it is a no-op; after a start-limit stop it recovers the
-# scheduler on the next minute. The cause is still in the journal and the
-# monitoring snapshot still reports what went stale in the meantime.
+# `OnUnitInactiveSec` rather than `OnUnitActiveSec`: the gap is measured
+# from when the last tick FINISHED, so a slow pass delays the next one
+# instead of queueing behind itself.
 
 [Unit]
-Description=Keep the cfdinvest scheduler running
+Description=Run the cfdinvest analysis pass
 Documentation=https://github.com/brent-jenkins/cfdinvest
 
 [Timer]
-OnBootSec=30s
-OnUnitActiveSec=1min
-# Without this the timer's clock only advances while the unit is active,
-# which is the opposite of what a watchdog needs.
+OnBootSec=2min
 OnUnitInactiveSec=1min
 AccuracySec=10s
+# A tick missed while the box was down is not worth catching up on: the jobs
+# are driven by what ran last, so the next tick works out what is owed
+# anyway.
+Persistent=false
 Unit=cfdinvest.service
 
 [Install]

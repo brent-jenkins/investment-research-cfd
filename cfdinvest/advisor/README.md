@@ -20,9 +20,6 @@ what size, and what open positions are worth watching.
 suggestion every five minutes is how the one that matters gets filtered into
 a folder nobody opens.
 
-`papertrade.py` / `papertrade_run.py` — the forward book. Four arms, real
-costs, append-only.
-
 `forward.py` — the prediction and the state it was made in, recorded before
 the outcome exists.
 
@@ -96,32 +93,17 @@ now — but it means live refusals will run above the measured 9.5%. Every
 refusal is recorded with its reason, so the real rate will be known within
 days rather than argued about.
 
-## The paper book
+## The paper book is gone
 
-Four arms run side by side on the same signals and prices, each taking
-**£1,000 of exposure** — notional, not margin.
+Removed in full on 2026-08-30 — `papertrade.py`, `papertrade_run.py`, the
+`paper-book` job, all eight arms, the store and every page that read it.
+**The Capital.com demo account is the forward record.** It ran a different
+rule set from the engine, and `trade-capital` mirrored it, so the account
+traded rules no backtest described; `tests/test_threshold_ownership.py` now
+fails the build if either module comes back. The reasoning is in CLAUDE.md.
 
-Fixed notional deliberately. With a fixed *margin* instead, leverage would
-vary the stake without anyone choosing it: a 30× FX pair would carry £30,000
-of exposure against a 5× share's £5,000, and the currency trades would
-dominate the result on position size alone. What it does not equalise is
-volatility, so the percentage move is recorded beside the pounds.
-
-The baseline arm is **derived from `strategy.entry_confidence`**, not
-hardcoded. It used to be hardcoded, and the arms sat at 0.50/0.60/0.70 while
-the engine entered at 0.35 — so every signal between the two was traded by
-the backtested strategy and by no arm at all, and the one measurement that
-cannot be overfitted was validating a configuration returning 86% a year
-against the shipped 127%.
-
-Each arm keeps its own one-position-per-instrument rule and its own
-cooldown. The arms of an experiment must not see each other: a position held
-in the 0.50 book says nothing about whether the 0.70 book should hold one.
-
-**Only `open` and `close` events exist.** Trading 212 cannot resize an open
-CFD position, so neither can the simulation — a book that trimmed a winner
-would be recording a trade the account could not have made, and every cost
-after that point would belong to a position that never existed.
+Risk snapshots written before that date still carry `paper:<arm>` source
+labels. Three are on disk. Nothing writes new ones.
 
 ## Judgement calls
 
@@ -129,11 +111,12 @@ after that point would belong to a position that never existed.
 orders.** Its entire worth is being a record nobody could have edited once
 the outcome was known. It imports no broker, and a test enforces it.
 
-**Costs are the real ones.** Financing per side per instrument from the
-recorded Trading 212 table, the spread crossed on entry, the 0.5% conversion
-fee on the result. A paper book ignoring costs would show the strategy in
-profit and prove nothing — the backtest's central finding was that costs
-were 10.9× the edge before they were fixed.
+**Costs are the real ones.** Financing per side per instrument, the spread
+crossed on entry, the conversion fee on the result. A simulation ignoring
+costs would show the strategy in profit and prove nothing — the backtest's
+central finding was that costs were 10.9× the edge before they were fixed.
+The demo account now settles this directly: real fills, real spreads, real
+financing, confirmed by a counterparty with no stake in the answer.
 
 **A win rate is withheld below twenty closed trades.** The arithmetic is
 still shown, greyed, with how far there is to go: hiding it invites the same
@@ -178,7 +161,6 @@ is recorded here so that stops being true.
 | M119 | Two opens read as two positions |
 | M120 | A position limit nobody asked for |
 | M121 | A second position stacked on the first |
-| M122 | The cooldown ignored on the paper book |
 | M126 | The decision recorded without the evidence around it |
 | M127 | One cohort's position blocking another's |
 | M128 | The stake sized as if the instrument were priced in sterling |
@@ -205,6 +187,8 @@ is recorded here so that stops being true.
 
 ## What it writes
 
-`<account root>/paper/book.jsonl` and `<account root>/forward/observations.jsonl`,
-both append-only. A prediction that can be edited after the fact is not a
-prediction.
+`<account root>/forward/observations.jsonl`, append-only. A prediction that
+can be edited after the fact is not a prediction.
+
+It used to write `<account root>/paper/book.jsonl` as well. Nothing has
+written that file since 2026-08-30 and no module reads it.

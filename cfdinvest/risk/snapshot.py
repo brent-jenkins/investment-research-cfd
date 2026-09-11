@@ -22,7 +22,9 @@ A limit that is breached every day is a limit nobody reads, so a real breach
 would have arrived on a page that was already red -- while the monitoring
 snapshot said green in the same minute.
 
-The order is confirmed book, then paper book, then nothing:
+The order is confirmed book, then nothing. The paper book was the middle
+rung until it was removed on 2026-08-30; `paper:<arm>` still appears in
+snapshots written before then, and nothing writes new ones:
 
 * **confirmed** -- what you recorded actually placing. The real account, so
   it wins whenever any confirmation exists at all.
