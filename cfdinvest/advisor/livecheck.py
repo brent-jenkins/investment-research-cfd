@@ -231,14 +231,60 @@ class ProvisionalRepository:
                     touched = True
                     continue
 
-            # The bar in progress is missing -- ingestion is behind, or the
-            # session has only just opened. Appending is all that is left, and
-            # it carries the dilution above, so the reading is honest about
-            # being weaker than the lake's own. `_too_early` already declines
-            # the session-open case for the same reason.
+            # **The bar in progress is missing, so one is built -- with a
+            # REAL RANGE, seeded from the last completed close.**
+            #
+            # This appended `open = high = low = close = quote`: zero range,
+            # which is the same motionless bar that collapsed strong signals
+            # by 0.32 before the update path existed. Writing that the
+            # fallback was "honest about being weaker" was wrong. It does
+            # not produce a weaker opinion; it produces a systematically
+            # wrong one, and it refuses good trades.
+            #
+            # **It fires every hour, which is what made it expensive.**
+            # Ingestion runs on its own cadence, so between a bar completing
+            # and the next fetch the lake's newest bar is more than one
+            # spacing behind and the update path above cannot be used.
+            # Measured live on 2026-09-11 at 16:04, with the lake's newest
+            # bar at 15:00 and the engine deciding on 14:00:
+            #
+            #     name   on the bar   live (appended flat)
+            #     ABT        0.789          0.457
+            #     LMT        0.774          0.415
+            #     REGN       0.777          0.438
+            #
+            # Every intended name refused, uniformly ~0.34 below its own
+            # reading, for roughly the first twenty minutes of every hour.
+            # The quote was reaching the computation -- moving it 5% moved
+            # the reading from 0.000 to 0.95 -- so this was not the earlier
+            # fault returning. It was the fallback doing what it was written
+            # to do.
+            #
+            # A bar in progress opens near the previous close and has moved
+            # to the quote since. So that is what is built: open at the last
+            # completed close, high and low spanning it to the quote, close
+            # at the quote. The range is then the real move since the last
+            # bar rather than nothing.
+            #
+            # Falls back to the flat bar when the previous close cannot be
+            # read, which is weaker and is the safe direction -- an
+            # unreadable panel must not invent a range.
+            previous = None
+            prior = existing.index[stamps == newest]
+            if len(prior) and "close" in working.columns:
+                try:
+                    candidate = float(working.at[prior[0], "close"])
+                    previous = candidate if candidate > 0 else None
+                except (TypeError, ValueError):
+                    previous = None
+
+            opening = previous if previous is not None else value
             row = {
                 stamp_column: at, ticker_column: str(ticker),
-                "open": value, "high": value, "low": value, "close": value,
+                "open": opening,
+                "high": max(opening, value),
+                "low": min(opening, value),
+                "close": value,
             }
             if "volume" in working.columns:
                 row["volume"] = float("nan")

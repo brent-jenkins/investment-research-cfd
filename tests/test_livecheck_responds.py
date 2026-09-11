@@ -31,6 +31,8 @@ Mutations checked, each reintroduced as a bug and confirmed to fail:
   M631 the update targeting the instrument's first row, not its last
   M640 the high not extended when the quote prints above it
   M650 the append path removed, so a stale lake silently checks nothing
+  M660 the appended bar given zero range again, refusing every signal
+  M670 the appended bar opening at the quote rather than the prior close
 
 A seventh was tried and is recorded because it says something about the
 code rather than about the test: rebinding `working = working.copy()`
@@ -164,6 +166,52 @@ def test_a_name_without_a_quote_is_left_alone():
         panel().loc[(newest(), "BBB")],
         check_names=False,
     )
+
+
+def test_the_appended_bar_carries_a_real_range():
+    """The fallback must not be a motionless bar.
+
+    It appended ``open = high = low = close = quote`` -- zero range, the
+    same flat bar that collapsed strong readings by 0.32 before the update
+    path existed. It fires whenever ingestion is more than one bar behind,
+    which on an hourly grid is roughly the first twenty minutes of every
+    hour.
+
+    Measured live on 2026-09-11 at 16:04, lake newest 15:00, engine
+    deciding on 14:00:
+
+        name   on the bar   live (appended flat)
+        ABT        0.789          0.457
+        LMT        0.774          0.415
+        REGN       0.777          0.438
+
+    Every intended name refused, uniformly ~0.34 below its own reading. The
+    quote WAS reaching the computation -- moving it 5% moved the reading
+    from 0.000 to 0.95 -- so this was not the earlier fault returning. It
+    was the fallback doing what it was written to do.
+
+    A bar in progress opens near the previous close and has moved to the
+    quote since, so the range must span that move.
+    """
+    at = newest() + pd.Timedelta(hours=4)
+    prior_close = float(panel().loc[(newest(), "AAA"), "close"])
+
+    above = check({"AAA": prior_close + 5.0}, at).loc[(at, "AAA")]
+
+    assert float(above["open"]) == pytest.approx(prior_close), (
+        "the bar does not open at the last completed close"
+    )
+    assert float(above["close"]) == pytest.approx(prior_close + 5.0)
+    assert float(above["high"]) == pytest.approx(prior_close + 5.0)
+    assert float(above["low"]) == pytest.approx(prior_close)
+    assert float(above["high"]) > float(above["low"]), (
+        "the appended bar is motionless, which is what refused every "
+        "intended name for a third of each hour"
+    )
+
+    below = check({"AAA": prior_close - 5.0}, at).loc[(at, "AAA")]
+    assert float(below["high"]) == pytest.approx(prior_close)
+    assert float(below["low"]) == pytest.approx(prior_close - 5.0)
 
 
 def test_a_stale_lake_still_gets_a_provisional_bar():
