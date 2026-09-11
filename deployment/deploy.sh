@@ -21,13 +21,25 @@ SERVICES=(cfdinvest cfdinvest-dashboard)
 # idempotent, so one that was never switched on gets switched on rather than
 # waiting to be noticed.
 #
-# Exactly one. cfdinvest.service is a resident daemon that owns every job
-# there is: quotes, the advisor, dealing, ingestion, the daily run,
-# both snapshots and pruning. The pipeline and monitor timers are superseded
-# by it and their unit files survive only as history, which is why
-# cfdinvest.service declares Conflicts= against them. Adding either one here
-# would run ingestion twice on two different schedules against one lake.
-TIMERS=(cfdinvest.timer)
+# Two, and the second one is a correction.
+#
+# cfdinvest.service is a resident daemon that owns every job there is:
+# quotes, the advisor, dealing, ingestion, the daily run, both snapshots and
+# pruning. The PIPELINE timer is genuinely superseded by it -- adding it
+# would run ingestion twice on two schedules against one lake -- and its
+# unit file survives only as history.
+#
+# **The MONITOR timer is not superseded, and treating it as though it were
+# cost two silent stalls.** It runs `monitor --alert` in a SEPARATE process,
+# which is the entire point: the daemon's own monitoring snapshot runs
+# inside the loop that can hang, so when the loop hangs the snapshot hangs
+# with it. On 2026-09-09 that was a 45-minute stall nobody was told about;
+# on 2026-09-11 it was nineteen hours, through most of a trading session,
+# with `check_dealing_liveness` sitting in the tree unable to fire.
+#
+# A monitor inside the thing it monitors is not a monitor. This one runs
+# every 30 minutes, out of process, and reads without ingesting.
+TIMERS=(cfdinvest.timer cfdinvest-monitor.timer)
 LOG_TAG="cfdinvest-deploy"
 
 log() { echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') | $*" | systemd-cat -t "${LOG_TAG}" -p info; echo "$*"; }

@@ -21,7 +21,27 @@ Wants=network-online.target
 # Refuse to start alongside the units this replaces, rather than trusting
 # whoever deploys to have read the note above. Two schedulers writing one
 # lake is the failure this guards.
-Conflicts=cfdinvest-pipeline.service cfdinvest-monitor.service
+# The PIPELINE service would run ingestion a second time on its own
+# schedule against one lake, so it genuinely conflicts.
+#
+# **The MONITOR service does not, and lumping it in here is why two silent
+# stalls went unreported.** `cfdinvest-monitor.service` runs
+# `cfdinvest-schedule monitor --alert`: it reads, it alerts, it ingests
+# nothing, and it finishes in about a second. Conflicting with it meant the
+# monitor timer could not be enabled without stopping the dealer every
+# thirty minutes -- so it was left disabled, and the one check that detects
+# this daemon hanging was left running INSIDE this daemon, on a daily
+# snapshot at 03:05 when the market is shut and `market_open` is always
+# False.
+#
+# It failed exactly as that arrangement predicts. On 2026-09-09 the daemon
+# was throttled into a 45-minute stall and nothing said so. On 2026-09-11 it
+# stalled for NINETEEN HOURS -- from 19:43 the previous evening through most
+# of a trading session -- and nothing said so. `check_dealing_liveness` was
+# written for the first of those and could not fire during the second,
+# because a monitor inside the process it monitors stops when that process
+# stops.
+Conflicts=cfdinvest-pipeline.service
 
 [Service]
 Type=simple

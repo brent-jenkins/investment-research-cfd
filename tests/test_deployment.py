@@ -134,17 +134,64 @@ def test_only_the_deploy_unit_is_privileged_and_it_is_unreachable():
 def test_only_one_unit_may_schedule_the_pipeline():
     """Two schedulers on one lake is the failure this guards.
 
-    cfdinvest.service supersedes the pipeline and monitor timers. Declaring
-    it in a README is not enough -- systemd has to refuse, or a deploy that
-    enables the new unit without disabling the old ones runs ingestion twice
-    on two different schedules.
+    cfdinvest.service supersedes the PIPELINE timer: both would ingest, on
+    two different schedules, against one lake. Declaring that in a README is
+    not enough -- systemd has to refuse.
     """
     body = text(DEPLOYMENT / "systemd" / "cfdinvest.service")
     conflicts = re.search(r"^Conflicts=(.*)$", body, re.M)
 
     assert conflicts, "cfdinvest.service must declare what it supersedes"
     assert "cfdinvest-pipeline.service" in conflicts.group(1)
-    assert "cfdinvest-monitor.service" in conflicts.group(1)
+
+
+def test_the_daemon_does_not_conflict_with_its_own_monitor():
+    """**This asserted the opposite, and the opposite cost two stalls.**
+
+    `cfdinvest-monitor.service` runs `monitor --alert`: it reads, it
+    alerts, it ingests nothing, and it finishes in about a second. It was
+    lumped into the same `Conflicts=` line as the pipeline, so enabling its
+    timer would have stopped the dealer every thirty minutes -- which is
+    why the timer was left disabled, and why the only check that detects
+    this daemon hanging was left running INSIDE this daemon, on a daily
+    snapshot at 03:05 when `market_open` is always False.
+
+    It failed exactly as that predicts. 2026-09-09: a 45-minute stall,
+    unreported. 2026-09-11: NINETEEN HOURS, through most of a trading
+    session, unreported. `check_dealing_liveness` existed for the first and
+    could not fire during the second.
+
+    A monitor inside the thing it monitors is not a monitor.
+    """
+    body = text(DEPLOYMENT / "systemd" / "cfdinvest.service")
+    conflicts = re.search(r"^Conflicts=(.*)$", body, re.M)
+
+    assert conflicts
+    assert "cfdinvest-monitor.service" not in conflicts.group(1), (
+        "the daemon conflicts with its own out-of-process monitor, so the "
+        "monitor timer cannot be enabled without stopping the dealer"
+    )
+
+
+def test_the_deploy_enables_the_out_of_process_monitor():
+    """A unit that exists but was never enabled does nothing.
+
+    deploy.sh's own comment says exactly that, and the monitor timer was
+    the counter-example sitting beside it: installed on the box, never
+    enabled, never run. Asserted against the TIMERS list the deploy
+    actually iterates, so documenting it elsewhere cannot satisfy this.
+    """
+    body = text(DEPLOYMENT / "deploy.sh")
+    timers = re.search(r"^TIMERS=\((.*)\)$", body, re.M)
+
+    assert timers, "deploy.sh must declare which timers it enables"
+    assert "cfdinvest-monitor.timer" in timers.group(1), (
+        "the deploy does not enable the monitor timer, so a fresh box gets "
+        "no out-of-process health check at all"
+    )
+    assert "cfdinvest-pipeline.timer" not in timers.group(1), (
+        "the pipeline timer would ingest a second time against one lake"
+    )
 
 
 @pytest.mark.parametrize("unit", UNITS, ids=lambda p: p.name)
