@@ -57,6 +57,11 @@ SCHEDULES: tuple[tuple[str, str, str], ...] = (
     ("ingest-intraday", "session", "Keep the hourly bars current while open"),
     ("run-intraday", "session", "Fresh signals every quarter hour while open"),
     ("record-spreads", "session", "What a trade costs right now, appended"),
+    # Runs as `cfdinvest-dealer.service` rather than inside the daemon, so
+    # its evidence comes from what the DEALING PASS writes rather than from
+    # the daemon's job history -- see `newest_dealing` below. Keeping the row
+    # matters more than where it is scheduled: dealing vanishing from this
+    # table is precisely the "job nobody is watching" failure above.
     ("trade-capital", "session", "Place, resize and close on the demo account"),
     ("ingest-daily", "daily", "Top up the lake from the vendors"),
     ("record-candidate-spreads", "daily",
@@ -293,6 +298,29 @@ def gather_evidence(config=None, account: str | None = None) -> dict[str, Any]:
         document = store.load_latest_risk_snapshot(config, account=account)
         return (document or {}).get("timestamp")
 
+    def newest_dealing():
+        """When the dealing pass last EXAMINED the account.
+
+        Read from `persist.margin`, which the dealing path writes on every
+        pass -- including one that looks at the book and correctly does
+        nothing. That is what makes it a liveness signal rather than an
+        activity signal, and it is the same source `check_dealing_liveness`
+        uses.
+
+        The daemon's job history cannot answer this any more: dealing runs
+        in its own unit and never writes there. Leaving it on that source
+        would have left this row reading "never run" for ever, which is
+        worse than no row at all.
+        """
+        from cfdinvest.persist import margin as margin_store
+
+        rows = [
+            row for row in margin_store.load_margin(config, account)
+            if str(row.get("kind") or "") == "usage" and row.get("at")
+        ]
+        return rows[-1]["at"] if rows else None
+
+    guarded("trade-capital", newest_dealing)
     guarded("poll-live-quotes", newest_quote)
     guarded("ingest-daily", newest_ingest)
     guarded("monitoring-snapshot", newest_monitoring)

@@ -1,0 +1,30 @@
+# Every five minutes, all day.
+#
+# The session gate lives in the command rather than here, because a timer
+# has no idea what a trading session is and a calendar in two places is a
+# calendar that will disagree with itself. Out of hours the pass reads the
+# calendar, logs that every market is closed, and exits -- which costs a
+# second and keeps the schedule honest about what it is.
+#
+# Five minutes rather than the analysis's cadence on purpose. Closing is the
+# time-critical half: a position that should be shut wants shutting now, not
+# when the next pipeline happens to finish. Opening is rate-limited by the
+# signal itself -- the engine only changes its mind when a bar completes --
+# so a faster dealer cannot overtrade, it can only react sooner.
+#
+# Persistent=false, deliberately. A missed dealing pass is not worth catching
+# up on after a reboot: the decision it would have acted on is stale by then,
+# and `decision_is_stale` would refuse the opens anyway. Firing a backlog of
+# them at boot would be noise at best.
+
+[Unit]
+Description=Deal on the Capital demo account every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

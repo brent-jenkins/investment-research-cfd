@@ -166,10 +166,33 @@ def test_the_trading_job_runs_after_the_signals_and_only_in_session():
     due = daemon.jobs_due(
         pd.Timestamp("2026-08-28T15:00:00Z"), history, market_open=True
     )
-    assert "trade-capital" in due
-    assert due.index("run-intraday") < due.index("trade-capital")
-    assert due.index("record-spreads") < due.index("trade-capital"), (
-        "the cost of a trade is read after the orders that pay it"
+    # **The property survives; the mechanism that enforces it changed.**
+    #
+    # Dealing used to be a job in this list, ordered after the run so it
+    # could not act on signals that had not been written. That ordering is
+    # also why the account could not be CLOSED for an entire session on
+    # 2026-09-11: the jobs run sequentially, so dealing queued behind the
+    # pipeline and a wedged pipeline stranded the book.
+    #
+    # Dealing now runs as `cfdinvest-dealer.service` on its own timer, and
+    # "must follow the run" is enforced by `decision_is_stale` instead --
+    # the dealer refuses to OPEN on a decision bar older than two bar
+    # spacings, whatever order anything ran in. `tests/test_stale_run_guard.py`
+    # owns that, and `tests/test_dealer_is_separate.py` owns the requirement
+    # that exactly one thing deals.
+    assert "trade-capital" not in due, (
+        "the daemon deals again, so it and the dealer unit would both deal "
+        "against one account"
+    )
+    assert due.index("run-intraday") < due.index("record-spreads"), (
+        "the cost of a trade is read after the signals that decide it"
+    )
+
+    from cfdinvest.persist import intent as intent_store
+
+    assert hasattr(intent_store, "decision_is_stale"), (
+        "dealing left the job ordering and nothing replaced the guarantee "
+        "that it acts on a run that exists"
     )
     # The book decides and the account mirrors it, so the book must have
     # run. Reversed, the account would mirror the previous pass and act one

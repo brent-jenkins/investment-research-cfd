@@ -36,6 +36,7 @@ __all__ = [
     "CANDIDATE_SPREAD_AT_UTC",
     "MINUTE_INGEST_AT_UTC",
     "JOBS",
+    "EXTERNAL_JOBS",
     "jobs_due",
 ]
 
@@ -134,13 +135,41 @@ INTRADAY_MINUTES = 15
 
 #: Every job this loop owns, in the order they are run when several are due.
 #: The snapshots come last because they describe the run.
+#: Jobs that this daemon does NOT run, because something else schedules them.
+#:
+#: They are still jobs this system performs, so anything enumerating "what
+#: runs here" -- the status table above all -- must include them. A job with
+#: nobody watching it is the failure `ui.vitals.SCHEDULES` exists to prevent,
+#: and it has already happened once: paper-book and advisor-alert ran every
+#: five minutes and appeared on no page, so the forward record looked stopped
+#: while it was working.
+#:
+#: ``trade-capital`` moved out on 2026-09-11. These jobs run sequentially, so
+#: dealing -- the lightest and most time-critical work here -- queued behind
+#: the heaviest, and when the pipeline wedged the account could not be CLOSED
+#: for an entire session. It is now `cfdinvest-dealer.service` on a
+#: five-minute timer.
+EXTERNAL_JOBS: tuple[str, ...] = ("trade-capital",)
+
+
 JOBS: tuple[str, ...] = (
     "poll-live-quotes",
     "advisor-alert",
     "ingest-intraday",
     "run-intraday",
     "record-spreads",
-    "trade-capital",
+    # "trade-capital" is deliberately ABSENT. It runs as
+    # `cfdinvest-dealer.service` on its own five-minute timer.
+    #
+    # These jobs run SEQUENTIALLY, so while dealing was listed here it sat
+    # behind the heaviest work in the system. On 2026-09-11 the pipeline
+    # wedged at 13:35 and the account was not dealt for again that session --
+    # no opens, and no CLOSES, with a position waiting on a three-and-a-half
+    # year backtest to finish before it could be flattened at the bell.
+    #
+    # Both halves must never deal at once, so this list is the other half of
+    # that guarantee and `tests/test_dealer_is_separate.py` fails the build
+    # if the name comes back.
     "ingest-daily",
     # After the daily ingest, before the snapshots: the screen's cost term
     # is an observation like any other and belongs with the housekeeping,
@@ -262,13 +291,12 @@ def jobs_due(
             # signals -- acting a cycle late on every entry and exit, which
             # is the failure this whole arrangement exists to avoid.
             #
-            # Appending it twice is harmless: `jobs_due` returns
-            # `[job for job in JOBS if job in due]`, so JOBS decides the
-            # order and duplicates collapse.
-            # And then the account, last: it mirrors the book that run has
-            # just fed, and the reading of what a trade costs is taken
-            # before anything is placed rather than after.
-            due.append("trade-capital")
+            # Dealing is NOT appended here any more. It is
+            # `cfdinvest-dealer.service`, on its own timer, in its own
+            # process -- see the note in JOBS. Leaving it here as well would
+            # deal twice on two schedules against one account, which is the
+            # mirror of the two-schedulers-on-one-lake failure the pipeline
+            # timer is kept disabled to avoid.
 
     if _due_daily(moment, history.get("ingest-daily"), INGEST_AT_UTC):
         due.append("ingest-daily")

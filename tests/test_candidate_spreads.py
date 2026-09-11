@@ -115,7 +115,11 @@ def test_the_candidate_pass_is_daily_not_on_the_trading_cadence():
     trading = daemon.jobs_due(
         pd.Timestamp("2026-08-28T15:00:00Z"), history, market_open=True
     )
-    assert "trade-capital" in trading
+    # `run-intraday` stands in for "the trading cadence is live" here.
+    # Dealing used to be the marker, but it left the daemon on 2026-09-11
+    # for its own timer -- see tests/test_dealer_is_separate.py. What this
+    # test is actually about is the CANDIDATE pass not riding that cadence.
+    assert "run-intraday" in trading
     assert "record-candidate-spreads" not in trading, (
         "the candidate pass fired on the trading cadence"
     )

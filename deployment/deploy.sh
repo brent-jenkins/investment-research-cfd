@@ -39,7 +39,15 @@ SERVICES=(cfdinvest cfdinvest-dashboard)
 #
 # A monitor inside the thing it monitors is not a monitor. This one runs
 # every 30 minutes, out of process, and reads without ingesting.
-TIMERS=(cfdinvest.timer cfdinvest-monitor.timer)
+#
+# **The DEALER timer is the third, and it is the same lesson again.** Dealing
+# was a job in the daemon's sequential loop, so the lightest and most
+# time-critical work in the system queued behind the heaviest. When the
+# pipeline wedged on 2026-09-11 the account could not be closed for an entire
+# session. It now runs every five minutes in its own process, and
+# `trade-capital` has been removed from the daemon's job list so the two
+# cannot both deal.
+TIMERS=(cfdinvest.timer cfdinvest-monitor.timer cfdinvest-dealer.timer)
 LOG_TAG="cfdinvest-deploy"
 
 log() { echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') | $*" | systemd-cat -t "${LOG_TAG}" -p info; echo "$*"; }

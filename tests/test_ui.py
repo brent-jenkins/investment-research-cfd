@@ -2232,10 +2232,20 @@ def test_the_status_table_lists_every_job_the_daemon_runs():
     from cfdinvest.schedule import daemon
     from cfdinvest.ui import vitals
 
+    # Everything that RUNS, not everything the daemon runs. Dealing moved to
+    # its own unit on 2026-09-11 and must stay on this table: a job that
+    # vanishes from here is unwatched, which is the very failure this test
+    # was written for.
+    runs = set(daemon.JOBS) | set(daemon.EXTERNAL_JOBS)
     listed = {name for name, _, _ in vitals.SCHEDULES}
-    assert listed == set(daemon.JOBS), (
-        f"unwatched: {sorted(set(daemon.JOBS) - listed)}; "
-        f"promised but never run: {sorted(listed - set(daemon.JOBS))}"
+
+    assert listed == runs, (
+        f"unwatched: {sorted(runs - listed)}; "
+        f"promised but never run: {sorted(listed - runs)}"
+    )
+    assert not (set(daemon.JOBS) & set(daemon.EXTERNAL_JOBS)), (
+        "a job is both scheduled here and scheduled elsewhere, so it would "
+        "run twice"
     )
 
 

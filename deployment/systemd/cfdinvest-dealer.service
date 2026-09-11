@@ -1,0 +1,62 @@
+# The dealing pass, in a process of its own.
+#
+# **This exists because dealing used to sit behind the analysis.** The
+# scheduler daemon runs its jobs sequentially -- ingest, then the pipeline,
+# then dealing -- so the lightest, most time-critical job in the system was
+# queued behind the heaviest. On 2026-09-11 the pipeline wedged at 13:35 and
+# the account was not dealt for again that session: not one open, and far
+# worse not one CLOSE. A position that needed flattening at the bell was
+# waiting on a three-and-a-half-year backtest to finish.
+#
+# Separating them means a slow, stuck or failed analysis can no longer strand
+# the book. The worst it can now do is leave the dealer acting on an ageing
+# view, and that is guarded rather than hoped about: `decision_is_stale`
+# withholds OPENS on a decision bar older than two bar spacings, and never
+# blocks a close.
+#
+# Nothing here computes a rule. It reads the target units the engine already
+# persisted -- `persist.intent` remains the single owner of what should be
+# held -- and turns them into orders. That is what keeps this inside the "one
+# engine, and it is the production one" constraint: that rule is about who
+# DECIDES a position, and this process decides none.
+#
+# It does not conflict with cfdinvest.service. It must not: the whole point
+# is that it keeps running when the daemon is busy. `trade-capital` has been
+# removed from the daemon's job list so the two cannot both deal.
+
+[Unit]
+Description=cfdinvest dealing pass (Capital demo account)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=cfdinvest
+Group=cfdinvest
+WorkingDirectory=/opt/cfdinvest
+EnvironmentFile=/etc/cfdinvest/env
+
+ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule trade-capital
+
+# Light by construction: it reads one row of a persisted run, asks the broker
+# what it holds, and places orders. If it ever needs a gigabyte, something has
+# been added to it that does not belong -- the ceiling is here to say so
+# loudly rather than to throttle it quietly. MemoryMax kills; MemoryHigh
+# would sleep it on every allocation and hide the problem, which is the exact
+# failure that cost 2026-09-09 and 2026-09-11.
+MemoryMax=1G
+
+# A pass must never outlive its own cadence. Stuck is a state this whole unit
+# exists to make survivable, so it is bounded rather than trusted.
+TimeoutStartSec=240
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadOnlyPaths=/opt/cfdinvest
+ReadWritePaths=/var/lib/cfdinvest
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cfdinvest-dealer

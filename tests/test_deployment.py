@@ -104,6 +104,11 @@ def test_the_units_exist():
         "cfdinvest.service",
         "cfdinvest-webhook.service",
         "cfdinvest-deploy.service",
+        # Dealing, in its own process since 2026-09-11. The daemon runs its
+        # jobs sequentially, so dealing queued behind the pipeline and the
+        # account could not be CLOSED for a whole session while that was
+        # wedged.
+        "cfdinvest-dealer.service",
     }
 
 
@@ -1003,7 +1008,27 @@ def test_the_daemon_owns_every_scheduled_job():
     from cfdinvest.schedule import daemon
 
     assert "prune-runs" in daemon.JOBS, "nothing would bound the artefact store"
-    assert "trade-capital" in daemon.JOBS, "nothing would reach the account"
+
+    # **Dealing moved OUT of the daemon on 2026-09-11, and the property it
+    # was asserted by has to move with it rather than be dropped.**
+    #
+    # The fear here is "nothing would reach the account", not "the daemon
+    # owns it". Dealing is now `cfdinvest-dealer.service` on its own timer,
+    # because the daemon runs its jobs sequentially and the account could
+    # not be CLOSED for an entire session while the pipeline was wedged.
+    #
+    # So the requirement is now two-sided: something must schedule it, and
+    # not two things. `tests/test_dealer_is_separate.py` owns the detail.
+    assert "trade-capital" not in daemon.JOBS, (
+        "the daemon deals again, so it and the dealer unit would both deal "
+        "against one account"
+    )
+    deploy = text(DEPLOYMENT / "deploy.sh")
+    timers = re.search(r"^TIMERS=\((.*)\)$", deploy, re.M)
+    assert timers and "cfdinvest-dealer.timer" in timers.group(1), (
+        "nothing would reach the account: dealing is not in the daemon's "
+        "jobs and its timer is not enabled by the deploy"
+    )
     assert "paper-book" not in daemon.JOBS, (
         "the paper book was removed on 2026-08-30 -- it ran a different rule "
         "set from the engine, so its record measured a strategy nobody chose"
