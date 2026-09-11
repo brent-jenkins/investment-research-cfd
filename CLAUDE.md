@@ -813,6 +813,52 @@ advertised the book, line 209 correctly said it was removed on 2026-08-30.
   the gate has never been measured on its own. It needs the battery before it
   is removed, because removing it changes which trades the account may take.
 
+* **A PLAIN RESEARCH RUN NO LONGER REPRODUCES THE BATTERY THAT JUSTIFIED THE
+  SHIPPED CONFIGURATION, AND THAT BLOCKS EVERY SWEEP.** Found on 2026-09-11
+  while trying to answer whether the regime layer earns its place.
+
+  `_backtest_config` at the shipped settings -- universe 50, `execution_lag`
+  1, `entry_confidence` 0.75, verified by printing them -- returns:
+
+      as built                        CAGR  -84.2%   maxDD -99.9%   trades 38,877
+      plus the session-end flatten    CAGR  -84.8%   maxDD -99.9%   trades 35,293
+      recorded 2026-09-08, cap8/t50   CAGR +191.0%   maxDD  -6.6%   trades ~3,219
+
+  Eleven times the trades and the wrong sign. The trade count being orders of
+  magnitude out is exactly how the 2026-08-31 harness error was caught, and
+  this file's own rule is that a sweep must reproduce a recorded figure
+  before any arm is read. **So no arm was read, and the regime question is
+  UNANSWERED rather than answered either way.**
+
+  Two candidates and neither is established. Either the battery's harness did
+  something `_backtest_config` does not -- the daily screen re-selection is
+  the obvious suspect, since "the screen's daily selection IS the strategy"
+  and this run pins one 50-name list across 3.65 years -- or something has
+  regressed since 2026-09-08. The first would mean the production config path
+  and the research path disagree, which is the shadow-book failure wearing
+  new clothes; the second would mean the shipped configuration is justified
+  by a figure nothing currently produces.
+
+  **Until it is reconciled, no measured claim about a parameter can be made**,
+  because every one of them is a difference between two runs of this harness.
+
+  Two things found on the way that do NOT depend on the broken P&L, because
+  they are read off the regime labels rather than the equity curve:
+
+      macro label, over 6,467 bars of the full span
+        contraction   2,724   42.1%   <- the ONLY value that permits a short
+        unknown       1,827   28.3%
+        expansion     1,392   21.5%
+        slowdown        440    6.8%
+        stagflation      84    1.3%
+        overheating       0    0.0%
+
+  The 1,827 unknown bars are exactly `periods_per_year` 1,764 plus the
+  63-bar momentum -- the warm-up, to the bar, which independently confirms
+  the diagnosis above. So for the first 28% of any run the book cannot short
+  at all unless the combined regime reads `crisis`, and that is a property of
+  the window rather than of the market.
+
 * The memory limits are 5G/6G via a live drop-in and the unit file says
   3G/4G. Two owners for one threshold, pending a real measurement.
 * `MIN_SESSION_MINUTES = 30.0` remains provisional and unmeasured.
