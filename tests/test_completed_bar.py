@@ -177,7 +177,13 @@ def test_run_once_trims_before_it_runs():
     a different window -- needs a lake to observe, and an inert trim looks
     identical to a working one from outside.
     """
-    source = inspect.getsource(app._command_run_once)
+    # Repointed on 2026-09-11: the corrections moved from
+    # `_command_run_once` into `for_live_intent`, so they could be
+    # applied by EVERY caller that persists a run the dealer reads --
+    # `_command_run_continuous` was one and applied none of them. This
+    # assertion follows the code rather than being relaxed; the source
+    # it reads is the function that now owns the behaviour.
+    source = inspect.getsource(app.for_live_intent)
 
     assert "_completed_bar_end" in source, (
         "the scheduled run does not trim the bar in progress, so the dealer "
@@ -187,8 +193,14 @@ def test_run_once_trims_before_it_runs():
         "the trim is not applied to `end`; it is being wired to something "
         "else and is inert"
     )
-    assert source.index("_completed_bar_end") < source.index("run_pipeline("), (
-        "the trim is computed after the pipeline runs, which is too late"
+    # The ordering assertion moved with it: `for_live_intent` returns the
+    # corrected config, so it cannot run after the pipeline by
+    # construction. What is asserted instead is that the caller applies it
+    # before running -- which `test_live_intent_corrections` enforces for
+    # every caller rather than only this one.
+    caller = inspect.getsource(app._command_run_once)
+    assert caller.index("for_live_intent(") < caller.index("run_pipeline("), (
+        "the corrections are applied after the pipeline runs, too late"
     )
 
 
@@ -199,7 +211,7 @@ def test_an_explicit_window_wins():
     trim that silently overrode `--end` would shift every one of them by a
     bar, which is the class of error this file's retraction rule exists for.
     """
-    source = inspect.getsource(app._command_run_once)
+    source = inspect.getsource(app.for_live_intent)
     trim = source.index("trimmed = (")
 
     assert "backtest.end" in source[trim:trim + 400], (
@@ -285,7 +297,7 @@ def test_the_resolved_interval_actually_produces_a_trim():
 
 def test_run_once_resolves_rather_than_reading_the_raw_argument():
     """The call site is the half that was wrong, so assert on it."""
-    source = inspect.getsource(app._command_run_once)
+    source = inspect.getsource(app.for_live_intent)
 
     assert "_intent_interval(" in source, (
         "the trim reads the raw --interval, which is None on every "

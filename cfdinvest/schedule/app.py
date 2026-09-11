@@ -1104,57 +1104,59 @@ def _completed_bar_end(interval, now):
     return pd.Timestamp(now).floor(span) - span
 
 
-def _command_run_once(args, app_config, smtp, transport) -> int:
-    """Run the pipeline once, notify, and return an exit code."""
-    backtest = _backtest_config(args, app_config)
-    # And the account's own close-of-session flatten, so the run's book
-    # matches what the broker actually holds overnight. Safe to model now
-    # that the frame's final bar is never treated as a session end -- that
-    # was what zeroed the bar being decided on when this was first wired on
-    # 2026-09-08. Without it the run carries positions the account closed at
-    # the bell, and the intent asks to hold names that are not there.
+def for_live_intent(backtest, app_config):
+    """Apply every correction a run must carry if the DEALER will read it.
+
+    `persist.intent` reads the newest persisted run, whichever command wrote
+    it. So these are not properties of one command -- they are properties of
+    any run whose output reaches the account, and keeping them inside
+    `_command_run_once` was an accident of where they were first needed.
+
+    **`_command_run_continuous` calls `run_pipeline` directly and applied
+    none of them.** It is manual-only and the daemon does not use it, so
+    nothing was wrong on the box -- but it writes to the same run store, and
+    a run it persisted would have been read by the dealer with
+    `execution_lag = 1` over an untrimmed panel. That is the eighteen-hour-
+    old signal of 2026-09-10 and the eleven-minute partial bar of the same
+    afternoon, both restored, from a path nobody would think to check. Found
+    on 2026-09-11 while checking a definition, not by a test.
+
+    The three corrections, and what each one cost before it existed:
+
+    **execution_lag = 0.** A backtest must decide on bar N-1 and fill at N
+    or it reads the future. Live at 13:36 you know the 13:36 price and deal
+    at 13:36. Lag 1 made the dealer act on the previous bar -- eighteen
+    hours and one gap across the overnight break, which is how TGT was
+    opened on a signal whose confidence had halved.
+
+    **The panel stops at the newest COMPLETED bar.** With the lag dropped,
+    "newest" became the bar IN PROGRESS. TMUS cleared a 0.75 gate at 0.771
+    on eleven minutes of an hour, was opened, read 0.415 at thirty-one
+    minutes, was closed, and read 0.770 at fifty-two. One bar, three account
+    actions, two spreads.
+
+    **The close-of-session flatten is modelled.** Without it the run carries
+    positions the account closed at the bell, and the intent asks to hold
+    names that are not there.
+
+    An explicit ``--end`` is preserved, so a stated research window is never
+    silently moved.
+
+    This is deliberately NOT a second decision path -- it changes the
+    INPUTS to the one engine, never its rules. `tests/test_live_intent_
+    corrections.py` fails the build on a caller that persists a run without
+    applying it.
+    """
+    import dataclasses
+
+    import pandas as pd
+
     flatten = (
         FLATTEN_AT_SESSION_END
-        if getattr(app_config.strategy, "flatten_before_close", False)
+        if getattr(getattr(app_config, "strategy", None),
+                   "flatten_before_close", False)
         else None
     )
-    # **Decide on completed bars.** The intent run stops at the newest bar
-    # that has finished, so the bar in progress is not decided on.
-    #
-    # `INTENT_EXECUTION_LAG = 0` alone was not enough and cost a trade the
-    # day it shipped. Dropping the lag stopped the dealer reading an
-    # eighteen-hour-old signal, and then pointed it at the newest bar --
-    # which is the bar IN PROGRESS. On 2026-09-10 the run at 15:11 read an
-    # eleven-minute-old 15:00 bar on which TMUS scored 0.771, clearing a
-    # 0.75 gate by 0.021. The account opened it. Twenty minutes later the
-    # same bar read 0.415 and the engine exited:
-    #
-    #     run                newest bar   age    TMUS confidence
-    #     20260910T144601Z   14:00        full             0.445
-    #     20260910T151118Z   15:00        11 min           0.771   <- opened
-    #     20260910T153148Z   15:00        31 min           0.415   <- exited
-    #
-    # Eleven minutes of an hourly bar is noise, and every figure this
-    # project holds was measured on completed bars. So the two faults were
-    # the same question asked twice -- WHICH BAR DOES THE DEALER DECIDE
-    # ON -- and both answers were wrong: lag 1 gave a bar eighteen hours
-    # stale at the open, lag 0 gave a bar eleven minutes old.
-    #
-    # Trimming answers it once. The newest bar of the run is now the newest
-    # completed bar, the lag stays at 0 so the dealer acts on it, and the
-    # page reads the same run -- so the page and the dealer still agree,
-    # which is what the lag change was for.
-    #
-    # The first hour of a session falls out correctly rather than needing a
-    # rule. Before 14:00 UTC no bar of today has finished, so the newest
-    # completed bar is the previous session's last -- and the book is
-    # FLATTENED there, so the intent is "hold nothing" and nothing opens.
-    # The first entry becomes possible when the 13:00 bar completes at
-    # 14:00, which is thirty minutes after the 13:30 open: the cadence the
-    # owner asked for, arrived at from the data rather than from a clock.
-    #
-    # An explicit `--end` wins, so a research run over a stated window is
-    # untouched.
     trimmed = (
         backtest.end
         if backtest.end is not None
@@ -1162,7 +1164,7 @@ def _command_run_once(args, app_config, smtp, transport) -> int:
             _intent_interval(backtest, app_config), pd.Timestamp.now(tz="UTC")
         )
     )
-    backtest = dataclasses.replace(
+    return dataclasses.replace(
         backtest,
         end=trimmed if trimmed is not None else backtest.end,
         execution=dataclasses.replace(
@@ -1171,6 +1173,11 @@ def _command_run_once(args, app_config, smtp, transport) -> int:
             overnight_profit_take=flatten,
         ),
     )
+
+
+def _command_run_once(args, app_config, smtp, transport) -> int:
+    """Run the pipeline once, notify, and return an exit code."""
+    backtest = for_live_intent(_backtest_config(args, app_config), app_config)
     universe = backtest.tickers or []
 
     now = pd.Timestamp.now(tz="UTC")
@@ -1229,6 +1236,12 @@ def _command_run_continuous(args, app_config, smtp, transport) -> int:
         delay_minutes=args.delay_minutes,
         max_runs=args.max_runs,
     )
+    # The dealer reads the NEWEST persisted run, whichever command wrote it,
+    # so a run persisted here needs the same corrections as the scheduled
+    # one. Without this a manual `run-continuous` would hand the account a
+    # run built at execution_lag=1 over an untrimmed panel. See
+    # `for_live_intent`.
+    backtest = for_live_intent(backtest, app_config)
     repository = DataRepository(app_config)
     run_config = RunConfig(backtest=backtest, refresh_data=args.refresh)
 

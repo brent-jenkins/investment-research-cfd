@@ -93,18 +93,28 @@ def test_run_once_applies_the_override_to_the_execution_config():
     a different config -- needs a lake to observe, and an inert override
     would look identical to a working one from outside.
     """
-    source = inspect.getsource(app._command_run_once)
+    # Repointed on 2026-09-11: the corrections moved from
+    # `_command_run_once` into `for_live_intent`, so they could be
+    # applied by EVERY caller that persists a run the dealer reads --
+    # `_command_run_continuous` was one and applied none of them. This
+    # assertion follows the code rather than being relaxed; the source
+    # it reads is the function that now owns the behaviour.
+    source = inspect.getsource(app.for_live_intent)
 
     assert "INTENT_EXECUTION_LAG" in source, (
-        "_command_run_once does not apply the intent lag, so the scheduled "
+        "the live corrections do not apply the intent lag, so a persisted "
         "run still produces lagged positions"
+    )
+    assert "for_live_intent(" in inspect.getsource(app._command_run_once), (
+        "the scheduled run does not apply the corrections at all"
     )
     assert "execution_lag=INTENT_EXECUTION_LAG" in source, (
         "the override does not set execution_lag; it is being applied to "
         "something else and is inert"
     )
-    assert source.index("INTENT_EXECUTION_LAG") < source.index("run_pipeline("), (
-        "the override is applied after the pipeline runs, which is too late"
+    caller = inspect.getsource(app._command_run_once)
+    assert caller.index("for_live_intent(") < caller.index("run_pipeline("), (
+        "the corrections are applied after the pipeline runs, too late"
     )
 
 
