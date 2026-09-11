@@ -721,15 +721,12 @@ advertised the book, line 209 correctly said it was removed on 2026-08-30.
   26-second pipeline take over 900 seconds. The suspects are the recurring
   jobs around `run_pipeline`, which is exonerated: three runs in one process
   retain +511MB, +23MB, +6MB.
-* **THE SIX-MONTH WINDOW DOES NOT REPRODUCE THE DECISION, AND IS NOT
-  ADOPTED.** It is the owner's own diagnosis -- the analysis should look at a
-  rolling six months at most -- so it is worth being exact about what was
-  measured and what it says.
+* **THE SIX-MONTH WINDOW IS BLOCKED BY ONE THING: A YEAR-OVER-YEAR MACRO
+  CALCULATION MEASURED IN PRICE BARS.** Diagnosed on the owner's push-back,
+  and their argument is what got it right.
 
-  The test: for each of five recent mid-session bars, run the engine twice,
-  full span and six months, identical in every other respect, and compare the
-  final bar's target as a SHARE OF EQUITY -- which is what `persist.intent`
-  carries and `apply_prices` turns into a real order.
+  The measurement, on five recent mid-session bars, full span against six
+  months, comparing the final bar's target as a SHARE OF EQUITY:
 
       end bar    full   six months   verdict
       09-04         5            2   DIFFERENT NAMES: BKNG, LMT, NOC
@@ -738,36 +735,84 @@ advertised the book, line 209 correctly said it was removed on 2026-08-30.
       09-10         6            6   IDENTICAL
       09-11         4            4   IDENTICAL
 
-  **Identical on two of five.** On 09-04 the six-month run does not open
-  three names the full run holds, which is a different account rather than a
-  rounding difference. The decision rule was stated before the numbers were
-  seen -- anything short of identical on all five means the window is not
-  safe at six months -- and it is not met.
+  **I read that as "six months is not safe" and that was the wrong
+  conclusion.** It takes the full-span run as ground truth, which is exactly
+  the premise worth doubting: this book flattens at the bell, its time stop
+  is 0.29 days, and every session starts flat, so there is no carried state
+  and no mechanism by which 2023 informs the next four hours. The owner's
+  objection -- there is not a single stock where 3.5-year-old data helps
+  predict tomorrow's direction -- is the right frame, and the disagreement is
+  evidence about a DEPENDENCY rather than about a window.
 
-  The arithmetic said it should be: the longest lookback in the pipeline is
-  252 bars on a 63-bar window, about 315 bars of warm-up, against roughly 880
-  session bars in six months. So something the decision depends on is NOT a
-  fixed-length lookback. The candidate is any quantity ranked against its own
-  available history -- a percentile over 3.65 years is not a percentile over
-  six months, and that would move confidence and therefore size, which is the
-  shape of the 2.4x differences. **Untested.** It is not the carried position
-  state: `time_stop_days` is 0.29, so nothing is held across a window
-  boundary.
+  Bisected by stage on the 09-04 bar:
 
-  Until that is identified the window cannot be bounded safely, and bounding
-  it is the remaining half of the owner's architectural change. The dealer is
-  already out of the daemon and already light; this is about the analysis.
+      analysis panels   close     IDENTICAL across 55 columns
+                        macro     IDENTICAL across 12 columns
+      regimes           growth_regime     full 'contraction'  short 'unknown'
+                        inflation_regime  full 'stable'       short 'unknown'
+      signals           BKNG/LMT/NOC      full 'short'        short 'flat'
 
-  **Two earlier attempts measured nothing, and both were mine.** The first
-  compared RAW UNITS, which are proportional to each run's own simulated
-  equity -- a 3.65-year run compounds to 1.26e17 -- so the two MUST differ by
-  that ratio whatever the decision is. The second reported IDENTICAL on 5 of
-  5 while reading `execution.equity`, an attribute that does not exist (it is
-  `equity_curve`), so the scale was 0.0, every comparison returned nothing,
-  and "no book on either side" was scored as agreement. Inert-gate failure,
-  in the tool built to check a fix, on the same day as two other inert-gate
-  findings. The script now raises on an unreadable denominator rather than
-  reporting an empty book, and refuses to score two empty books as a pass.
+  Prices identical. Macro inputs identical at the decision bar -- INDPRO
+  year-on-year 0.003375 and CPIAUCSL 0.000737 in BOTH runs, to six decimals.
+  Only the LABEL differs, and an unknown macro regime turns 20 of 55 names
+  flat.
+
+  **The cause, measured rather than reasoned:**
+
+      periods_per_year          1764   (7 hourly bars x 252 sessions)
+      bars in six months         891
+      needed: year + momentum   1827   about 12.4 months
+
+  `_macro_lookback` resolves to the frame's own `periods_per_year`, so the
+  growth and inflation classifiers do a genuine YEAR-over-year change -- and
+  they do it in PRICE BARS on the PRICE calendar. A six-month price window
+  cannot resolve it at any warm-up, because the macro panel is reindexed to
+  that calendar and the 1,764-bar shift falls off the start however much
+  macro history is loaded. Proved by loading macro with `start=None`: the
+  leading NaNs went 348 to 0 and 327 to 0, the year-on-year resolved on 639
+  of 891 rows instead of 291, and **not one decision changed.** That change
+  was reverted rather than kept, because its stated reason was disproved.
+
+  **And this is what the label DOES**, which is the part that matters:
+
+      allow_short = combined.isin(short_regimes) | macro.isin({"contraction"})
+
+  A short is permitted only in a `crisis` combined regime or when the macro
+  label reads `contraction`, and `allow_when_unknown` is False. So whether
+  this book may go short on an ordinary day is decided by a year-over-year
+  change in monthly FRED data published in arrears -- over a live intraday
+  signal that had BKNG, LMT and NOC as shorts. That is the owner's second
+  point exactly: backwards-looking data outranking the near-live data
+  collected through the day.
+
+  **RETRACTED, same session: I claimed `periods=252` meant the year-on-year
+  really spanned about seven weeks.** It does not. `classify_growth` defaults
+  to 252 but the pipeline passes 1,764, so it is a true year. The seven-week
+  figure came from calling the function by hand at its default, and the
+  disagreement I found between `regimes.components` and
+  `classify_macro(analysis.macro)` -- 'contraction' against 'expansion' -- is
+  that same default, not two owners for one quantity. Recorded because it was
+  one step from being written down as a bug in a file whose whole discipline
+  is not doing that.
+
+  **Two ways forward, and they are different kinds of question.**
+
+  *Engineering.* Classify the macro regime on the MACRO data's own calendar,
+  where a year is twelve monthly observations, then reindex the label onto
+  the price calendar. The lookback stops being denominated in price bars, the
+  two windows decouple, and six months of prices ships without changing what
+  the macro regime means. Not built.
+
+  *Strategy, and it is the owner's.* Whether a monthly, lagged,
+  year-over-year label should gate a book whose median position lives four
+  hours. This file already records the answer from 2026-08-30 -- "every
+  intervention slower than the hold failed... a label computed over a
+  multi-day window cannot inform a decision about the next four hours" -- and
+  a year-over-year macro series is the slowest label in the system. That is
+  an argument and a prior measurement, not a measurement of THIS gate, and
+  the gate has never been measured on its own. It needs the battery before it
+  is removed, because removing it changes which trades the account may take.
+
 * The memory limits are 5G/6G via a live drop-in and the unit file says
   3G/4G. Two owners for one threshold, pending a real measurement.
 * `MIN_SESSION_MINUTES = 30.0` remains provisional and unmeasured.

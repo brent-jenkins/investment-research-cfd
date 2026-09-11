@@ -903,23 +903,68 @@ def test_only_a_push_to_main_deploys():
     assert not listener.should_deploy("push", {})
 
 
-def test_the_deploy_script_restarts_every_resident_service():
+def test_the_deploy_script_puts_every_unit_through_the_new_code():
     """M90: the deploy pulls and does not restart.
 
     This is the whole reason the script exists. Copying files while a
-    daemon holds its imported modules leaves the change on disk and out of
+    process holds its imported modules leaves the change on disk and out of
     production, which is what happened on 2026-08-25.
+
+    **Asserted as a requirement rather than as a literal line.** This used to
+    assert the exact text `SERVICES=(cfdinvest cfdinvest-dashboard)`, which
+    is "test the constant, not the property" in the file that warns about it
+    -- and it failed the moment `cfdinvest` stopped being resident, for a
+    change that made the deploy MORE thorough rather than less.
+
+    The requirement is that every unit carrying application code is put
+    through the newly-installed code by the deploy, by one of the two routes
+    that suit it:
+
+      resident   restarted, then asserted ACTIVE
+      one-shot   started (which blocks until it finishes), then asserted to
+                 have SUCCEEDED -- a finished pass is `inactive (dead)`, so
+                 asserting it is active would fail on a healthy box
+
+    `cfdinvest` moved from the first list to the second on 2026-09-11 when it
+    became Type=oneshot. That is a stronger check, not a weaker one: it
+    proves a pass RAN and returned zero, where is-active only proved a
+    process existed -- and a process existing is precisely what both silent
+    stalls had.
     """
+    import re
     from pathlib import Path
 
     script = Path("deployment/deploy.sh").read_text(encoding="utf-8")
 
     assert "git fetch" in script and "git reset --hard" in script
-    for service in ("cfdinvest", "cfdinvest-dashboard"):
-        assert f'systemctl restart "${{service}}"' in script or service in script, service
-    assert "SERVICES=(cfdinvest cfdinvest-dashboard)" in script, (
-        "both resident services must be restarted, not just one"
+
+    def declared(name: str) -> set[str]:
+        found = re.search(rf"^{name}=\((.*?)\)$", script, re.M)
+        return set(found.group(1).split()) if found else set()
+
+    resident = declared("SERVICES")
+    oneshots = declared("ONESHOTS")
+    covered = resident | oneshots
+
+    for unit in ("cfdinvest", "cfdinvest-dashboard"):
+        assert unit in covered, (
+            f"{unit} carries application code and the deploy never puts it "
+            "through the new code"
+        )
+
+    assert not (resident & oneshots), (
+        "a unit cannot be both resident and a one-shot"
     )
+
+    # Each route must actually do its half.
+    assert 'systemctl restart "${service}"' in script, "residents unrestarted"
+    if oneshots:
+        assert 'systemctl start "${service}"' in script, "one-shots never run"
+        assert "Result" in script and "ExecMainStatus" in script, (
+            "a one-shot proved by is-active is proved by nothing: a finished "
+            "pass is inactive, and a failed one is inactive too"
+        )
+
     # And it must check what it produced rather than assume.
     assert "is-active" in script and "http_code" in script
 

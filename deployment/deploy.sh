@@ -16,7 +16,19 @@ set -uo pipefail
 
 REPO_DIR="/opt/cfdinvest"
 VENV="${REPO_DIR}/.venv"
-SERVICES=(cfdinvest cfdinvest-dashboard)
+# Resident processes, restarted and then asserted ACTIVE.
+#
+# `cfdinvest` is deliberately NOT here any more. It became Type=oneshot on
+# 2026-09-11 -- one tick, then it exits -- so four seconds after a restart it
+# is correctly `inactive (dead)`, and asserting is-active would fail every
+# deploy on a perfectly healthy box. It is verified as a ONESHOT below
+# instead, which is a stronger check: it proves a pass actually RAN and
+# returned zero, where is-active only ever proved a process existed.
+SERVICES=(cfdinvest-dashboard)
+
+# Timer-driven one-shots. Started synchronously and asserted to have
+# SUCCEEDED, rather than to be running.
+ONESHOTS=(cfdinvest)
 # Timers are enabled on every deploy, not just installed -- enabling is
 # idempotent, so one that was never switched on gets switched on rather than
 # waiting to be noticed.
@@ -122,11 +134,19 @@ deploy_steps() {
     fi
   done
 
-  # Restart every resident process. Both hold imported modules in memory and
-  # neither notices a file changing underneath it.
+  # Restart every resident process. It holds imported modules in memory and
+  # does not notice a file changing underneath it.
   for service in "${SERVICES[@]}"; do
     log "Restarting ${service}"
     systemctl restart "${service}" || { fail "restart ${service}"; return 1; }
+  done
+
+  # Run each one-shot once, now, against the code just installed. `start` on
+  # a Type=oneshot blocks until it finishes, so this is the new code actually
+  # doing a pass rather than a promise that it would.
+  for service in "${ONESHOTS[@]}"; do
+    log "Running ${service}"
+    systemctl start "${service}" || fail "start ${service}"
   done
 
   sleep 4
@@ -138,6 +158,18 @@ deploy_steps() {
       log "  ${service}: active"
     else
       fail "  ${service}: NOT active"; ok=1
+    fi
+  done
+
+  # A one-shot is proved by its RESULT, not by being active -- a finished
+  # pass is `inactive (dead)` and that is the healthy state.
+  for service in "${ONESHOTS[@]}"; do
+    result=$(systemctl show "${service}" -p Result --value)
+    status=$(systemctl show "${service}" -p ExecMainStatus --value)
+    if [[ "${result}" == "success" && "${status}" == "0" ]]; then
+      log "  ${service}: last pass succeeded"
+    else
+      fail "  ${service}: last pass ${result}, exit ${status}"; ok=1
     fi
   done
 
