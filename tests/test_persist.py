@@ -317,13 +317,75 @@ def test_panels_of_different_shapes_all_stack(lake):
             )
         }
 
+    # The MultiIndex property is asserted against `_to_long` DIRECTLY,
+    # because `write_analysis_frame` no longer passes correlations to it --
+    # see below. The bug this test was written for lives in `_to_long`, and
+    # testing it through a caller that stopped calling it would have quietly
+    # stopped testing anything.
+    long = writers._to_long(
+        {"prices.close": Analysis.prices["close"],
+         "correlations.rolling": Analysis.correlations["rolling"]},
+        "value",
+    )
+    assert set(long.columns) >= {"timestamp", "panel", "series", "value"}
+    assert {"prices.close", "correlations.rolling"} <= set(long["panel"])
+    assert any("|" in name for name in long["series"]), "a pair should be joined"
+
     directory = storage.ensure_run_directory(RUN_ID, lake)
     writers.write_analysis_frame(directory, Analysis())
 
     read = readers.load_analysis_frame(RUN_ID, lake)
     assert set(read.columns) >= {"timestamp", "panel", "series", "value"}
-    assert {"prices.close", "correlations.rolling"} <= set(read["panel"])
-    assert any("|" in name for name in read["series"]), "a pair should be joined"
+    assert "prices.close" in set(read["panel"])
+
+
+def test_correlations_are_not_written_to_the_analysis_artefact(lake):
+    """Quadratic in the universe, and it stalled the live daemon.
+
+    A rolling correlation panel is every asset against every other: 109
+    instruments is 11,881 series per bar, and over 6,400 bars roughly 76
+    million values, each given a string label by `_to_long`. On 2026-09-11
+    the pipeline entered this call at 13:35 and was still in it at 14:24, in
+    uninterruptible sleep, thrashing against its memory cgroup -- RSS 3.55GB
+    at 14:19 and 5.59GB four minutes later. `trade-capital` runs after
+    `run-intraday` in the same tick, so the account did not deal at all that
+    session, and nothing alerted because the daemon was alive and busy.
+
+    Nothing is lost but a sweep-time convenience: correlations are derived
+    from `returns`, which IS written, so a consumer can recompute them.
+
+    Asserted through the artefact rather than the constant, so renaming or
+    reordering `ANALYSIS_PANEL_GROUPS` cannot make this pass while the panel
+    comes back.
+    """
+    index = pd.bdate_range("2026-01-01", periods=5, tz="UTC")
+    pairs = pd.MultiIndex.from_product([index, ["SPY", "GLD"]])
+
+    class Analysis:
+        prices = {"close": pd.DataFrame({"SPY": range(5), "GLD": range(5)},
+                                        index=index)}
+        returns = {"simple": pd.DataFrame({"SPY": range(5), "GLD": range(5)},
+                                          index=index)}
+        volatility = {}
+        correlations = {
+            "rolling": pd.DataFrame(
+                {"SPY": np.zeros(10), "GLD": np.zeros(10)}, index=pairs
+            ),
+            "average": pd.DataFrame({"average": np.zeros(5)}, index=index),
+        }
+
+    directory = storage.ensure_run_directory(RUN_ID, lake)
+    writers.write_analysis_frame(directory, Analysis())
+    read = readers.load_analysis_frame(RUN_ID, lake)
+
+    panels = set(read["panel"])
+    assert not any(p.startswith("correlations") for p in panels), (
+        f"a correlation panel reached the artefact: {sorted(panels)}"
+    )
+    assert {"prices.close", "returns.simple"} <= panels, (
+        "the cheap panels must still be written; dropping the artefact "
+        "entirely was not the fix"
+    )
 
 
 def test_an_empty_frame_is_not_written(lake):

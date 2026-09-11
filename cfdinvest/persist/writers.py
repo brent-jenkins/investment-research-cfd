@@ -256,17 +256,57 @@ def _to_long(panels: dict[str, pd.DataFrame], value_name: str) -> pd.DataFrame:
     return pd.concat(blocks, ignore_index=True)
 
 
+#: The panel groups written to the long-form analysis artefact.
+#:
+#: **`correlations` is deliberately absent, and it is the reason this
+#: constant exists rather than a literal in the function below.**
+#:
+#: A rolling correlation panel is every asset against every other, so it is
+#: QUADRATIC in the universe: 109 instruments is 11,881 series per bar, and
+#: over 6,400 bars that is roughly 76 million values. `_to_long` then stacks
+#: it and gives every row a string label, and `pd.concat` materialises those
+#: categoricals into Python strings -- gigabytes of them.
+#:
+#: It stalled the live daemon on 2026-09-11. The pipeline began at 13:35 and
+#: was still inside this call at 14:24, in uninterruptible sleep, thrashing
+#: against its memory cgroup:
+#:
+#:     14:19   RSS 3.55 GB   memory.events high 111,331
+#:     14:23   RSS 5.59 GB   memory.events high 146,823
+#:
+#: `trade-capital` runs after `run-intraday` in the same tick, so the account
+#: did not deal at all that session and nothing alerted -- the daemon was
+#: alive and busy, just not doing anything.
+#:
+#: **And the memory limit had been hiding it.** This file's sibling unit
+#: records the pipeline "peaking at 1801MB against MemoryHigh=1800M" on
+#: 2026-09-09. That was not a peak, it was the ceiling: the run had been
+#: memory-starved and throttled for days, and raising the cap to 3G simply
+#: let it grow to 3G. Raising it again to 5G on 2026-09-11 let it reach
+#: 5.6GB within four minutes. A limit is not a diagnosis.
+#:
+#: What is lost is a sweep-time convenience, not information: correlations
+#: are derived from `returns`, which IS persisted, so any consumer can
+#: recompute them. `monitoring` already lists `analysis` as an optional
+#: artefact, and the dealing path reads `positions`, `equity` and `signals`
+#: rather than this.
+ANALYSIS_PANEL_GROUPS: tuple[str, ...] = ("prices", "returns", "volatility")
+
+
 def write_analysis_frame(run_dir: Path, analysis_frame) -> str | None:
     """Preprocessed panels — prices, returns, volatility, ATR — in long form.
 
     Stored so that analytics need not re-run preprocessing for every point of
     a parameter sweep. This is the single change that makes a fifty-point
     sweep affordable.
+
+    Correlations are excluded because they are quadratic in the universe and
+    stalled the live daemon -- see `ANALYSIS_PANEL_GROUPS`.
     """
     if analysis_frame is None:
         return None
     panels: dict[str, pd.DataFrame] = {}
-    for group in ("prices", "returns", "volatility", "correlations"):
+    for group in ANALYSIS_PANEL_GROUPS:
         panels.update(
             {
                 f"{group}.{name}": panel
