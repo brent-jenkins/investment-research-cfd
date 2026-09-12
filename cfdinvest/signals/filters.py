@@ -224,6 +224,45 @@ def regime_filter(
       ``contraction``.
     * ``high`` volatility scales size by ``high_volatility_multiplier``.
 
+    **The macro term in the short rule is MEASURED AND NOT SUPPORTED, and it
+    does not run in the shipped configuration.** Both halves matter to
+    anyone reading this line.
+
+    It does not run because the shipped ``regime_mode`` is ``tilt``, where
+    ``allow_short`` is replaced below by ``short_scale > 0.0`` off the
+    combined regime and the macro term is discarded. Macro still reaches the
+    decision as an INPUT to ``classify_combined``; it simply does not veto
+    here.
+
+    It is not supported because the cut it rests on points the wrong way.
+    Measured 2026-09-12 over 5,590 completed trips, grouping the engine's
+    own round trips by the macro label standing at entry:
+
+        shorts entered under contraction     n=1450   mean  -23   win 29.7%
+        shorts entered under anything else   n=1074   mean  -15   win 34.1%
+                                             difference -8, t = -1.39
+
+    The trades this term PERMITS are worse than the ones it would refuse.
+    And the mirror says the label is not directional at all: longs under
+    ``contraction`` average -17 against -15 elsewhere, so both sides are
+    marginally worse under the same label rather than one side being better.
+    A cut that moves longs and shorts the same way is marking a period, not
+    a direction.
+
+    ``contraction`` also covers 3,836 of 6,713 bars -- 57% of the span -- so
+    it is not a selective gate even when it is switched on.
+
+    Two things that measurement cannot settle, stated so the figures are not
+    over-read. The harness this ran on does not reproduce the recorded
+    battery (-73.6% where +191.0% was recorded), so every band loses money
+    and only the RELATIVE ordering within the run is worth anything. And
+    ``t = -1.39`` on overlapping trips is nothing in either direction: this
+    is an absence of support, not evidence of harm.
+
+    So the term is left exactly as it is -- unused in production and
+    unchanged -- rather than deleted on a null. Switching ``regime_mode``
+    back to ``gate`` would bring it live, and nothing here justifies that.
+
     Parameters
     ----------
     allow_when_unknown:

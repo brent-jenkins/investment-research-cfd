@@ -492,6 +492,95 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### The macro gate, measured at last, 2026-09-12
+
+Asked to measure it and then decide. The answer is that **the gate as this
+file has described it does not run**, and the cut it rests on **points the
+wrong way** — so it is not adopted, not switched on, and not deleted either.
+
+**FIRST, THE DESCRIPTION IN THIS FILE WAS WRONG ABOUT THE MECHANISM.**
+Written here twice, and in a code comment I added the same day:
+"`allow_short` permits a short only in a `crisis` combined regime or when
+macro reads `contraction`". That expression is real and it runs **only in
+`mode="gate"`**. The shipped config is `regime_mode = "tilt"`, where
+`allow_short` is REPLACED by a tilt read off the combined regime and the
+macro term is discarded.
+
+So the thing the owner objected to — a monthly, lagged, year-over-year FRED
+label vetoing what the book may short — **is already inert in production**.
+The consequence written down was right and the route was wrong, which is the
+more dangerous shape: a reader checking the claim would have found that line
+of code and believed it. Corrected in `signals/filters.py` and in
+`schedule/app.py`.
+
+**Macro still reaches the decision, by the other route.** It is an input to
+`classify_combined`, whose rules key off `contraction`, `stagflation` and
+`overheating`. Measured on the shipped configuration, removing macro
+entirely changes the live book on **3 of 5** recent session bars — on
+2026-09-04 the difference between holding one short and none.
+
+**THE CUT IT RESTS ON IS BACKWARDS.** 5,590 completed round trips, paired by
+`backtest.metrics.round_trips` rather than by anything written for this, and
+grouped by the macro label standing at each trip's ENTRY:
+
+    shorts entered under contraction     n=1450   mean  -23   win 29.7%
+    shorts entered under anything else   n=1074   mean  -15   win 34.1%
+                                         difference -8, t = -1.39
+
+The trades the term PERMITS are worse than the ones it would refuse, on both
+mean and win rate.
+
+**And the mirror says it is not directional at all.** Longs under
+`contraction` average **-17 against -15** elsewhere. Both sides are
+marginally worse under the same label, so it marks a period rather than a
+direction — the mirror test this file already uses to retire hypotheses, and
+it wins again here.
+
+`contraction` also covers **3,836 of 6,713 bars, 57% of the span**, so it
+would not be a selective gate even switched on.
+
+**Over the full span the three arms are inside the noise floor:**
+
+    arm                              CAGR    maxDD   trades      L/S
+    shipped (macro in price bars)  -77.4%   -99.6%   25,829  10953/9188
+    no macro (market data alone)   -79.5%   -99.7%   25,852  11340/8867
+    dated   (own monthly calendar) -73.6%   -99.3%   24,545   9920/9035
+
+    per year   2023  2024  2025  2026
+    shipped     -83%  -77%  -72%  -78%
+    no macro    -84%  -80%  -77%  -77%
+    dated       -78%  -76%  -72%  -67%
+
+5.9pp between best and worst against an 8pp floor. The correctly dated arm
+is best in 4 of 4 years and both halves, which is more consistent than a coin
+flip and still inside the floor.
+
+**THE FIGURES ABOVE SIT ON A HARNESS THAT DOES NOT REPRODUCE**, and that is
+the honest limit of all of it. The baseline is -73.6% where +191.0% was
+recorded, so every band loses money and only the RELATIVE ordering within a
+run is worth reading. `t = -1.39` on overlapping trips is nothing in either
+direction. **This is an absence of support, not evidence of harm.**
+
+**The decision: nothing changes.** The macro input stays, the gate-mode veto
+stays off, and neither is altered on a null.
+
+* Adopting the veto is unsupported — the one cut it rests on is negative and
+  its mirror kills the mechanism.
+* Removing macro entirely is equally unsupported — that arm was the *worst*
+  of the three, also inside the floor. "No evidence either way" is not a
+  reason to change a live input, which is how `leverage_cap_selects` was
+  handled on 2026-09-07.
+* What would settle it is a harness that reproduces the battery, which is
+  already the top open item and blocks every parameter claim in this file.
+
+**What the owner's objection turns out to be worth.** It was right about the
+principle and the system was already safe in practice: in tilt mode nothing
+backward-looking outranks the day's own signals, because the veto never
+fires. The residual influence runs through one of four inputs to a combined
+regime, and it shows no directional skill. If `regime_mode` is ever moved
+back to `gate`, that veto comes alive and **nothing measured here justifies
+it** — recorded next to the code so the next reader of that line sees it.
+
 ### The live decision is bounded at six months, 2026-09-12
 
 The owner's instruction, made three times before it was acted on: this is
