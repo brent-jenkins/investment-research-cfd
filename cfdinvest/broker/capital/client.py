@@ -699,6 +699,125 @@ def _market_from_details(document: Mapping[str, Any], *, now=None) -> CapitalMar
     )
 
 
+def fetch_activity(
+    session: "CapitalSession",
+    config: "CapitalConfig | None" = None,
+    *,
+    since=None,
+    epic: str | None = None,
+    opener=None,
+) -> list[dict]:
+    """The account's own activity log. READ ONLY, and never raises.
+
+    **Why this exists.** A position closed outside the dealing path leaves
+    no fill in this app's record, so `record_departure` writes the close
+    with `level=None` -- absent rather than invented, because inventing one
+    would put a price that never traded into the forward record.
+
+    That is correct and it has a cost: `completed_trips` cannot pair a trip
+    with no exit, so the trip is dropped. Measured on 2026-09-12, realised
+    P&L read -209.62 against a balance change of -246.04, and the gap is
+    those dropped trips. The forward record is the only trustworthy evidence
+    this project holds, and it was quietly understating losses.
+
+    The broker knows the price. TGT's close on 2026-09-10 is in this log at
+    158.43 against a 156.10 open -- read by hand at the time, which is why
+    this is now a function.
+
+    A GET, on a module whose whole guarantee is that it places nothing:
+    `tests/test_broker_capital.py` asserts no dealing endpoint appears here
+    and that the only POST is the session. Reading history does not breach
+    that and must not be allowed to -- there is no body and no method
+    override.
+
+    Returns the raw activity documents, newest first as Capital returns
+    them, or ``[]`` when the log cannot be read. **Empty means unknown, not
+    "nothing happened"**, and every caller has to treat it that way: a
+    departure whose price cannot be recovered keeps `level=None` rather than
+    acquiring a zero.
+    """
+    import urllib.parse
+
+    settings = config or CapitalConfig.from_env()
+    if not session.ok:
+        logger.warning("No session; the activity log cannot be read")
+        return []
+
+    query: dict[str, str] = {"detailed": "true"}
+    if since is not None:
+        # Capital wants a naive ISO stamp. A tz-aware one is converted
+        # rather than rejected, because every timestamp in this project is
+        # UTC-aware and passing one should not silently return nothing.
+        try:
+            import pandas as pd
+
+            stamp = pd.Timestamp(since)
+            if stamp.tzinfo is not None:
+                stamp = stamp.tz_convert("UTC").tz_localize(None)
+            query["from"] = stamp.isoformat(timespec="seconds")
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Could not format the activity window: %s", error)
+    if epic:
+        query["filter"] = f"epic=={epic}"
+
+    url = f"{session.host}/history/activity?{urllib.parse.urlencode(query)}"
+    read = opener or _read
+    try:
+        document, _ = read(url, headers=session.headers(settings.api_key))
+    except Exception as error:  # noqa: BLE001 - absence is not an outage
+        logger.warning("Could not read the activity log: %s", error)
+        return []
+
+    activities = (document or {}).get("activities")
+    if not isinstance(activities, list):
+        return []
+    return [row for row in activities if isinstance(row, dict)]
+
+
+def closing_level(
+    activities, epic: str, *, direction: str | None = None
+) -> float | None:
+    """The price a position in ``epic`` was closed at, from the activity log.
+
+    Pure. Returns ``None`` when the log does not say, which is the whole
+    point: an exit price that cannot be recovered stays absent, and
+    `completed_trips` goes on skipping the trip rather than pairing it
+    against a number nobody verified.
+
+    Takes the NEWEST matching close. The log is ordered newest first and a
+    reconciliation asks about the departure that just happened, not an
+    earlier one on the same instrument -- and this book has held the same
+    name repeatedly within a week.
+    """
+    for row in activities or []:
+        if str((row or {}).get("epic") or "") != str(epic):
+            continue
+        status = str((row or {}).get("status") or "").upper()
+        if status and "ACCEPT" not in status and "EXECUT" not in status:
+            continue
+
+        details = (row or {}).get("details")
+        details = details if isinstance(details, dict) else {}
+        level = details.get("level")
+        if level is None:
+            level = (row or {}).get("level")
+        value = _number(level)
+        if value is None or value <= 0:
+            continue
+
+        # A close is the leg opposing what was held. When the caller knows
+        # the side, use it: on a netting account an opposing order closes,
+        # and taking any fill would return the OPENING price on a name that
+        # was opened and closed in the same window.
+        if direction:
+            side = str(details.get("direction") or row.get("direction") or "").upper()
+            wanted = "BUY" if str(direction).lower() in {"short", "sell"} else "SELL"
+            if side and side != wanted:
+                continue
+        return value
+    return None
+
+
 def fetch_markets(
     tickers: Sequence[str],
     session: CapitalSession,

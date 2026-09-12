@@ -1740,9 +1740,43 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
             "order path is recording fills it is not getting.",
             len(departed), ", ".join(sorted(departed)),
         )
+        # Read the exit price back from the BROKER before recording the
+        # departure. This app placed no close, so it has no fill of its own
+        # -- but the account does, and without it the trip is dropped:
+        # `trips()` skips a close with no level, so an out-of-band close
+        # costs the forward record one trip. Measured on 2026-09-12 realised
+        # P&L read -209.62 against a balance change of -246.04, and the gap
+        # was those dropped trips quietly understating losses.
+        #
+        # One read for the whole pass rather than one per name, and a window
+        # wide enough to cover a position opened earlier in the session.
+        # Failure is absence, not an outage: an empty log leaves every level
+        # None and the old behaviour stands.
+        activity = []
+        try:
+            activity = capital.fetch_activity(
+                session, settings.broker,
+                since=pd.Timestamp(now) - pd.Timedelta(days=2),
+            )
+        except Exception as error:  # noqa: BLE001 - the departure still records
+            logger.warning("Could not read the activity log: %s", error)
+
         for epic in departed:
+            prior = placed.get(epic)
+            level = None
+            if activity:
+                level = capital.closing_level(
+                    activity, epic,
+                    direction=str((prior or {}).get("direction") or "") or None,
+                )
+            if level is None:
+                logger.warning(
+                    "Capital: %s departed and its exit price could not be "
+                    "read back; the trip stays unpaired rather than being "
+                    "priced at a level that never traded.", epic,
+                )
             order_store.record_departure(
-                epic, placed.get(epic), app_config, account_name, now=now,
+                epic, prior, app_config, account_name, now=now, level=level,
                 reason="absent from the account at the dealing pass",
             )
         placed = order_store.open_orders(app_config, account_name)

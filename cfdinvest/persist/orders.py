@@ -91,9 +91,28 @@ def record_plan(report, config=None, account: str | None = None, *, now=None) ->
     return _append(rows, config, account)
 
 
+def _number(value) -> float | None:
+    """A positive float, or None. Absence and zero are different answers.
+
+    A recovered exit price of zero is not a price -- it is a parse that went
+    wrong -- and letting it through would pair a trip against a level that
+    never traded, which is exactly what leaving the field absent exists to
+    prevent.
+    """
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number <= 0:  # NaN or non-positive
+        return None
+    return number
+
+
 def record_departure(
     epic: str, prior, config=None, account: str | None = None, *,
-    now=None, reason: str = "",
+    now=None, reason: str = "", level=None,
 ) -> int:
     """Record that a position the app believed it held is no longer there.
 
@@ -114,14 +133,26 @@ def record_departure(
     out-of-band close like the one above. Neither leaves a record, and
     nothing in the app could clear the jam either way.
 
-    **The exit price is not known and is not invented.** This app did not
-    place the close, so it has no fill. `level` stays `None`, which
-    `trips()` already reads as "cannot be paired" and skips -- an unknown
-    exit yields no P&L rather than a P&L computed from a zero. The row
-    carries `reconciled: True` so it can never be mistaken for a close this
-    app placed, and so a later reader can count them: a rising number of
-    departures is an order path reporting fills it is not getting, which is
-    a different and worse problem than a hand closure.
+    **The exit price is recovered from the BROKER when it can be, and left
+    absent when it cannot.** This app did not place the close, so it has no
+    fill of its own -- but the account does, and `client.fetch_activity`
+    reads it. A caller that recovers the price passes it as `level`.
+
+    Without it the trip is dropped: `trips()` reads a close with no level as
+    "cannot be paired" and skips it, so an out-of-band close costs the
+    forward record one trip. Measured on 2026-09-12 that gap was real --
+    realised P&L read -209.62 against a balance change of -246.04 -- and the
+    forward record is the only trustworthy evidence this project holds, so
+    it was quietly understating losses.
+
+    `level` still defaults to `None` and absence is still never invented. A
+    price that cannot be read back stays missing rather than becoming a
+    zero, because a P&L computed against a price that never traded is worse
+    than no P&L at all. The row carries `reconciled: True` either way, so it
+    can never be mistaken for a close this app placed, and so a rising count
+    of them stays countable -- that would be an order path reporting fills
+    it is not getting, which is a different and worse problem than a hand
+    closure.
 
     Deliberately NOT used for the other direction. A position on the account
     the app never opened is money at risk nobody chose, and the bridge still
@@ -146,15 +177,21 @@ def record_departure(
         # this row from the observation like every other.
         "status": "CLOSED",
         "ok": True,
-        # Absent, not zero. This app did not see the fill.
-        "level": None,
+        # The broker's price when it could be read back, absent when it
+        # could not. Never a zero: `trips()` skips an unpaired close, and a
+        # P&L against a price that never traded is worse than none.
+        "level": _number(level),
         "units": size,
         "direction": direction,
         "position_units": 0.0,
         "position_direction": "",
         "deal_id": deal_id,
         "reconciled": True,
-        "reason": reason or "absent from the account; recorded to reconcile",
+        "reason": reason or (
+            "absent from the account; recorded to reconcile"
+            + ("" if _number(level) is None
+               else ", exit read back from the broker")
+        ),
     }], config, account)
 
 
