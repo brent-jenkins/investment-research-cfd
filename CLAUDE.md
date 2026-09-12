@@ -492,6 +492,66 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### The 2026-09-08 battery does not reproduce, 2026-09-12
+
+A sweep harness now exists in the repository -- `cfdinvest/research/harness.py`
+-- and the first thing it establishes is that the figure which chose the
+shipped universe cannot be regenerated.
+
+**What the harness does.** It rebuilds the screen's membership over history
+and passes it as `entry_gate`, which is what a sweep must do and what a run
+from the production config does not: in production the traded list IS today's
+recorded selection and the run decides about one bar, while over 3.65 years
+the screen RE-SELECTS. `compose_entry_gates` names this exactly -- "a
+universe screen is another" contributor -- and records a past bug where a
+caller's gate was silently discarded, which made a universe sweep "return an
+identical number at every size".
+
+It loads prices and spreads once (`select_universe` reloads the lake per
+call, 4.5-5.4s, about 75 minutes an arm), applies the session flatten, keeps
+the shipped `execution_lag`, and **refuses to report an arm until its
+baseline reproduces a recorded figure** within the project's own 9.3pp floor.
+
+**The results, cap 8 / target 50, against a recorded +191.0% at -6.6%:**
+
+    production config, no screen gate        -84.2%   -99.9%   38,877 trades
+    + screen membership as entry_gate        -77.4%   -99.6%   25,829
+    + spreads at the 5bp constant            -49.3%   -91.8%   25,829
+
+    85 distinct names across 192 rebalances
+
+**Five explanations tested and eliminated**, each measured rather than
+argued: the session flatten (0.6pp), `spread_panel` being None (not a defect
+-- the engine falls through to the frame's own `spread_bp`), `entry_gate`
+being None (the runner composes the breakout mask at run time), the missing
+screen gate (7pp of return, a third of the turnover), and measured spreads
+against the 5bp constant (**28pp** -- real, and worth knowing on its own).
+
+**240pp still unexplained, and the drawdown says it is not a setting.** The
+recorded arm draws down 6.6%; every reconstruction draws down 91.8% or
+worse. That is not a parameter apart, it is a different simulation. This
+file already says of that number: "the one figure here that should not be
+believed... treat 6-9% as what the model can see, not as a risk estimate."
+
+**So `max_per_sector = 8` and `universe.max_target = 50` are currently
+unjustified.** They were adopted on 2026-09-08 on an arm nothing can now
+regenerate, by a harness that was never kept. That is a statement about the
+EVIDENCE, not about the settings: the account may well be running a fine
+configuration, and nobody can presently show it. The shipped values are NOT
+changed here -- changing the universe changes what the account trades, and
+that is the owner's decision on strategy grounds rather than a side effect
+of a failed reproduction.
+
+The same applies to the 2026-09-07 size-curve retraction one entry earlier:
+that table was withdrawn for being swept over the raw ranking, and the
+2026-09-08 battery which replaced it is now unreproducible. Two successive
+universe measurements have failed, by different routes.
+
+**What the harness is for now.** Finding the remaining 240pp is a bounded
+search -- the arms are cheap once membership is cached -- and until it is
+found, no parameter claim may be read off it. That is the harness working
+as designed rather than a reason to bypass it.
+
 ### Backtesting, read on 2026-09-12
 
 **THERE IS CURRENTLY NO REPRODUCIBLE BACKTEST OF THE SHIPPED
