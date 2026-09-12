@@ -847,6 +847,41 @@ def render(page: str):
 #: working; the simulation page's banner says the figures are not real, and it
 #: is deliberately above the numbers rather than below them. Their content is
 #: asserted separately, below.
+def test_every_view_this_suite_renders_exists_with_exact_case():
+    """A page name that differs only in case is a test that never runs.
+
+    Found on 2026-09-12 when the suite was first run on the deployment:
+    a lower-cased 01_status.py resolves happily on Windows and raises
+    FileNotFoundError on Linux, so the assertion behind it had never been
+    executed on the machine that runs the account.
+
+    Compares against the real directory listing rather than against
+    `Path.exists()`, because `exists()` is itself case-insensitive on the
+    machine where the mistake gets made.
+    """
+    import re
+    from pathlib import Path
+
+    views = Path("cfdinvest/ui/views")
+    on_disk = {entry.name for entry in views.iterdir() if entry.suffix == ".py"}
+
+    # Only pages this suite actually RENDERS. Scanning the whole file also
+    # catches prose in comments and `ERROR_IS_CONTENT`, which names pages
+    # that were removed when the dashboard was cut back -- those are stale
+    # but harmless, while a render call with the wrong case is a test that
+    # silently never runs.
+    source = Path("tests/test_ui.py").read_text(encoding="utf-8")
+    rendered = set(re.findall(r'render\(\s*"views/([^"]+)"', source))
+
+    missing = sorted(name for name in rendered if name not in on_disk)
+    assert not missing, (
+        f"these view files are rendered with the wrong case: {missing}. "
+        f"On disk: {sorted(on_disk)}. A name that differs only in case "
+        "resolves on Windows and raises on the Linux box that runs the "
+        "account, so the test behind it never executes there."
+    )
+
+
 ERROR_IS_CONTENT = {"views/12_Monitoring.py", "views/16_Simulation.py"}
 
 
@@ -1034,7 +1069,11 @@ def test_the_status_page_expands_every_failing_check(populated, monkeypatch):
             )
         ),
     )
-    app = render("views/01_status.py")
+    # Exact case. The file is `01_Status.py`, and this asked for
+    # `01_status.py` -- which matches on a case-insensitive Windows
+    # filesystem and does not exist on the Linux box that runs the
+    # account, so this test had never once executed there.
+    app = render("views/01_Status.py")
     drawn = " ".join(element.value for element in app.markdown)
     assert "what was found" in drawn
     assert "what to do" in drawn
