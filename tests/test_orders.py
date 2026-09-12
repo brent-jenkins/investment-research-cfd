@@ -159,6 +159,10 @@ def test_the_trading_job_runs_after_the_signals_and_only_in_session():
 
     history = {
         "poll-live-quotes": "2026-08-28T14:59:00Z",
+        # Ingestion has just written, which is what makes the pipeline owed.
+        # Since the jobs moved into separate units the analysis is gated on
+        # a refreshed lake rather than on a clock it shared with ingestion.
+        "ingest-intraday": "2026-08-28T14:59:00Z",
         "ingest-daily": "2026-08-28T03:00:00Z",
         "monitoring-snapshot": "2026-08-28T03:05:00Z",
         "screen-universe": "2026-08-01T03:10:00Z",

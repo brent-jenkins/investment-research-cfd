@@ -280,11 +280,37 @@ def jobs_due(
     # and testable. None means "not known", which is treated as closed: a
     # daemon that cannot tell the time should not be trading on the guess.
     if market_open:
-        since = _utc(history.get("run-intraday"))
-        if since is None or (
-            (moment - since).total_seconds() >= INTRADAY_MINUTES * 60
+        ingested = _utc(history.get("ingest-intraday"))
+        analysed = _utc(history.get("run-intraday"))
+
+        # Ingestion keeps its own clock. It used to share ``run-intraday``'s,
+        # which was safe only while ONE loop returned both from a single call
+        # and ran them before either timestamp moved. Since 2026-09-11 they
+        # are separate units on separate timers, and a shared clock means
+        # whichever process asks first closes the gate on the other: the
+        # analysis unit would record ``run-intraday``, and ingestion would
+        # then be refused for the rest of the cadence -- every cadence, since
+        # both units ask every minute. The lake would stop being refreshed
+        # intraday while the analysis went on reading it, which is the stale
+        # decision this whole arrangement exists to prevent.
+        if ingested is None or (
+            (moment - ingested).total_seconds() >= INTRADAY_MINUTES * 60
         ):
             due.append("ingest-intraday")
+
+        # And the ordering the loop used to get for free is now stated:
+        # analysis is owed once ingestion has written something newer than
+        # the last analysis read. That is the same guarantee -- the pipeline
+        # reads a lake ingestion has finished writing -- expressed so it
+        # survives the two jobs being in different processes.
+        #
+        # It cannot starve on a FAILING ingest, because `_command_daemon`
+        # records a job's timestamp whether or not it raised. It stops only
+        # if the ingest unit is not running at all, which is a condition
+        # worth halting for rather than papering over: the alternative is an
+        # account dealing on a lake that stopped updating, with nothing
+        # saying so.
+        if ingested is not None and (analysed is None or ingested > analysed):
             due.append("run-intraday")
             # On the same tick as the run, so a reading lines up with the
             # bar the engine decided on rather than falling between two.

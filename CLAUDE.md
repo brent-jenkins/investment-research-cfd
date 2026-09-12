@@ -492,6 +492,88 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### The split stopped ingesting, and nothing could have said so, 2026-09-12
+
+Asked whether the system still works the same way after the architectural
+change, and what figures prove it. It did not, the answer was two days from
+costing a session, and the figures are the point of this entry.
+
+**THE SPLIT BROKE THE ONE ORDERING THE SINGLE LOOP EXISTED TO PROVIDE.**
+`ingest-intraday` and `run-intraday` were both gated on **`run-intraday`'s**
+last-run time. In one sequential loop that was safe: both came back from a
+single `jobs_due` call and both ran before either timestamp moved. Split into
+`cfdinvest-ingest` and `cfdinvest`, on independent one-minute timers, they
+ask independently -- and whichever asks first records `run-intraday` and
+closes the gate on the other for the whole fifteen-minute cadence.
+
+Replayed minute by minute over a session, `jobs_due` being pure:
+
+    job               one loop    split, over all 24 interleavings
+    ingest-intraday         26    0..26      <-- starved in half of them
+    run-intraday            26    26
+    every other job     as-is     identical
+
+**Twenty-six ingestions a session become zero**, and it is not even
+consistently broken: it depends on which timer systemd happens to fire first,
+and once the analysis unit wins it stays won, because the gate is shut every
+minute thereafter. The lake would stop being refreshed intraday while the
+analysis went on reading it.
+
+**The consequence is the 2026-09-11 stall arrived at from the other side.**
+Not a wedged process this time -- a healthy one, reading bars that stopped
+arriving. `decision_is_stale` would refuse opens on the ageing decision bar,
+so the account would have sat flat through a session with every unit
+reporting `Result=success`.
+
+**And every check in place said fine.** That is the finding worth keeping:
+
+    all four units                Result=success, ExecMainStatus=0
+    the job partition             exact, 13 of 13 owned, 7 mutations caught
+    an idle tick                  0.76s, 127MB
+    jobs actually run since        2 of 13
+
+The last row is the one that matters and it is the one nobody had. The unit
+files were installed at 09:57 UTC on 2026-09-12 and the market has been shut
+since; in 689 invocations the split has run **`poll-live-quotes` and
+`advisor-alert`, 45 times each, and nothing else**. The three intraday jobs
+have never executed under this architecture at all. The first time they would
+have was 13:30 UTC on Monday 2026-09-14.
+
+**A structural check cannot see this, and that is why a behavioural one now
+exists.** `test_jobs_are_partitioned.py` proves every job has an OWNER. It
+passed throughout. A job can be owned by a unit that never becomes due, and
+the partition stays perfect while the work stops.
+`tests/test_split_runs_the_same_work.py` replays a whole day through both
+architectures and compares what actually ran, under every interleaving.
+
+**The fix states the ordering the loop got for free.** Ingestion keeps its
+own clock; the analysis is owed once ingestion has written something newer
+than the last analysis read. It cannot starve on a *failing* ingest, because
+`_command_daemon` records a job's timestamp whether or not it raised -- only
+on an ingest unit that is not running at all, which is a condition worth
+halting for rather than dealing through.
+
+**The cost is one tick of latency.** Analysis no longer rides in the same
+call as ingestion, so it lands on the following minute. That is a real
+behavioural change and five existing tests asserted the old shape -- each
+handed `jobs_due` a mid-session state in which ingestion had never run. They
+assert the requirement now (signals refresh intraday, spreads on the run's
+tick) rather than the implementation that used to satisfy it.
+
+**One mutation survived and it is recorded rather than quietly dropped.**
+Claiming `ingest-intraday` in two units changes no count, because each job
+now keys off its own last-run time and whichever unit asks first records it.
+That is true of a simulation where units take turns and *not* a guarantee
+about concurrent processes, so the claim was struck from the new test's
+docstring and double-claiming stays where it was already owned, structurally,
+by the partition test.
+
+**What is still not proven.** Everything above is the scheduler's decision
+layer, which is pure and therefore fully testable without a market. It says
+the right jobs run at the right cadence in the right order. It says nothing
+about whether a job behaves the same in its own process -- and the only
+evidence for that is Monday's session.
+
 ### The battery, narrowed from 240pp to 56pp, 2026-09-12
 
 The harness went from "does not reproduce" to "reproduces the shape and not

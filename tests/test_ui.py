@@ -2352,18 +2352,32 @@ def test_signals_are_refreshed_during_the_session_not_once_a_day():
     }
     midday = "2026-08-26T15:00:00Z"
 
-    due = daemon.jobs_due(midday, ran_at_three, market_open=True)
-    assert "run-intraday" in due, "no fresh signals during the session"
     # Bars before signals, or the pipeline reads a lake still being written.
-    assert due.index("ingest-intraday") < due.index("run-intraday")
+    # Since the two jobs moved into separate units on 2026-09-11 this is a
+    # GATE rather than a list order: with nothing ingested, the analysis is
+    # not owed at all. It used to be expressed as their order inside one
+    # call, which is a guarantee only a single sequential loop can give.
+    cold = daemon.jobs_due(midday, ran_at_three, market_open=True)
+    assert "ingest-intraday" in cold
+    assert "run-intraday" not in cold, (
+        "the pipeline was owed before anything had refreshed the lake"
+    )
 
-    # Not again a minute later.
-    just_ran = {**ran_at_three, "run-intraday": "2026-08-26T14:58:00Z"}
+    ingested = {**ran_at_three, "ingest-intraday": "2026-08-26T14:59:00Z"}
+    due = daemon.jobs_due(midday, ingested, market_open=True)
+    assert "run-intraday" in due, "no fresh signals during the session"
+
+    # Not again a minute later, because nothing new has been written.
+    just_ran = {**ingested, "run-intraday": "2026-08-26T14:59:30Z"}
     assert "run-intraday" not in daemon.jobs_due(midday, just_ran, market_open=True)
 
-    # And again once the interval has passed.
+    # And again once the interval has passed and ingestion has run again.
     later = "2026-08-26T15:20:00Z"
-    assert "run-intraday" in daemon.jobs_due(later, just_ran, market_open=True)
+    assert "ingest-intraday" in daemon.jobs_due(later, just_ran, market_open=True)
+    refreshed = {**just_ran, "ingest-intraday": later}
+    assert "run-intraday" in daemon.jobs_due(
+        "2026-08-26T15:21:00Z", refreshed, market_open=True
+    )
 
 
 def test_nothing_intraday_runs_while_the_market_is_shut():
@@ -2399,6 +2413,9 @@ def test_the_snapshots_stay_daily():
         "2026-08-26T15:00:00Z",
         {"ingest-daily": "2026-08-26T03:00:00Z",
          "monitoring-snapshot": "2026-08-26T03:05:00Z",
+         # A refreshed lake, which is what the analysis is gated on since
+         # the two jobs became separate units.
+         "ingest-intraday": "2026-08-26T14:59:00Z",
          "poll-live-quotes": "2026-08-26T14:59:00Z"},
         market_open=True,
     )

@@ -105,6 +105,10 @@ def test_the_candidate_pass_is_daily_not_on_the_trading_cadence():
 
     history = {
         "poll-live-quotes": "2026-08-28T14:59:00Z",
+        # Ingestion has just written, which is what makes the analysis owed:
+        # since the jobs moved into separate units the pipeline is gated on
+        # the lake having been refreshed rather than on a shared clock.
+        "ingest-intraday": "2026-08-28T14:59:00Z",
         "ingest-daily": "2026-08-28T03:00:00Z",
         "monitoring-snapshot": "2026-08-28T03:05:00Z",
         "screen-universe": "2026-08-01T03:10:00Z",

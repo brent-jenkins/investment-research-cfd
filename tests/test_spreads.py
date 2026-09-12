@@ -190,6 +190,11 @@ def test_the_reading_is_taken_on_the_trading_cadence():
 
     history = {
         "poll-live-quotes": "2026-08-28T14:59:00Z",
+        # Ingestion has just written. `run-intraday` is owed when the lake
+        # holds something newer than the last analysis read -- the ordering
+        # the single loop used to get for free and that has been explicit
+        # since the jobs moved into separate units on 2026-09-11.
+        "ingest-intraday": "2026-08-28T14:59:00Z",
         "ingest-daily": "2026-08-28T03:00:00Z",
         "monitoring-snapshot": "2026-08-28T03:05:00Z",
         "screen-universe": "2026-08-01T03:10:00Z",
