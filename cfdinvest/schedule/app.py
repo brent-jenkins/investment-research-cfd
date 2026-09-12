@@ -2583,6 +2583,53 @@ def _live_armed() -> bool | None:
         return None
 
 
+def _command_verify_day(args, app_config, smtp, transport) -> int:
+    """Verify the completed day and send it if anything is wrong.
+
+    Reports on YESTERDAY. This runs in the daily block at 03:05 UTC, after
+    the US close, so "today" has not traded yet -- and a clean verification
+    of a day that has not happened is the kind of reassurance that means
+    nothing.
+
+    **Mail on anything but OK, including UNCHECKED.** A verification that
+    could not see is not a clean one, and staying quiet about it is the
+    failure the whole module exists to prevent: on 2026-09-11 every reading
+    was true, the unit was `active`, and the account had not dealt for
+    nineteen hours.
+
+    A clean day sends nothing. An alert that arrives daily is an alert
+    nobody opens on the day it is red -- the monitoring layer's own rule,
+    applied here.
+    """
+    import pandas as pd
+
+    from cfdinvest.verify import verify_day
+
+    account = getattr(args, "account", None)
+    day = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=1)).date()
+    report = verify_day(app_config, account=account, day=str(day))
+
+    print(report.describe())
+    if report.verdict == "ok":
+        logger.info("Verification for %s is clean; sending nothing", day)
+        return EXIT_OK
+
+    logger.warning("Verification for %s: %s", day, report.verdict)
+    # `notify.send` takes a composed message and never raises -- a mail
+    # failure is logged and swallowed, because an unattended run that did its
+    # work must not be reported as broken by an unreachable mail server.
+    try:
+        message = notify_module._compose(  # noqa: SLF001 - the same composer
+            smtp or notify_module.SmtpConfig(),
+            f"cfdinvest {day}: verification {report.verdict.upper()}",
+            report.describe(),
+        )
+        notify_module.send(message, config=smtp, transport=transport)
+    except Exception as error:  # noqa: BLE001 - the report still printed
+        logger.warning("Could not send the verification: %s", error)
+    return EXIT_OK
+
+
 def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
     """Run one daemon job by name.
 
@@ -2709,6 +2756,10 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
     elif name == "advisor-alert":
         _command_advisor_alert(
             _job_args(args, "advisor-alert"), app_config, smtp, transport
+        )
+    elif name == "verify-day":
+        _command_verify_day(
+            _job_args(args, "verify-day"), app_config, smtp, transport
         )
     elif name == "prune-runs":
         _command_prune_runs(_job_args(args, "prune-runs"), app_config)

@@ -180,6 +180,11 @@ JOBS: tuple[str, ...] = (
     "ingest-minute",
     "monitoring-snapshot",
     "risk-snapshot",
+    # Did the system do what it said it would, yesterday? Every fault in the
+    # week to 2026-09-12 was found because the owner noticed or somebody went
+    # digging; none needed cleverness to catch, and nothing put the readings
+    # side by side. See `cfdinvest/verify/`.
+    "verify-day",
     "prune-runs",
     "screen-universe",
 )
@@ -333,6 +338,16 @@ def jobs_due(
     if _due_daily(moment, history.get("monitoring-snapshot"), SNAPSHOT_AT_UTC):
         due.append("monitoring-snapshot")
         due.append("risk-snapshot")
+        # Verify the day BEFORE pruning, because a pruned run is one the
+        # verification can no longer read -- and the artefacts it reads are
+        # exactly the ones retention drops first.
+        #
+        # It runs in this daily block, at 03:05 UTC, which is after the US
+        # close and therefore verifies a COMPLETED session. It reports on
+        # the previous day for that reason: at 03:05 "today" has not traded
+        # yet, and a verification of a day that has not happened is the kind
+        # of clean report that means nothing.
+        due.append("verify-day")
         # After the snapshots, so a run is only ever pruned once everything
         # that describes it has been written.
         due.append("prune-runs")
