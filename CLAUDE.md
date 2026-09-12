@@ -492,6 +492,70 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### The battery, narrowed from 240pp to 56pp, 2026-09-12
+
+The harness went from "does not reproduce" to "reproduces the shape and not
+the magnitude", and four factors were measured on the way. It still does not
+reproduce, and the shipped universe still rests on a figure nothing
+regenerates -- but the search is now bounded rather than open.
+
+**Reconstructed, with `environment_in_confidence` True:**
+
+    arm                                CAGR     gross  trades   maxDD  cost/gross
+    cap5/t25 carry (the 09-04 shape)  -7.6%    +4,048   1,171  -26.9%       723%
+    cap5/t30 flatten (rec. +116.0%)   -9.3%    +1,401   1,117  -33.9%      2268%
+    cap8/t50 flatten (rec. +191.0%)  -14.9%      -916   1,737  -47.6%      4793%
+
+    recorded 09-04 gate 0.75         +48.4%       n/a     577  -13.1%      37.2%
+
+**GROSS IS POSITIVE on the carry arm**, which is the first thing that
+matches: this file records "gross P&L is positive in every arm -- the entries
+predict; the signal is real", and the reconstruction now agrees. Trade count
+is within 2x of the recorded 577 and drawdown within 2x of -13.1%, against
+25,829 trades and -99.6% before. The signal handling is right.
+
+**What was measured and what each was worth.**
+
+* *The screen's membership as an entry gate*, which a run from the
+  production config does not apply: 38,877 trades to 25,829, about 7pp.
+* *Measured spreads against the 5bp constant*: **28pp**. Real, and a finding
+  on its own.
+* *`environment_in_confidence`*: **62pp, and a 15x change in trade count.**
+  The gate is `confidence >= 0.75` and this decides whether confidence
+  includes the 0.5 high-volatility multiplier. With it, `combined.py` says
+  "no signal can score above 0.5 in a volatile market however strong it is,
+  and any gate above 50% silently forbids trading". It ships as False, so
+  0.75 is routinely cleared now and was a near-veto when the figures were
+  taken. **Two eras of recorded figures, two meanings of the same number.**
+* *The session flatten*: it **hurts** here -- cost/gross triples, 723% to
+  2268% -- where this file records flattening as worth +55.4pp. That
+  disagreement is the largest single piece of the residual.
+
+**Eliminated by measurement rather than argument**, each with the reading
+that ruled it out: exposure (mean leverage 0.71 against the recorded 0.89),
+`spread_panel` and `entry_gate` being None (both resolve at run time), and
+the flatten as the cause of negative gross (gross was negative both with and
+without it before the confidence fix).
+
+**The residual, stated precisely.** At similar leverage and a similar trade
+count, the recorded book generates gross profit worth about 250% of average
+equity over the span; the reconstruction generates 4.7%. That is roughly
+100x per trade, and it is a sizing or holding-period difference rather than
+a selection one -- the names and the entry count are close, the money per
+trade is not. Not isolated.
+
+**And the ordering reverses, which matters more than the level.** The
+battery's case for the shipped universe is that bigger is better: cap5/t30
+at 116.0% against cap8/t50 at 191.0%. The reconstruction puts cap8/t50
+**worse** than cap5/t25 (-14.9% against -7.6%). If that holds, the argument
+for widening the universe is not merely unreproducible, it points the other
+way.
+
+**So `max_per_sector = 8` and `universe.max_target = 50` remain unjustified
+and are still not changed here.** Changing the universe changes what the
+account trades, and doing it on a reconstruction that itself misses by 56pp
+would be replacing one unverified number with another.
+
 ### The 2026-09-08 battery does not reproduce, 2026-09-12
 
 A sweep harness now exists in the repository -- `cfdinvest/research/harness.py`

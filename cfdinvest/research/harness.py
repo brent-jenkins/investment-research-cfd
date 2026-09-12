@@ -294,7 +294,7 @@ def arm_metrics(result) -> dict | None:
     growth = float(series.iloc[-1]) / float(series.iloc[0])
     trades = getattr(execution, "trades", None)
 
-    return {
+    metrics = {
         "cagr": (growth ** (1.0 / years) - 1.0) if growth > 0 else float("nan"),
         "maxdd": float((series / series.cummax() - 1.0).min()),
         "trades": 0 if trades is None or getattr(trades, "empty", True) else len(trades),
@@ -302,6 +302,43 @@ def arm_metrics(result) -> dict | None:
         "start": stamps[0],
         "end": stamps[-1],
     }
+
+    # The decomposition, because CAGR alone cannot say WHICH system was
+    # measured. The 2026-09-08 battery reports mean leverage 0.89 and a 6.6%
+    # drawdown for cap 8 / t50; a reconstruction drawing down 91.8% is not
+    # that configuration a few points out, it is a different book. Leverage
+    # and cost share identify it where a return figure cannot.
+    exposure = getattr(execution, "exposure", None)
+    if exposure is not None and not getattr(exposure, "empty", True):
+        try:
+            gross = pd.Series(exposure).dropna().abs()
+            metrics["mean_leverage"] = float(gross.mean())
+            metrics["p90_leverage"] = float(gross.quantile(0.90))
+        except Exception:  # noqa: BLE001 - a missing reading is not an outage
+            pass
+
+    pnl = getattr(execution, "pnl", None)
+    if pnl is not None and not getattr(pnl, "empty", True):
+        try:
+            frame = pd.DataFrame(pnl)
+            costs = [c for c in ("spread", "slippage", "financing", "fx")
+                     if c in frame.columns]
+            if costs:
+                cost = float(frame[costs].to_numpy().sum())
+                metrics["cost"] = cost
+                for column in ("intraday", "gap"):
+                    if column in frame.columns:
+                        metrics[column] = float(frame[column].sum())
+                gross_pnl = sum(
+                    metrics.get(c, 0.0) for c in ("intraday", "gap")
+                )
+                metrics["gross"] = gross_pnl
+                if gross_pnl:
+                    metrics["cost_share"] = abs(cost) / abs(gross_pnl)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return metrics
 
 
 def assert_reproduces(arm: tuple[int, int], metrics: Mapping[str, float] | None,
