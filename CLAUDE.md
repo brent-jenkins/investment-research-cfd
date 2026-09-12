@@ -923,8 +923,26 @@ advertised the book, line 209 correctly said it was removed on 2026-08-30.
   at all unless the combined regime reads `crisis`, and that is a property of
   the window rather than of the market.
 
-* The memory limits are 5G/6G via a live drop-in and the unit file says
-  3G/4G. Two owners for one threshold, pending a real measurement.
+* **RESOLVED 2026-09-12, and it was worse than "two owners".** The box was
+  running `MemoryHigh=5G` and `MemoryMax=6G` on `cfdinvest` while the
+  shipped unit set `MemoryMax=2G` and no `MemoryHigh` at all -- left over
+  from raising the limit by hand during the 2026-09-11 stall.
+
+  `systemctl set-property` writes to `/etc/systemd/system.control/`, which
+  OUTRANKS the unit file and survives deploys, reboots and `daemon-reload`.
+  So the repository, the tests and the deploy all described one
+  configuration and the machine ran another.
+
+  **And MemoryHigh is the specific directive that caused the 2026-09-09
+  stall** -- it throttles instead of failing, so the process never dies,
+  `Restart` never fires, the unit stays `active`, and the account silently
+  stops dealing. `tests/test_analysis_is_periodic.py` asserts the FILE does
+  not set it, and that test passed for a day while production did.
+  **Only the box can check the box.**
+
+  Cleared with `systemctl revert`, and `deploy.sh` now fails when any
+  `MemoryHigh` is in force or any `system.control` override exists for a
+  cfdinvest unit, so it cannot come back quietly.
 * `MIN_SESSION_MINUTES = 30.0` remains provisional and unmeasured.
 
 ### What changed on 2026-09-10

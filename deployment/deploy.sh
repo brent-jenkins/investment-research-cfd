@@ -161,6 +161,35 @@ deploy_steps() {
     fi
   done
 
+  # **The running limits must come from the unit files, not from a console
+  # command.** `systemctl set-property` writes to /etc/systemd/system.control
+  # and SILENTLY OVERRIDES the unit, and it survives deploys, reboots and
+  # daemon-reload. On 2026-09-12 the box was found running MemoryHigh=5G and
+  # MemoryMax=6G on cfdinvest while the shipped unit set MemoryMax=2G and no
+  # MemoryHigh at all -- left over from raising the limit by hand during the
+  # 2026-09-11 stall.
+  #
+  # MemoryHigh is the directive that caused the 2026-09-09 stall: it
+  # throttles rather than failing, so the process never dies, Restart never
+  # fires, the unit stays active and the account silently stops dealing. A
+  # test in the repository asserts the FILE does not set it, and that test
+  # passed for a day while production did. Only the box can check the box.
+  for unit in "${SERVICES[@]}" "${ONESHOTS[@]}"; do
+    high=$(systemctl show "${unit}" -p MemoryHigh --value)
+    if [[ "${high}" != "infinity" && -n "${high}" ]]; then
+      fail "  ${unit}: MemoryHigh=${high} is in force; it throttles instead of failing"
+      fail "    run: systemctl revert ${unit}"
+      ok=1
+    fi
+  done
+  if [[ -d /etc/systemd/system.control ]]      && compgen -G "/etc/systemd/system.control/cfdinvest*" >/dev/null; then
+    fail "  a set-property override is in force and outranks the unit files:"
+    systemctl show cfdinvest -p DropInPaths --value | while read -r p; do
+      [[ -n "${p}" ]] && fail "    ${p}"
+    done
+    ok=1
+  fi
+
   # A one-shot is proved by its RESULT, not by being active -- a finished
   # pass is `inactive (dead)` and that is the healthy state.
   for service in "${ONESHOTS[@]}"; do
