@@ -1,0 +1,84 @@
+# cfdinvest intraday ingestion
+#
+# One tick, then it exits. Part of the scheduler split of 2026-09-12: the
+# jobs are partitioned across units so the light, time-critical work never
+# queues behind the heavy work. They used to run SEQUENTIALLY in one loop,
+# and on 2026-09-11 a wedged pipeline held up everything behind it --
+# including the account's ability to CLOSE -- for nineteen hours.
+#
+# This unit claims exactly these jobs and no others:
+#
+#     ingest-intraday
+#
+# `daemon.jobs_due` still decides WHEN each is owed; --only decides which of
+# the owed jobs THIS process runs. The subsets must partition JOBS: a job
+# claimed twice is two writers against one store, and a job claimed by
+# nobody never runs and says nothing. tests/test_jobs_are_partitioned.py
+# reads these files and fails the build on either.
+#
+# **The only writer of raw intraday bars, and it must stay the only
+# one.** `storage.write_parquet` writes a sibling .tmp and renames, so a
+# reader sees the old complete file or the new one and never a torn
+# read -- which is what makes running this alongside the analysis safe.
+# Two INGESTERS against one store would not be safe, which is what the
+# Conflicts= line against the pipeline service still guards.
+
+[Unit]
+Description=cfdinvest intraday ingestion
+Documentation=https://github.com/brent-jenkins/cfdinvest
+After=network-online.target
+Wants=network-online.target
+Conflicts=cfdinvest-pipeline.service
+
+# A failing tick must never stop the timer. The old resident unit set
+# StartLimitBurst=5 and systemd then gave up PERMANENTLY, which is how a
+# scheduler stayed down until somebody noticed.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=cfdinvest
+Group=cfdinvest
+WorkingDirectory=/opt/cfdinvest
+EnvironmentFile=/etc/cfdinvest/env
+
+ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule daemon --max-ticks 1 \
+    --only ingest-intraday
+
+TimeoutStartSec=600
+
+# **MemoryHigh is deliberately NOT set.** It throttles rather than failing:
+# the task is slept on every allocation past the limit and never finishes
+# anything again, which is the state that is neither working nor dead and is
+# how both silent stalls stayed invisible. One limit, and crossing it KILLS.
+MemoryMax=1G
+MemorySwapMax=256M
+
+# Binds nothing. The dashboard is a separate unit and this must never
+# acquire a port -- an accidental listener behind Caddy's basic auth would
+# answer the internet directly.
+PrivateNetwork=false
+
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+ReadOnlyPaths=/opt/cfdinvest
+ReadWritePaths=/var/lib/cfdinvest
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cfdinvest-ingest
+
+# No [Install]. Started by its timer and by nothing else; a
+# WantedBy=multi-user.target would fire one stray tick at boot.

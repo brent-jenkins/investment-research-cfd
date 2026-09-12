@@ -203,6 +203,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-ticks", type=int, default=None,
         help="stop after this many ticks (production uses 1)",
     )
+    daemon_parser.add_argument(
+        "--only", default=None,
+        help=(
+            "run only these jobs of the ones owed, comma-separated. Each "
+            "production unit claims a disjoint subset; see JOBS."
+        ),
+    )
 
     advise = commands.add_parser(
         "advisor-alert",
@@ -2827,6 +2834,32 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
         name, args, app_config, smtp, transport
     )
 
+    # Which jobs THIS process is responsible for.
+    #
+    # `daemon.jobs_due` stays the single owner of WHEN a job is owed; this
+    # only decides WHICH of the owed jobs this unit runs. Production splits
+    # them across units so the light, time-critical work never queues behind
+    # the heavy work -- on 2026-09-11 a wedged pipeline held up everything
+    # behind it in one sequential loop, including the account's ability to
+    # close.
+    #
+    # The subsets must PARTITION `JOBS`: a job claimed twice is two writers
+    # against one store, and a job claimed by nobody never runs and says
+    # nothing. `tests/test_jobs_are_partitioned.py` reads the shipped unit
+    # files and fails the build on either.
+    wanted: set[str] | None = None
+    raw = getattr(args, "only", None)
+    if raw:
+        wanted = {name.strip() for name in str(raw).split(",") if name.strip()}
+        unknown = wanted - set(daemon_module.JOBS)
+        if unknown:
+            print(
+                f"Unknown job(s): {', '.join(sorted(unknown))}. "
+                f"Known: {', '.join(daemon_module.JOBS)}",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+
     print(
         "cfdinvest scheduler daemon. Quotes every "
         f"{daemon_module.QUOTE_INTERVAL_MINUTES} minutes; signals every "
@@ -2853,7 +2886,11 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
                 logger.warning("Could not read the market calendar: %s", error)
                 market_open = False
 
-            for name in daemon_module.jobs_due(now, last_run, market_open=market_open):
+            due = daemon_module.jobs_due(now, last_run, market_open=market_open)
+            if wanted is not None:
+                due = [name for name in due if name in wanted]
+
+            for name in due:
                 logger.info("Daemon: running %s", name)
                 try:
                     run_job(name)

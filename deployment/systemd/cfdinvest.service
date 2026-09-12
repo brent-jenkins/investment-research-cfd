@@ -34,6 +34,17 @@
 # Measured on the box on 2026-09-11: a tick with nothing due takes 0.76s and
 # peaks at 127MB.
 #
+# **It claims only two jobs, since the scheduler split of 2026-09-12:**
+#
+#     run-intraday
+#     record-spreads
+#
+# This is the HEAVY unit -- the pipeline that produces the run the dealer
+# reads. Quotes, ingestion and the daily housekeeping each moved to their own
+# unit, because while they shared this process they queued behind it. The
+# subsets must partition JOBS; tests/test_jobs_are_partitioned.py fails the
+# build on a job claimed twice or claimed by nobody.
+#
 # If a tick overruns its interval, systemd will not start a second while the
 # first is still running. That self-throttling is deliberate and replaces
 # the loop's own sequencing.
@@ -76,7 +87,7 @@ Group=cfdinvest
 WorkingDirectory=/opt/cfdinvest
 EnvironmentFile=/etc/cfdinvest/env
 
-ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule daemon --max-ticks 1
+ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule daemon --max-ticks 1     --only run-intraday,record-spreads
 
 # A tick that hangs is killed rather than left to wedge the timer. The
 # longest legitimate tick is a full intraday run, measured at 26 seconds

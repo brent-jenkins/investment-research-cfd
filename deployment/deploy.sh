@@ -28,7 +28,7 @@ SERVICES=(cfdinvest-dashboard)
 
 # Timer-driven one-shots. Started synchronously and asserted to have
 # SUCCEEDED, rather than to be running.
-ONESHOTS=(cfdinvest)
+ONESHOTS=(cfdinvest cfdinvest-quotes cfdinvest-ingest cfdinvest-daily)
 # Timers are enabled on every deploy, not just installed -- enabling is
 # idempotent, so one that was never switched on gets switched on rather than
 # waiting to be noticed.
@@ -59,7 +59,7 @@ ONESHOTS=(cfdinvest)
 # session. It now runs every five minutes in its own process, and
 # `trade-capital` has been removed from the daemon's job list so the two
 # cannot both deal.
-TIMERS=(cfdinvest.timer cfdinvest-monitor.timer cfdinvest-dealer.timer)
+TIMERS=(cfdinvest.timer cfdinvest-monitor.timer cfdinvest-dealer.timer cfdinvest-quotes.timer cfdinvest-ingest.timer cfdinvest-daily.timer)
 LOG_TAG="cfdinvest-deploy"
 
 log() { echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') | $*" | systemd-cat -t "${LOG_TAG}" -p info; echo "$*"; }

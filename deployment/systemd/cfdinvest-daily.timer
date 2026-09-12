@@ -1,0 +1,27 @@
+# The schedule for daily housekeeping.
+#
+#   sudo systemctl enable --now cfdinvest-daily.timer
+#
+# The interval is not the job cadence. Every job owns its own -- quotes every
+# five minutes, signals every fifteen while a market is open, ingestion at
+# 03:00 -- and `daemon.jobs_due` is a pure function of the clock and what ran
+# last. This only decides how often that question is ASKED, so it must be
+# finer than the finest cadence it serves and is otherwise cheap.
+#
+# `OnUnitInactiveSec` rather than `OnUnitActiveSec`: measured from when the
+# last tick FINISHED, so a slow pass delays the next instead of queueing
+# behind itself.
+
+[Unit]
+Description=Run daily housekeeping
+Documentation=https://github.com/brent-jenkins/cfdinvest
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=5min
+AccuracySec=10s
+Persistent=false
+Unit=cfdinvest-daily.service
+
+[Install]
+WantedBy=timers.target

@@ -104,11 +104,23 @@ def test_the_units_exist():
         "cfdinvest.service",
         "cfdinvest-webhook.service",
         "cfdinvest-deploy.service",
-        # Dealing, in its own process since 2026-09-11. The daemon runs its
+        # Dealing, in its own process since 2026-09-11. The daemon ran its
         # jobs sequentially, so dealing queued behind the pipeline and the
         # account could not be CLOSED for a whole session while that was
         # wedged.
         "cfdinvest-dealer.service",
+        # The scheduler split of 2026-09-12. Dealing moving out fixed the
+        # worst case; these fix the rest of it. The remaining jobs were still
+        # one sequential loop, so the live-quote poll -- which the dealer's
+        # own freshness check depends on -- queued behind the pipeline, and a
+        # slow pipeline could stop the account dealing through a guard that
+        # was working exactly as designed.
+        #
+        # The subsets partition JOBS and
+        # tests/test_jobs_are_partitioned.py enforces it.
+        "cfdinvest-quotes.service",
+        "cfdinvest-ingest.service",
+        "cfdinvest-daily.service",
     }
 
 
