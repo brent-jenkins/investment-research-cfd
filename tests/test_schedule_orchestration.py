@@ -602,11 +602,23 @@ def test_run_once_through_the_cli(lake, config, monkeypatch, capsys):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("CFD_DATA_ROOT", str(config.paths.data_root))
 
+    # `--end` inside the fixture's own lake, which runs 2021-01-04 to
+    # 2022-08-12. Without it the live window -- added 2026-09-12, and
+    # measured back from the newest COMPLETED bar by the clock -- lands
+    # years after the last bar this lake holds, and the run correctly
+    # reports `no data to trade`.
+    #
+    # That is the window behaving properly on a stale lake rather than a
+    # defect: an empty book is the safe answer when the data has stopped,
+    # and it is `decision_is_stale` that stops the account acting on one.
+    # What this test is about is the CLI wiring, so it is pinned to data
+    # that exists instead of to the wall clock.
     code = app_module.main(
         [
             "--data-root", str(config.paths.data_root),
             "--tickers", "SPY,TLT,GLD",
             "--interval", "1d",
+            "--end", "2022-08-12",
             "--log-level", "ERROR",
             "--no-email",
             "run-once", "--force",

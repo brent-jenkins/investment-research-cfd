@@ -936,6 +936,73 @@ def _transport(args):
 INTENT_EXECUTION_LAG = 0
 
 
+#: How much history a LIVE decision reads, in months. Research is untouched.
+#:
+#: The owner's point, made three times before it was acted on: this is not a
+#: long-term platform. It predicts the next few hours from recent movement,
+#: and a price from 2023 cannot inform that. Until 2026-09-12 the live run
+#: read whatever the lake held -- ``start = "2005-01-01"`` and no bound, so
+#: 6,467 bars over 3.69 years, growing every day. That was never chosen; it
+#: is what "no window" evaluates to.
+#:
+#: **Six months is the owner's figure and the measurement supports it.**
+#: Swept on five recent session bars, comparing the final bar's target as a
+#: SHARE OF EQUITY -- which is what `persist.intent` carries -- against the
+#: whole-lake run on the same bar and the same pinned universe:
+#:
+#:     window   bars   reproduces the whole-lake decision
+#:      12m     1750   5 of 5
+#:       9m        -   5 of 5
+#:       6m      890   5 of 5
+#:       4m        -   5 of 5
+#:       3m      442   5 of 5
+#:       2m      308   5 of 5   <- and it should NOT be trusted
+#:       1m      155   0 of 5
+#:
+#: **Two months reproduces and is still wrong**, which is why the number
+#: comes from the warm-up rather than from the sweep's edge. The longest
+#: input is ``breakdown_baseline_window = 252`` computed over
+#: ``correlation_window = 63``, so 315 bars must exist before it does. Two
+#: months is 308. It passed five dates below its own floor, which is the
+#: shape of a result that reverses on the sixth -- and this file has been
+#: caught by exactly that before. Six months is 890 bars, 2.8x the warm-up.
+#:
+#: Nothing more is bought by going shorter. One live pass over 50 names:
+#:
+#:     full   6,467 bars   17.4s   867MB peak   42% of the 2G ceiling
+#:      12m   1,759 bars    7.0s   568MB        28%
+#:       6m     896 bars    4.9s   565MB        28%
+#:       3m     448 bars    4.2s   562MB        27%
+#:
+#: 3.6x faster, and since ~560MB is the interpreter and libraries, the
+#: analysis's own footprint falls from about 307MB to about 5MB. Three
+#: months saves a further 0.7s and 3MB for half the margin, so it is not
+#: taken.
+#:
+#: **Research keeps the full span**, exactly as it keeps the lag above. A
+#: backtest needs 3.65 years to MEASURE across many periods; the dealer
+#: needs recent bars to PREDICT the next few hours. Same engine, two uses,
+#: and only the second is bounded here -- so no recorded research figure
+#: moves as a side effect of this.
+#:
+#: Six months is a statement about RECENCY and is only safe at the interval
+#: it was measured on. `_intent_window_start` floors it at whatever the
+#: warm-up needs, because the same six months is 890 bars hourly and 126
+#: daily -- and the suite caught exactly that, a `1d` run through the CLI
+#: reporting "no data to trade".
+INTENT_WINDOW_MONTHS = 6
+
+#: Bars that must exist before the longest input does: the 252-bar
+#: `breakdown_baseline_window` computed over the 63-bar `correlation_window`.
+#: Read from the config objects rather than restated, so lengthening a
+#: lookback widens the window instead of quietly starving it.
+#:
+#: The multiplier is the margin six months already carries at the production
+#: interval (890 bars against 315), so the floor never contradicts the
+#: measured figure -- it only binds at resolutions the sweep did not cover.
+INTENT_WINDOW_WARM_UP_MARGIN = 2.8
+
+
 def _intent_interval(backtest, app_config):
     """The bar size the run will actually use.
 
@@ -1092,6 +1159,74 @@ def _completed_bar_end(interval, now):
     return pd.Timestamp(now).floor(span) - span
 
 
+def _warm_up_bars() -> int:
+    """How many bars must exist before the longest input does.
+
+    Read from the config objects rather than written down, because a window
+    justified against a 315-bar warm-up silently starves the day somebody
+    lengthens a lookback past it -- and the symptom is an empty book, not an
+    error.
+    """
+    from cfdinvest.preprocessing import PreprocessConfig
+
+    settings = PreprocessConfig()
+    return int(
+        settings.breakdown_baseline_window + settings.correlation_window
+    )
+
+
+def _intent_window_start(end, interval):
+    """Where a live decision's history begins: six months, or the warm-up.
+
+    Six months is the owner's figure and the one that was measured, but it
+    is a statement about RECENCY rather than about sample size, so it only
+    means the same thing at the interval it was measured on. At
+    ``capital_1h`` it is 890 bars against a 315-bar warm-up, 2.8x. At ``1d``
+    the identical six months is about 126 bars -- well under the warm-up --
+    and the pipeline then has no longest input at all.
+
+    That is not hypothetical: it is what `test_run_once_through_the_cli`
+    reported the moment the window was added, as ``no data to trade``. An
+    empty book from a starved panel looks exactly like an empty book from a
+    quiet market, which is this project's oldest failure in a new place.
+
+    So the window is the LONGER of the two. At the production interval the
+    owner's six months governs and this changes nothing; at any coarser
+    resolution the warm-up governs and the run still has what it needs.
+
+    ``None`` when the interval cannot be parsed, leaving the run unbounded
+    -- the same safe direction `_completed_bar_end` takes, and what shipped
+    before the window existed.
+    """
+    import math
+
+    import pandas as pd
+
+    from cfdinvest.ingestion.capital_prices import bar_span
+
+    end = pd.Timestamp(end)
+    recency = end - pd.DateOffset(months=INTENT_WINDOW_MONTHS)
+
+    span = bar_span(interval)
+    if span is None:
+        return None
+
+    # Bars per session, from the bar size. CEILING rather than rounding: a
+    # 6.5-hour session touches SEVEN hourly bar labels, not six, and the
+    # lake agrees -- 890 bars in the six months to 2026-09-11, which is
+    # 7.06 a session. Rounding gave 6, inflated the floor to 6.8 months and
+    # quietly overrode the figure that was actually measured.
+    hours = max(span.total_seconds() / 3600.0, 1e-9)
+    per_session = max(1, math.ceil(6.5 / hours)) if hours < 6.5 else 1
+
+    needed = _warm_up_bars() * INTENT_WINDOW_WARM_UP_MARGIN
+    sessions = needed / per_session
+    # Five sessions a week, so calendar days run 7/5 of trading days.
+    floor = end - pd.Timedelta(days=sessions * 7.0 / 5.0)
+
+    return min(recency, floor).normalize()
+
+
 def for_live_intent(backtest, app_config):
     """Apply every correction a run must carry if the DEALER will read it.
 
@@ -1109,7 +1244,7 @@ def for_live_intent(backtest, app_config):
     afternoon, both restored, from a path nobody would think to check. Found
     on 2026-09-11 while checking a definition, not by a test.
 
-    The three corrections, and what each one cost before it existed:
+    The corrections, and what each one cost before it existed:
 
     **execution_lag = 0.** A backtest must decide on bar N-1 and fill at N
     or it reads the future. Live at 13:36 you know the 13:36 price and deal
@@ -1127,8 +1262,22 @@ def for_live_intent(backtest, app_config):
     positions the account closed at the bell, and the intent asks to hold
     names that are not there.
 
-    An explicit ``--end`` is preserved, so a stated research window is never
-    silently moved.
+    **The panel starts ``INTENT_WINDOW_MONTHS`` back.** Added 2026-09-12 on
+    the owner's instruction, reiterated three times before it was acted on:
+    this predicts the next few hours from recent movement, and a price from
+    2023 cannot inform that. The run read 6,467 bars over 3.69 years and
+    growing, because nothing bounded it -- not because 3.69 years was
+    chosen. Measured, the decision is identical at six months on 5 of 5
+    recent bars, and the pass costs 4.9s and 565MB against 17.4s and 867MB.
+
+    **Macro is classified on its own monthly calendar.** Required BY the
+    window rather than alongside it: the year-over-year macro classifier
+    counts in price bars, needs about 12.4 months of them, and resolves to
+    `unknown` below that -- which blocks every short. See the comment at the
+    call.
+
+    An explicit ``--start`` or ``--end`` is preserved, so a stated research
+    window is never silently moved.
 
     This is deliberately NOT a second decision path -- it changes the
     INPUTS to the one engine, never its rules. `tests/test_live_intent_
@@ -1152,9 +1301,52 @@ def for_live_intent(backtest, app_config):
             _intent_interval(backtest, app_config), pd.Timestamp.now(tz="UTC")
         )
     )
+
+    # The rolling window, measured back from the bar being decided on rather
+    # than from the wall clock, so a run with an explicit ``--end`` reads the
+    # six months before THAT bar instead of the six before today.
+    #
+    # An explicit ``--start`` is preserved for the same reason ``--end`` is:
+    # a stated research window must never be silently moved.
+    windowed = (
+        backtest.start
+        if backtest.start is not None
+        else _intent_window_start(
+            trimmed, _intent_interval(backtest, app_config)
+        )
+        if trimmed is not None
+        else None
+    )
+
     return dataclasses.replace(
         backtest,
         end=trimmed if trimmed is not None else backtest.end,
+        start=windowed if windowed is not None else backtest.start,
+        # The window and this flag ship together and neither is safe alone.
+        #
+        # `_macro_lookback` resolves to the frame's own `periods_per_year`,
+        # which is 1,764 -- seven hourly bars by 252 sessions -- so the
+        # growth and inflation classifiers do a genuine YEAR-over-year change
+        # counted in PRICE BARS on the PRICE calendar. About 12.4 months of
+        # bars are needed before it resolves at all, so at six months every
+        # macro label reads `unknown`.
+        #
+        # That is not cosmetic. `allow_short` permits a short only in a
+        # `crisis` combined regime or when macro reads `contraction`, and
+        # `allow_when_unknown` is False -- so an unresolved label turns 20 of
+        # 55 names flat. Shortening the window without this would have
+        # stopped the book shorting, which is the half of a two-sided
+        # strategy that the day's own signals had most to say about.
+        #
+        # `macro_on_own_calendar` classifies on a MONTHLY grid indexed by
+        # PUBLICATION date, where a year is twelve rows rather than 1,764
+        # bars. Publication rather than observation dating, because
+        # back-dating the August print to before it was knowable is a
+        # lookahead in the one panel that bypasses `publication_aware_ffill`.
+        #
+        # The dataclass default stays False, so research is unchanged and no
+        # recorded figure moves. Only the run the dealer reads sets it.
+        regime=dataclasses.replace(backtest.regime, macro_on_own_calendar=True),
         execution=dataclasses.replace(
             backtest.execution,
             execution_lag=INTENT_EXECUTION_LAG,
