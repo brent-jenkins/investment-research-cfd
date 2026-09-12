@@ -1069,13 +1069,45 @@ advertised the book, line 209 correctly said it was removed on 2026-08-30.
   one step from being written down as a bug in a file whose whole discipline
   is not doing that.
 
-  **Two ways forward, and they are different kinds of question.**
+  **RESOLVED 2026-09-12, and the fix took three attempts.**
 
-  *Engineering.* Classify the macro regime on the MACRO data's own calendar,
-  where a year is twelve monthly observations, then reindex the label onto
-  the price calendar. The lookback stops being denominated in price bars, the
-  two windows decouple, and six months of prices ships without changing what
-  the macro regime means. Not built.
+  `RegimeConfig.macro_on_own_calendar` classifies on a MONTHLY grid indexed
+  by PUBLICATION date, where a year is twelve rows. Measured on the same five
+  bars:
+
+      full span    5, 9, 9, 6, 4 held   macro contraction throughout
+      six months   5, 9, 9, 6, 4 held   macro contraction throughout
+      identical on a non-empty book: 5 of 5, against 2 of 5 before
+
+  The full-span column is UNCHANGED from the shipped behaviour, and on 09-04
+  the six-month run GAINED BKNG, LMT and NOC rather than the full run losing
+  them -- it reaches the same answer by seeing more, which is the difference
+  between a fix and a wash.
+
+  **The second attempt scored 5 of 5 and was wrong**, which is the part worth
+  keeping. It reindexed monthly labels onto the hourly calendar, matching
+  almost no rows, so every bar fell through to `unknown` -- on BOTH runs,
+  including the full span where the regime had resolved. Agreement because
+  neither side can see anything is the worst kind of green, and it would have
+  shipped as a fix. The acceptance test is not "do they agree"; it is "does
+  the full-span answer survive AND does the short run resolve".
+
+  The first attempt failed differently: "the series' own calendar" is the
+  UNION of every series' dates, and DFF, DGS10 and VIXCLS are daily, so the
+  index came out daily with 13,403 rows and a twelve-row shift moved back
+  twelve DAYS onto a NaN.
+
+  Publication dating is not cosmetic: indexing by observation date would
+  back-date the August figure to before it was knowable, a lookahead in the
+  one place nobody checks, since the bar panel gets this right through
+  `publication_aware_ffill` and this panel bypasses it.
+
+  **The flag defaults False.** On these five dates the live decision does not
+  move -- the full-span column is identical either way -- but across 3.65
+  years the labels differ materially (unknown 1,827 bars to 0, stagflation 84
+  to 586, overheating 0 to 294), so every recorded research figure would
+  move. Turning it on, and then shortening the window it unblocks, are the
+  owner's decisions and are recorded as ready rather than taken.
 
   *Strategy, and it is the owner's.* Whether a monthly, lagged,
   year-over-year label should gate a book whose median position lives four
