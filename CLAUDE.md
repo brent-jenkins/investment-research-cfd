@@ -1335,10 +1335,45 @@ completed-bar trim ship inert twice the same afternoon.
   -- would have surfaced every one of them on day one in a form nobody has
   to ask me about. That is worth more than any single fix here and it is
   not built.
-* **The stale-intent loop.** The engine goes on intending positions it
-  entered on an earlier bar that the account never got, so every later pass
-  attempts an open the last look correctly refuses. Safe, noisy, and the
-  reason the refusal rate looked alarming.
+* **The stale-intent loop is now COUNTABLE, and it is smaller than it
+  looked.** Measured 2026-09-12, before changing anything.
+
+  Raw refusal events by day, from the order store:
+
+      2026-09-08   60        2026-09-10   62
+      2026-09-09   77        2026-09-11   15
+
+  A fourfold drop on 09-11 -- the first full day after the last look could
+  reach its own 0.75 pass mark, the multi-leg fix, and the dealer moving
+  into its own process. `not re-checked` appears on no day, so the gate is
+  forming opinions rather than failing. Eight of 24 refused names do recur
+  on a later day, which is the loop's signature.
+
+  **A per-day RATE is not quoted, because the reading was wrong.** The first
+  attempt showed 100% on two days; its opens-detection failed, so the
+  denominator was refusals alone. BKNG demonstrably opened on 2026-09-08.
+  The counts above are sound and the rates were discarded.
+
+  `intended_positions` now carries **`entered_bars_ago`** per row: completed
+  bars since the ENGINE entered that position, zero meaning it opened on the
+  newest completed bar. That separates the two things a refusal can mean --
+  the engine chasing an entry the account never got, against a signal that
+  decayed and a gate doing its job -- which reading order rows cannot.
+
+  **Reported, NOT enforced, and deliberately.** Refusing to open on a
+  non-zero age is the obvious fix and it suppresses entries in a book where
+  20% of trips produce all the profit. Nothing yet measures how many
+  refusals are the loop, the evidence already says most of the problem went
+  with the 09-10 and 09-11 fixes, and a Saturday with the market shut is no
+  place to change what the account trades on a hypothesis.
+  `tests/test_stale_intent_is_visible.py` fails the build if it starts being
+  enforced without somebody saying so; five mutations checked.
+
+  One of those mutations failed first time and is worth keeping: the test
+  asserted `"entered_bars_ago"` appeared in the source, which is a SUBSTRING
+  of `"entered_bars_ago_renamed"`, so it passed against the field being
+  renamed away. Anchored with the colon. Same trap as the unit-file
+  assertion that once passed against a commented-out line.
 * `MIN_SESSION_MINUTES = 30.0` is still provisional and unmeasured.
 * **The account carried SPGI overnight**, 17.31 units short. The flatten at
   19:01 ran four minutes before the multi-leg fix restarted the service,

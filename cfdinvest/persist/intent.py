@@ -129,6 +129,7 @@ def intended_positions(
         return None
 
     last = positions.iloc[-1]
+    ages = _entry_ages(positions)
     equity_value = float(
         equity["equity"].iloc[-1]
         if "equity" in getattr(equity, "columns", [])
@@ -159,13 +160,87 @@ def intended_positions(
             "units": abs(held),
             "equity": equity_value,
             "exposure_per_unit_size": exposure,
+            # How many completed bars ago the ENGINE entered this, which is
+            # not the same as how long the ACCOUNT has held it. Zero means
+            # the engine opened it on the newest completed bar.
+            #
+            # Carried so the stale-intent loop can be counted rather than
+            # inferred: when the account never gets a position the engine
+            # entered, the engine goes on intending it and every later pass
+            # attempts an open the last look correctly refuses. That is safe
+            # and noisy, and it is why the refusal rate reads 47.1% against
+            # 20.7% measured in the account's first week.
+            #
+            # Reported, NOT enforced. Refusing to open on a non-zero age
+            # would suppress entries in a book where 20% of trips produce
+            # all the profit, and no measurement yet says which refusals are
+            # the loop. The number has to exist before that can be settled.
+            "entered_bars_ago": ages.get(name),
         })
     logger.info(
         "Engine intends %d position(s) on equity %.2f: %s",
         len(rows), equity_value,
-        ", ".join(f"{r['ticker']} {r['direction']}" for r in rows) or "nothing",
+        ", ".join(
+            f"{r['ticker']} {r['direction']}"
+            + ("" if not r.get("entered_bars_ago")
+               else f" (entered {r['entered_bars_ago']} bar(s) ago)")
+            for r in rows
+        ) or "nothing",
     )
+    stale = [r["ticker"] for r in rows if (r.get("entered_bars_ago") or 0) > 0]
+    if stale:
+        logger.info(
+            "%d of %d intended position(s) were entered on an EARLIER bar: "
+            "%s. An open the account never got is chased on every later "
+            "pass and correctly refused by the last look.",
+            len(stale), len(rows), ", ".join(stale),
+        )
     return rows
+
+
+def _entry_ages(positions) -> dict[str, int]:
+    """Completed bars since the engine entered each position it still holds.
+
+    Zero means it was entered on the newest completed bar -- a fresh
+    opportunity. A larger number means the engine has been holding it while
+    the account, for whatever reason, has not.
+
+    Walks back while the holding is non-zero AND KEEPS ITS SIGN. A long that
+    becomes a short is a new position, not an old one continuing, and
+    counting it as continuing would hide exactly the case worth seeing.
+
+    Pure. Returns ages only for names held on the final bar; a name that is
+    flat there is not intended and has no age.
+    """
+    ages: dict[str, int] = {}
+    if positions is None or getattr(positions, "empty", True):
+        return ages
+
+    height = len(positions.index)
+    final = positions.iloc[-1]
+
+    for ticker, units in final.items():
+        try:
+            held = float(units)
+        except (TypeError, ValueError):
+            continue
+        if not held:
+            continue
+
+        sign = 1.0 if held > 0 else -1.0
+        age = 0
+        # Start one bar back: the final bar is age zero by definition.
+        for offset in range(2, height + 1):
+            try:
+                earlier = float(positions.iloc[-offset][ticker])
+            except (TypeError, ValueError, KeyError, IndexError):
+                break
+            if not earlier or (1.0 if earlier > 0 else -1.0) != sign:
+                break
+            age += 1
+        ages[str(ticker)] = age
+
+    return ages
 
 
 #: How old the decision bar may be before the dealer stops OPENING on it.
