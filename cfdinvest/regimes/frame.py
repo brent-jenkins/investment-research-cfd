@@ -406,7 +406,7 @@ MACRO_MONTHS_SMOOTHING = 1
 
 def _classify_macro(analysis_frame, settings, calendar) -> pd.DataFrame:
     """Growth, inflation, labour and the headline macro regime."""
-    native = getattr(analysis_frame, "macro_native", None)
+    native = getattr(analysis_frame, "macro_monthly", None)
     own_calendar = bool(getattr(settings, "macro_on_own_calendar", False))
 
     if own_calendar and native is not None and not getattr(native, "empty", True):
@@ -447,20 +447,52 @@ def _classify_macro(analysis_frame, settings, calendar) -> pd.DataFrame:
         "labor_regime": macro_module.LABOR_LABELS,
         "macro_regime": macro_module.MACRO_LABELS,
     }
+    # Carry forward only when the labels were computed on the series' own
+    # (coarser) calendar; on the bar calendar they already share the index
+    # and a gap is a real absence.
     return pd.DataFrame(
         {
-            name: _conform(classified.get(name), calendar, categories, name)
+            name: _conform(classified.get(name), calendar, categories, name,
+                           carry=own_calendar)
             for name, categories in label_sets.items()
         },
         index=calendar,
     )
 
 
-def _conform(series: pd.Series, calendar, categories, name) -> pd.Series:
-    """Reindex a component onto the master calendar, filling gaps as unknown."""
+def _conform(series: pd.Series, calendar, categories, name,
+             *, carry: bool = False) -> pd.Series:
+    """Reindex a component onto the master calendar, filling gaps as unknown.
+
+    ``carry`` forward-fills instead, and exists for ONE case: a label
+    computed on a coarser calendar than the bars.
+
+    A monthly macro label reindexed onto an hourly calendar matches almost
+    no rows, so a plain reindex turns every bar into ``unknown`` -- which is
+    exactly what happened when `macro_on_own_calendar` was first written, and
+    the measurement showed both the six-month AND the full-span runs going
+    blind while appearing to agree. Agreement because both sides can see
+    nothing is the worst kind of green.
+
+    It is off by default and must stay off for the components already on the
+    bar calendar. There a gap is a genuine absence -- a warm-up, or an input
+    that could not be computed -- and carrying the previous label over it
+    would report a stale reading as a current one, which is "absence named,
+    never inferred" broken in the module that defines the word.
+    """
     if series is None or len(series) == 0:
         return as_regime([UNKNOWN] * len(calendar), categories, index=calendar, name=name)
-    aligned = series.reindex(calendar).astype("object").fillna(UNKNOWN)
+    if carry:
+        # The label published most recently at or before each bar. The same
+        # question `publication_aware_ffill` answers for the values.
+        aligned = (
+            series.sort_index()
+            .reindex(calendar, method="ffill")
+            .astype("object")
+            .fillna(UNKNOWN)
+        )
+    else:
+        aligned = series.reindex(calendar).astype("object").fillna(UNKNOWN)
     return as_regime(aligned, categories, index=calendar, name=name)
 
 

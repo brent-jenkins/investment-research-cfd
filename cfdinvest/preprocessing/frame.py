@@ -22,7 +22,13 @@ from typing import Any, Mapping
 import pandas as pd
 
 from cfdinvest.preprocessing import alignment, correlations, returns, volatility
-from cfdinvest.schema import MACRO_VALUE, SERIES_ID, TICKER, TIMESTAMP
+from cfdinvest.schema import (
+    MACRO_VALUE,
+    PUBLICATION_DATE,
+    SERIES_ID,
+    TICKER,
+    TIMESTAMP,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,8 +123,8 @@ class AnalysisFrame:
     volatility: dict[str, pd.DataFrame] = field(default_factory=dict)
     correlations: dict[str, pd.DataFrame] = field(default_factory=dict)
     macro: pd.DataFrame = field(default_factory=pd.DataFrame)
-    #: The same series on THEIR OWN observation dates, not reindexed onto the
-    #: price calendar.
+    #: The same series on a MONTHLY grid indexed by PUBLICATION date, not
+    #: reindexed onto the price calendar.
     #:
     #: `macro` above is forward-filled onto the trading grid, which is right
     #: for reading a value beside a bar and wrong for measuring a CHANGE. A
@@ -130,7 +136,7 @@ class AnalysisFrame:
     #: measurement was denominated in the wrong thing.
     #:
     #: Empty when there is no macro data, like `macro`.
-    macro_native: pd.DataFrame = field(default_factory=pd.DataFrame)
+    macro_monthly: pd.DataFrame = field(default_factory=pd.DataFrame)
     regimes: pd.DataFrame = field(default_factory=pd.DataFrame)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -236,7 +242,7 @@ def build_analysis_frame(
     correlation_panels = _build_correlations(return_panels.get("simple"), settings)
 
     macro_panel = _build_macro(macro_long, calendar, settings)
-    macro_native = _build_macro_native(macro_long)
+    macro_monthly = _build_macro_monthly(macro_long, settings)
 
     metadata = {
         "interval": interval,
@@ -264,7 +270,7 @@ def build_analysis_frame(
         volatility=volatility_panels,
         correlations=correlation_panels,
         macro=macro_panel,
-        macro_native=macro_native,
+        macro_monthly=macro_monthly,
         regimes=regime_placeholder(calendar),
         metadata=metadata,
     )
@@ -345,39 +351,58 @@ def _build_correlations(
     }
 
 
-def _build_macro_native(macro_long) -> "pd.DataFrame":
-    """The macro series on their own observation dates, wide.
+def _build_macro_monthly(macro_long, settings) -> "pd.DataFrame":
+    """The macro series on a MONTHLY grid, indexed by PUBLICATION date.
 
-    No calendar, no forward fill, no publication alignment -- this is for
-    measuring CHANGES over the series' own frequency, where a year is twelve
-    rows rather than 1,764.
+    Two things had to be right and the first attempt got both wrong.
 
-    Publication alignment is deliberately absent and that is a real
-    limitation: `macro` is the panel that knows what was KNOWABLE at a bar,
-    and this one is not. It is safe for a rolling change because the
-    classifier reads it at the observation dates and its labels are then
-    aligned forward onto the trading calendar, which is where the
-    knowable-at question is answered. Anything reading this panel to decide
-    something at a bar must go through `macro` instead.
+    **Monthly, not "native".** The first version pivoted on the observation
+    dates, which is the UNION of every series' dates -- and DFF, DGS10 and
+    VIXCLS are daily, so the index came out daily with 13,403 rows. INDPRO's
+    439 monthly values then sat scattered among them, and a twelve-row shift
+    moved back twelve DAYS onto a NaN. The classifier returned `unknown` for
+    every row and the fix looked like it had changed nothing.
+
+    **Publication dates, not observation dates.** A figure for August is not
+    knowable on 1 September. Indexing by when it was PUBLISHED is what makes
+    carrying it forward onto later bars honest, and it is the same question
+    `publication_aware_ffill` answers for the bar panel. Without it this
+    would be a quiet lookahead in the one place nobody would check.
+
+    Forward-filled across the monthly grid so a month with no publication
+    carries the last known level, which is what a level-based classifier
+    needs and what a reader would assume anyway.
     """
     import pandas as pd
 
+    from cfdinvest.preprocessing import alignment
+
     if macro_long is None or getattr(macro_long, "empty", True):
         return pd.DataFrame()
-
-    working = macro_long.reset_index()
-    stamp = TIMESTAMP if TIMESTAMP in working.columns else working.columns[0]
-    if SERIES_ID not in working.columns or MACRO_VALUE not in working.columns:
+    if SERIES_ID not in macro_long.columns or MACRO_VALUE not in macro_long.columns:
         return pd.DataFrame()
 
-    wide = working.pivot_table(
-        index=stamp, columns=SERIES_ID, values=MACRO_VALUE, aggfunc="last"
+    published = alignment.resolve_publication_dates(
+        macro_long,
+        missing=settings.missing_publication,
+        fallback_lag_days=settings.fallback_lag_days,
+    )
+    frame = macro_long.assign(**{PUBLICATION_DATE: published})
+    frame = frame[frame[PUBLICATION_DATE].notna() & frame[MACRO_VALUE].notna()]
+    if frame.empty:
+        return pd.DataFrame()
+
+    wide = frame.pivot_table(
+        index=PUBLICATION_DATE, columns=SERIES_ID, values=MACRO_VALUE,
+        aggfunc="last",
     ).sort_index()
     wide.index = pd.DatetimeIndex(wide.index)
     if wide.index.tz is None:
         wide.index = wide.index.tz_localize("UTC")
-    wide.columns.name = SERIES_ID
-    return wide
+
+    monthly = wide.resample("ME").last().ffill()
+    monthly.columns.name = SERIES_ID
+    return monthly
 
 
 def _build_macro(
@@ -432,7 +457,25 @@ def analysis_frame_from_repository(
     market = repository.load_market(
         tickers, interval=bar_interval, start=start, end=end
     )
-    macro_long = repository.load_macro(series_ids, start=start, end=end, wide=False)
+    # **Macro history is NOT cut to the price window, and `macro_native` is
+    # why this now matters.**
+    #
+    # An earlier attempt at this was reverted on 2026-09-12 because it
+    # changed nothing: `macro` is reindexed onto the price calendar, so
+    # loading more history simply produced rows that were then thrown away.
+    # `macro_native` keeps the series on their OWN dates, so the extra
+    # history survives -- and a year-over-year on a monthly series needs
+    # twelve observations regardless of how many price bars the run covers.
+    #
+    # Widening only BACKWARDS cannot leak anything forwards: `end` is
+    # untouched and the publication-aware alignment still decides what was
+    # knowable when. Twelve monthly series cost nothing beside 55
+    # instruments of hourly bars.
+    #
+    # A full-span run already starts at the earliest data, so its panels are
+    # unchanged and no recorded figure moves. Only windowed runs differ,
+    # which is the case it exists for.
+    macro_long = repository.load_macro(series_ids, start=None, end=end, wide=False)
 
     frame = build_analysis_frame(
         market, macro_long, interval=bar_interval, config=config
