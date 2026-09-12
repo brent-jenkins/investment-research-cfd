@@ -713,14 +713,78 @@ advertised the book, line 209 correctly said it was removed on 2026-08-30.
 
 **Left open.**
 
-* **The leak's SOURCE.** It is bounded rather than found, and the
-  distinction matters: every process is now `Type=oneshot` on a timer, so
-  nothing lives long enough to accumulate, but something still leaks about
-  360MB an hour while it runs. If a single tick ever grows long enough to
-  matter the problem returns. `tracemalloc` did not finish -- it made a
-  26-second pipeline take over 900 seconds. The suspects are the recurring
-  jobs around `run_pipeline`, which is exonerated: three runs in one process
-  retain +511MB, +23MB, +6MB.
+* **THE LEAK IS NOT A LEAK, AND THERE IS NOTHING IN THE CODE TO FIX.**
+  Chased since 2026-09-09 and settled on 2026-09-12 by measurement. The
+  answer is a negative result and it retires the item.
+
+  The split made this tractable: each job can now be run ALONE in one
+  process, which is what the earlier hunt could not do -- it got as far as
+  "somewhere in the recurring jobs" and stopped.
+
+  Per call, after two warm-up calls, RSS read from /proc with a collection
+  between each:
+
+      record-spreads     +0.25 MB, then +0.0, +0.8, +0.2, +0.0   PLATEAUS
+      ingest-intraday    +362 MB on call one, then -1.5, +27, -20, +6, +0.8
+      poll-live-quotes   +3.3 mean, oscillating
+      advisor-alert     +10.5 MB, MONOTONIC: 311.7 327.5 340.9 363.9
+      run-intraday       already exonerated: +511, +23, +6, converging
+
+  `record-spreads` is the control and it is what makes the rest readable: a
+  job that merely caches plateaus at exactly +0.0. The method can tell a
+  cache from a leak.
+
+  **`advisor-alert` looked like the leak and is not.** It runs every five
+  minutes, so +10.5 MB a call implies ~126 MB/hour, which would have been
+  most of the story. Taken apart:
+
+      live Python objects        75,842 -> 75,857 -> 75,858    FLAT
+      bytes held by live ndarrays and DataFrames         0.0 MB
+      log handlers               3, 3, 3                       FLAT
+      uncollectable (gc.garbage) 0
+      types growing monotonically   none, past the second call
+
+  Fifteen objects and nine megabytes is not an object leak, and zero held
+  array bytes means nothing numpy or pandas can see is retained. So the
+  memory is freed at the Python level and not returned to the OS -- and it
+  is held in TWO allocators, which is why one tool never found it:
+
+      glibc malloc_trim(0)              recovers ~35 MB every call
+      pyarrow pool.release_unused()     recovers ~40-52 MB every call
+
+  **pyarrow's backend is mimalloc, not glibc**, so `malloc_trim` could never
+  have touched it. Parquet reads go through that pool on every call --
+  `advisor-alert` loads the signals frame each time -- and its
+  `total_allocated_bytes()` is 0.0 MB throughout, so it references nothing
+  either; it is simply holding pages.
+
+  A residual of about 13 MB a call survives BOTH reclaims, with the object
+  count flat. Nothing in Python holds it. That is fragmentation and arena
+  growth, not a forgotten reference.
+
+  **So "fix the leak" has no code change behind it.** A process that exits
+  returns everything, and every process became `Type=oneshot` on 2026-09-11
+  and 2026-09-12. The architecture change was not a mitigation for an
+  unfound bug -- it was the correct fix, and this is why.
+
+  Stated before the numbers were seen, so it could not be read to taste:
+  "if RSS falls back after a trim and stays flat, the growth was never a
+  reference leak". The first half held and the second did not, which is why
+  the hunt continued to pyarrow rather than stopping at glibc.
+
+  **What this says about the 2026-09-11 reading.** "900MB at 17:23 to 1796MB
+  at 19:53, linear -- a ratchet plateaus, this does not" was a true
+  observation and the wrong inference. In ONE process running twelve jobs
+  with very different allocation patterns, arenas fragment against each
+  other and the high-water mark climbs for hours before flattening. It looks
+  linear precisely because it is many caches and two allocators ratcheting
+  at once, not one thing growing without bound.
+
+  **If a long-running process is ever needed again**, the levers are
+  `MALLOC_ARENA_MAX`, a periodic `malloc_trim(0)`, and
+  `pyarrow.default_memory_pool().release_unused()`. None is shipped, because
+  nothing is resident and unmeasured configuration is how thresholds drift.
+
 * **THE SIX-MONTH WINDOW IS BLOCKED BY ONE THING: A YEAR-OVER-YEAR MACRO
   CALCULATION MEASURED IN PRICE BARS.** Diagnosed on the owner's push-back,
   and their argument is what got it right.
