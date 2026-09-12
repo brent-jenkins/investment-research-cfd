@@ -9,6 +9,20 @@ Description=cfdinvest operational monitoring
 After=network-online.target
 
 [Service]
+# Bounded like everything else. It was the only cfdinvest unit with no
+# ceiling, which is not "small enough not to matter" -- it is the one unit
+# that would still be running when everything else had been killed, and the
+# thing that reports a problem must not be the thing that causes one.
+#
+# Generous against what it does: it reads the newest run, compares it to the
+# account and sends an email, in about a second. 512M is many times that and
+# still a hundredth of the box.
+#
+# No MemoryHigh, for the reason the analysis unit spells out at length: it
+# throttles rather than failing, and a monitor that is alive and too slow to
+# alert is worse than one that is dead and restarted.
+MemoryMax=512M
+MemorySwapMax=128M
 Type=oneshot
 User=cfdinvest
 Group=cfdinvest

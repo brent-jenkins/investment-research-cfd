@@ -90,14 +90,27 @@ RECORDED: dict[tuple[int, int], dict[str, float]] = {
     (12, 70): {"cagr": 2.703, "maxdd": -0.077},
 }
 
+def _noise_floor_pp() -> float:
+    """The project's noise floor, from its single owner.
+
+    Read rather than restated. This module first carried its own literal,
+    which made it a second copy of exactly the threshold `risk.capacity`
+    exists to own -- and "one owner per threshold" is a house rule because
+    two copies drift and the day they drift the banner says fine while the
+    email says critical.
+    """
+    from cfdinvest.risk.capacity import NOISE_FLOOR_PP
+
+    return float(NOISE_FLOOR_PP)
+
+
 #: How far an arm may sit from its recorded figure and still count as
 #: reproduced, in percentage points of CAGR.
 #:
-#: The project's noise floor is 9.3pp, derived by varying the screen's
-#: selection lag alone. A harness that reproduces to within the floor is
-#: measuring the same system; one that does not is measuring a different
-#: one, whatever it is called.
-REPRODUCTION_TOLERANCE_PP: float = 9.3
+#: A harness that reproduces to within the floor is measuring the same
+#: system; one that does not is measuring a different one, whatever it is
+#: called.
+REPRODUCTION_TOLERANCE_PP: float = _noise_floor_pp()
 
 
 class ReproductionError(RuntimeError):

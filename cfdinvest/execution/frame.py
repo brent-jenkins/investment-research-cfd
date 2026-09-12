@@ -136,6 +136,21 @@ class ExecutionConfig:
     confidence_sizing_strength: float | None = None
     #: The smallest multiplier confidence sizing may produce. A signal that
     #: cleared the gate is worth taking; this trims it rather than erasing it.
+    #: **INERT. This cannot bind, and tuning it does nothing.**
+    #:
+    #: The multiplier is ``clip(1 + strength * edge, floor, None)`` where
+    #: ``edge = (confidence - entry_bar) / span``. Entry requires confidence
+    #: at or above the bar, so ``edge >= 0``; with a non-negative strength
+    #: the multiplier is always at least 1.0, and a floor of 0.25 can never
+    #: be reached. Swept on 2026-09-01 at 0.0, 0.10, 0.25 and 0.50: identical
+    #: results to the decimal.
+    #:
+    #: Kept rather than deleted because it is referenced by `provenance.py`
+    #: and may be set in a config file on disk, so removing it breaks
+    #: loading for no gain. Documented here instead, where somebody about to
+    #: tune it will look -- an inert dial that reports clean nulls is this
+    #: project's oldest failure, and the answer to one that cannot be
+    #: removed is to say so at the definition.
     confidence_sizing_floor: float = 0.25
     #: Bars on which the operator may change a position, as a boolean Series
     #: over the analysis index. ``None`` means every bar, which is what every

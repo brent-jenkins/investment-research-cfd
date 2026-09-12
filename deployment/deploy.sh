@@ -1,6 +1,25 @@
 #!/bin/bash
 # Pull, install, restart, and prove it took.
 #
+# THE SCRIPT RUNS FROM A PINNED COPY, AND THEN RE-EXECS THE PULLED ONE.
+#
+# Two problems, one cause: this file deploys itself.
+#
+# Bash reads a script INCREMENTALLY, so `git reset --hard` rewriting
+# deploy.sh underneath a running deploy.sh can make it resume at a byte
+# offset in different text. That has not bitten yet and is only a matter of
+# time, so the first thing this does is copy itself to /tmp and exec that.
+#
+# The visible half did bite, twice on 2026-09-12: the deploy runs the
+# version already on disk and pulls afterwards, so a change to deploy.sh
+# only took effect on the NEXT deploy. A guard added that morning failed the
+# deploy on correct configuration, was fixed within minutes, and failed
+# again on the very next push because the box was still running the old
+# copy. New timers had to be enabled by hand for the same reason.
+#
+# So after the pull, if deploy.sh itself changed, the new one is exec'd --
+# once, guarded against a loop.
+#
 # The restart is the point. On 2026-08-25 the code was copied to this server
 # and the services were left running; a resident daemon went on executing the
 # modules it had imported at start-up, so a change that had been made forty
@@ -13,6 +32,18 @@
 # the only kind that gets missed.
 
 set -uo pipefail
+
+# Pin: run from a copy so a pull cannot rewrite the file being executed.
+if [[ -z "${CFDINVEST_DEPLOY_PINNED:-}" ]]; then
+  _pinned="$(mktemp /tmp/cfdinvest-deploy.XXXXXX.sh)"
+  cp -- "$0" "${_pinned}"
+  chmod +x "${_pinned}"
+  export CFDINVEST_DEPLOY_PINNED="${_pinned}"
+  # The pinned copy removes itself; a deploy that dies must not leave litter
+  # in /tmp on a box whose disk is checked by this very script.
+  exec "${_pinned}" "$@"
+fi
+trap 'rm -f -- "${CFDINVEST_DEPLOY_PINNED}"' EXIT
 
 REPO_DIR="/opt/cfdinvest"
 VENV="${REPO_DIR}/.venv"
@@ -82,6 +113,18 @@ deploy_steps() {
   local after
   after="$(git rev-parse HEAD)"
   log "Now at ${after} (was ${before})"
+
+  # If this pull changed deploy.sh, run the NEW one rather than finishing
+  # the old. Guarded so it can happen at most once: a script that re-execs
+  # unconditionally is a deploy loop, and a deploy loop against a vendor is
+  # worse than a stopped deploy because it looks like it is working.
+  if [[ -z "${CFDINVEST_DEPLOY_REEXEC:-}" ]]      && ! cmp -s "${CFDINVEST_DEPLOY_PINNED}" "${REPO_DIR}/deployment/deploy.sh"; then
+    log "deploy.sh changed in this pull -- re-running the new one"
+    export CFDINVEST_DEPLOY_REEXEC=1
+    unset CFDINVEST_DEPLOY_PINNED
+    rm -f -- "${_pinned:-}" 2>/dev/null || true
+    exec "${REPO_DIR}/deployment/deploy.sh" "$@"
+  fi
 
   # Only reinstall when packaging metadata moved. An editable install picks
   # up source changes on its own; entry points and dependencies do not.

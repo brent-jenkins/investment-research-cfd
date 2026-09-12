@@ -67,6 +67,34 @@ class RegimeConfig:
     macro_lookback: int | None = None
     #: Lookback for the change-in-rate momentum, in bars.
     macro_momentum_lookback: int = 63
+    #: Classify the macro regime on the SERIES' OWN dates rather than on the
+    #: price calendar.
+    #:
+    #: **The units are wrong on the bar calendar and this is the fix.** The
+    #: designed semantics are daily: 252 a year, 63 a quarter, 21 a month.
+    #: `_macro_lookback` scales the YEAR to the bar size -- 1,764 on the
+    #: hourly grid -- and nothing scales the rest, so the quarter becomes
+    #: nine trading days and the month becomes three, on series that change
+    #: twelve times a year. "Growth is decelerating" is then measured over a
+    #: window in which a monthly series has usually not moved at all.
+    #:
+    #: On the series' own calendar a year is 12 rows and a quarter is 3, and
+    #: they mean what they say.
+    #:
+    #: It also unblocks a bounded analysis window. On the bar calendar the
+    #: classifier needs 1,827 bars -- about 12.4 months -- before it says
+    #: anything but `unknown`, so a six-month run reported `unknown` on every
+    #: bar and dropped positions the full-span run held. That was never a
+    #: statement about how much history a four-hour trade needs.
+    #:
+    #: **Defaults False, deliberately.** Turning it on changes the regime
+    #: labels, which changes which entries are permitted, which changes what
+    #: the account trades. That is a measured decision and the measurement
+    #: needs a sweep that reproduces its own baseline -- which as of
+    #: 2026-09-12 it does not. Same treatment as
+    #: `time_stop_uses_completed_bar`: the correction exists, is tested, and
+    #: is not flipped as a side effect of a bug fix.
+    macro_on_own_calendar: bool = False
     inflation_threshold: float = 0.005
     labor_lookback: int = 63
     labor_smoothing: int = 21
@@ -366,21 +394,49 @@ def _classify_correlation(analysis_frame, settings, calendar):
     )
 
 
+#: A year, a quarter and a month on a MONTHLY series, in rows.
+#:
+#: The same three spans the daily defaults mean by 252, 63 and 21. Named
+#: rather than inlined so the relationship is visible: whatever calendar the
+#: classifier runs on, it is asking for a year, a quarter and a month.
+MACRO_MONTHS_PER_YEAR = 12
+MACRO_MONTHS_PER_QUARTER = 3
+MACRO_MONTHS_SMOOTHING = 1
+
+
 def _classify_macro(analysis_frame, settings, calendar) -> pd.DataFrame:
     """Growth, inflation, labour and the headline macro regime."""
-    lookback = _macro_lookback(analysis_frame, settings)
+    native = getattr(analysis_frame, "macro_native", None)
+    own_calendar = bool(getattr(settings, "macro_on_own_calendar", False))
+
+    if own_calendar and native is not None and not getattr(native, "empty", True):
+        # The series' own dates, where a year is twelve rows. The labels are
+        # then conformed forward onto the trading calendar below, which is
+        # where "what was knowable at this bar" is answered.
+        source = native
+        growth_periods = MACRO_MONTHS_PER_YEAR
+        momentum = MACRO_MONTHS_PER_QUARTER
+        labor_periods = MACRO_MONTHS_PER_QUARTER
+        labor_smoothing = MACRO_MONTHS_SMOOTHING
+    else:
+        source = analysis_frame.macro
+        growth_periods = _macro_lookback(analysis_frame, settings)
+        momentum = settings.macro_momentum_lookback
+        labor_periods = settings.labor_lookback
+        labor_smoothing = settings.labor_smoothing
+
     classified = macro_module.classify_macro(
-        analysis_frame.macro,
+        source,
         gdp_series=settings.gdp_series,
         cpi_series=settings.cpi_series,
         unemployment_series=settings.unemployment_series,
-        growth_periods=lookback,
-        growth_momentum_periods=settings.macro_momentum_lookback,
-        inflation_periods=lookback,
-        inflation_momentum_periods=settings.macro_momentum_lookback,
+        growth_periods=growth_periods,
+        growth_momentum_periods=momentum,
+        inflation_periods=growth_periods,
+        inflation_momentum_periods=momentum,
         inflation_threshold=settings.inflation_threshold,
-        labor_periods=settings.labor_lookback,
-        labor_smoothing=settings.labor_smoothing,
+        labor_periods=labor_periods,
+        labor_smoothing=labor_smoothing,
     )
 
     # Each column keeps its own declared label set, so conforming to the

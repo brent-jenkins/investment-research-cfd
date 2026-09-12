@@ -196,6 +196,25 @@ def _percentile(values: Sequence[float], pct: float) -> float:
 #: A weaker perturbation -- trimming the last few bars instead -- gives
 #: 3.2pp. That is a lower bound and deliberately not used here: it moves
 #: only the tail where this one moves every decision.
+#: The smallest difference in CAGR that counts as evidence, in percentage
+#: points.
+#:
+#: **THE SINGLE OWNER. Anything comparing two backtests reads it from here**
+#: -- `risk.capacity`, the Universe page, and `research.harness`, which used
+#: to restate 9.3 as a literal and was therefore a second copy of a number
+#: this file exists to own.
+#:
+#: **The value is disputed and the dispute is not settled here.** 8.0 was
+#: derived by varying the screen's selection lag alone on the pre-correction
+#: book. The corrected book's equivalent was re-derived at 9.3pp, and
+#: CLAUDE.md records both as in use and disagreeing.
+#:
+#: 8.0 stays for now, deliberately. Raising it to 9.3 changes which universe
+#: sizes count as indistinguishable, which changes `operating_size`, which
+#: changes what the account trades -- and re-deriving the floor honestly
+#: needs a sweep that reproduces its own baseline, which as of 2026-09-12 it
+#: does not. So the two-owners problem is fixed and the which-value problem
+#: is not, because only one of them can be fixed without a measurement.
 NOISE_FLOOR_PP = 8.0
 
 

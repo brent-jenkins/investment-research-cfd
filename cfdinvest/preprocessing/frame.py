@@ -22,7 +22,7 @@ from typing import Any, Mapping
 import pandas as pd
 
 from cfdinvest.preprocessing import alignment, correlations, returns, volatility
-from cfdinvest.schema import SERIES_ID, TICKER, TIMESTAMP
+from cfdinvest.schema import MACRO_VALUE, SERIES_ID, TICKER, TIMESTAMP
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +117,20 @@ class AnalysisFrame:
     volatility: dict[str, pd.DataFrame] = field(default_factory=dict)
     correlations: dict[str, pd.DataFrame] = field(default_factory=dict)
     macro: pd.DataFrame = field(default_factory=pd.DataFrame)
+    #: The same series on THEIR OWN observation dates, not reindexed onto the
+    #: price calendar.
+    #:
+    #: `macro` above is forward-filled onto the trading grid, which is right
+    #: for reading a value beside a bar and wrong for measuring a CHANGE. A
+    #: year-over-year on the hourly grid is a shift of 1,764 rows; on the
+    #: series' own monthly index it is a shift of 12. The first needs 1,827
+    #: bars of price history before it can say anything, so a six-month
+    #: window reported the macro regime as `unknown` on every bar -- not
+    #: because six months is too little for a day trade, but because the
+    #: measurement was denominated in the wrong thing.
+    #:
+    #: Empty when there is no macro data, like `macro`.
+    macro_native: pd.DataFrame = field(default_factory=pd.DataFrame)
     regimes: pd.DataFrame = field(default_factory=pd.DataFrame)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -222,6 +236,7 @@ def build_analysis_frame(
     correlation_panels = _build_correlations(return_panels.get("simple"), settings)
 
     macro_panel = _build_macro(macro_long, calendar, settings)
+    macro_native = _build_macro_native(macro_long)
 
     metadata = {
         "interval": interval,
@@ -249,6 +264,7 @@ def build_analysis_frame(
         volatility=volatility_panels,
         correlations=correlation_panels,
         macro=macro_panel,
+        macro_native=macro_native,
         regimes=regime_placeholder(calendar),
         metadata=metadata,
     )
@@ -327,6 +343,41 @@ def _build_correlations(
         "average": average.to_frame(),
         "breakdown": flags,
     }
+
+
+def _build_macro_native(macro_long) -> "pd.DataFrame":
+    """The macro series on their own observation dates, wide.
+
+    No calendar, no forward fill, no publication alignment -- this is for
+    measuring CHANGES over the series' own frequency, where a year is twelve
+    rows rather than 1,764.
+
+    Publication alignment is deliberately absent and that is a real
+    limitation: `macro` is the panel that knows what was KNOWABLE at a bar,
+    and this one is not. It is safe for a rolling change because the
+    classifier reads it at the observation dates and its labels are then
+    aligned forward onto the trading calendar, which is where the
+    knowable-at question is answered. Anything reading this panel to decide
+    something at a bar must go through `macro` instead.
+    """
+    import pandas as pd
+
+    if macro_long is None or getattr(macro_long, "empty", True):
+        return pd.DataFrame()
+
+    working = macro_long.reset_index()
+    stamp = TIMESTAMP if TIMESTAMP in working.columns else working.columns[0]
+    if SERIES_ID not in working.columns or MACRO_VALUE not in working.columns:
+        return pd.DataFrame()
+
+    wide = working.pivot_table(
+        index=stamp, columns=SERIES_ID, values=MACRO_VALUE, aggfunc="last"
+    ).sort_index()
+    wide.index = pd.DatetimeIndex(wide.index)
+    if wide.index.tz is None:
+        wide.index = wide.index.tz_localize("UTC")
+    wide.columns.name = SERIES_ID
+    return wide
 
 
 def _build_macro(

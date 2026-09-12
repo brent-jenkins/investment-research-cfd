@@ -56,16 +56,27 @@ def test_an_arm_that_lands_on_its_recorded_figure_passes() -> None:
 def test_the_tolerance_is_the_projects_own_noise_floor() -> None:
     """M1681: a tolerance nobody chose is a tolerance that grows.
 
-    9.3pp is the floor derived by varying the screen's selection lag alone.
-    Reproducing to within it means measuring the same system.
+    Asserted against the OWNER rather than against a number. This test first
+    asserted 9.3 as a literal, which made the test a third copy of a
+    threshold `risk.capacity` exists to own -- so a change to the floor would
+    have failed here and been "fixed" by editing the literal, which is how
+    two owners become three.
     """
-    assert harness.REPRODUCTION_TOLERANCE_PP == pytest.approx(9.3)
+    from cfdinvest.risk.capacity import NOISE_FLOOR_PP
+
+    assert harness.REPRODUCTION_TOLERANCE_PP == pytest.approx(float(NOISE_FLOOR_PP))
 
     recorded = harness.RECORDED[(8, 50)]["cagr"]
-    # Just inside, and just outside.
-    harness.assert_reproduces((8, 50), {"cagr": recorded - 0.09, "maxdd": 0.0})
+    floor = harness.REPRODUCTION_TOLERANCE_PP / 100.0
+    # Just inside, and just outside, expressed against the floor itself so
+    # this keeps testing the property when the floor is re-derived.
+    harness.assert_reproduces(
+        (8, 50), {"cagr": recorded - floor * 0.9, "maxdd": 0.0}
+    )
     with pytest.raises(harness.ReproductionError):
-        harness.assert_reproduces((8, 50), {"cagr": recorded - 0.10, "maxdd": 0.0})
+        harness.assert_reproduces(
+            (8, 50), {"cagr": recorded - floor * 1.1, "maxdd": 0.0}
+        )
 
 
 def test_an_arm_with_no_recorded_figure_cannot_be_read() -> None:
