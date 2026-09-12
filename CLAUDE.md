@@ -492,6 +492,88 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### The forward record, read on 2026-09-12
+
+Asked whether performance has diverged, and by how much. Read from the
+ACCOUNT'S OWN RECORD -- real fills at real spreads confirmed by a
+counterparty -- because the research harness does not currently reproduce
+the battery that justified this configuration, so there is no trustworthy
+modelled side and any "modelled against actual" figure would be arithmetic
+on a broken number.
+
+Against this file's own watch-list, in its order.
+
+**1. Positions held.** Flat, which is correct outside a session for a book
+that flattens at the bell. Nothing to read on a Saturday.
+
+**2. The last look's refusal rate has diverged, and the cause is already
+written down.**
+
+    first week, 2026-09-03    6 blocked outright of 29 considered   20.7%
+    seven days to 2026-09-12 16 blocked outright of 34 considered   47.1%
+
+Against 18.7% modelled. This file says a sustained rate far above 20.7% is
+the gate misfiring rather than protecting -- and the reasons say it is not:
+`no longer clears the bar` 28, `no longer a signal` 4, and **zero `not
+re-checked`**. A broken check fails closed and shows up as that third
+reason dominating. The gate is forming opinions and refusing on them.
+
+The recorded cause is the stale-intent loop of 2026-09-10: the engine goes
+on intending positions it entered on an earlier bar that the account never
+got, so every later pass attempts an open the last look correctly refuses.
+Safe, noisy, and still not fixed -- and it is what this number is measuring.
+
+**3. The win/loss ratio is correcting, which is the one the file says must
+happen before any return figure means anything.**
+
+                        week one (09-04)    now (09-12)
+    trips                         23             41
+    win rate                    30.0%          43.9%
+    mean win                   +16.27         +26.38
+    mean loss                  -37.88         -29.76
+    loss/win size ratio          2.33x          1.13x
+
+All four moved in the predicted direction. The 2.3x inversion was the live
+signature of the time stop's look-ahead -- it made winners big by exiting
+losers before they fell -- so removing it should invert the profile, and
+halving the ratio in a fortnight is that happening. It has NOT inverted:
+below 1.0 is what the design predicts and 1.13x is not there yet.
+
+**4. Returns say nothing, and 41 trips does not change that.**
+
+    opening 2026-08-27    5,000.00
+    latest  2026-09-11    4,753.96    -246.04   -4.92%
+    against the 09-08 configuration mark of 4,780.79   -26.83   -0.56%
+
+Three days on the shipped arm and about a fortnight overall, against the 47
+weeks this file measures as the point where a forward result separates from
+noise. Quoting either figure as performance would be quoting noise.
+
+It is also **consistent with the corrected engine rather than divergent from
+it**: the 2026-09-04 finding is that the shipped configuration is believed
+net-negative, and the account was kept running precisely because it is the
+only instrument that can test that. A loss is the predicted outcome. What
+would be evidence against the corrected engine is the account MAKING money,
+and it is not.
+
+**The realised total understates the loss, by design.**
+
+    realised across 41 trips     -209.62
+    balance change               -246.04
+    unexplained                   -36.42
+
+`record_departure` refuses to invent an exit price, so a close placed
+outside the app yields no P&L rather than a wrong one -- TGT's -49.47 on
+2026-09-10 is excluded for exactly that reason. So -209.62 is a FLOOR on
+realised losses and not the total, and the gap is the cost of the
+out-of-band closes rather than a bookkeeping error.
+
+**Margin, answered for the first time with a sample.** 89 observations since
+2026-09-03: peak utilisation 54.4%, latest 0.0, and **factor_changes 0**.
+The question of whether Capital moves a margin factor under an open position
+now has a measured answer over this window: it has not been observed to.
+That is a statement about nine days, not about the venue.
+
 ### What changed on 2026-09-11
 
 The day the architecture changed, and the day it turned out the alarm had
