@@ -1331,12 +1331,27 @@ def for_live_intent(backtest, app_config):
         # bars are needed before it resolves at all, so at six months every
         # macro label reads `unknown`.
         #
-        # That is not cosmetic. `allow_short` permits a short only in a
-        # `crisis` combined regime or when macro reads `contraction`, and
-        # `allow_when_unknown` is False -- so an unresolved label turns 20 of
-        # 55 names flat. Shortening the window without this would have
-        # stopped the book shorting, which is the half of a two-sided
-        # strategy that the day's own signals had most to say about.
+        # That is not cosmetic, and the ROUTE it takes matters because the
+        # obvious one is inert here. `regime_filter` builds
+        # ``allow_short = combined.isin(short_regimes) | macro.isin(
+        # {"contraction"})`` -- but only in ``mode="gate"``, and the shipped
+        # config is ``regime_mode = "tilt"``, where ``allow_short`` is
+        # REPLACED by a tilt read off the combined regime alone. So that
+        # term does nothing in production.
+        #
+        # **This comment first claimed that term was the mechanism, which is
+        # wrong and is corrected rather than deleted**: the consequence is
+        # real and the path is not. Macro is an INPUT to
+        # `classify_combined`, whose rules key off `contraction`,
+        # `stagflation` and `overheating`, so the label reaches the decision
+        # through the COMBINED regime instead. Measured on the shipped
+        # configuration, removing macro entirely changes the book on 3 of 5
+        # recent session bars -- on 2026-09-04 it is the difference between
+        # holding one short and none.
+        #
+        # So shortening the window without this would still have changed
+        # what the book may short, which is the half of a two-sided strategy
+        # the day's own signals had most to say about.
         #
         # `macro_on_own_calendar` classifies on a MONTHLY grid indexed by
         # PUBLICATION date, where a year is twelve rows rather than 1,764
