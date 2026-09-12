@@ -174,7 +174,16 @@ deploy_steps() {
   # fires, the unit stays active and the account silently stops dealing. A
   # test in the repository asserts the FILE does not set it, and that test
   # passed for a day while production did. Only the box can check the box.
-  for unit in "${SERVICES[@]}" "${ONESHOTS[@]}"; do
+  # Scoped to the ONE-SHOTS, which are the units that decide and deal.
+  #
+  # cfdinvest-dashboard is deliberately exempt and sets MemoryHigh=700M in
+  # its own unit file, with a reason: throttling a read-only Streamlit UI
+  # makes a page slow, while throttling the thing that decides or deals is
+  # what stopped the account twice without anything failing. The first
+  # version of this check covered SERVICES too and failed the deploy on that
+  # legitimate setting -- a guard that cries wolf on correct configuration
+  # gets switched off, which is how the monitor timer came to be disabled.
+  for unit in "${ONESHOTS[@]}"; do
     high=$(systemctl show "${unit}" -p MemoryHigh --value)
     if [[ "${high}" != "infinity" && -n "${high}" ]]; then
       fail "  ${unit}: MemoryHigh=${high} is in force; it throttles instead of failing"
