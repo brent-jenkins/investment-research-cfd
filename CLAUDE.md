@@ -492,6 +492,100 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### The live decision is bounded at six months, 2026-09-12
+
+The owner's instruction, made three times before it was acted on: this is
+not a long-term platform. It predicts the next few hours from recent
+movement, and a price from 2023 cannot inform that. Each time I answered by
+defending the full-span run as the thing a short window must match, which is
+the premise that should have been doubted.
+
+**The live run was bounded by nothing.** `[market] start = "2005-01-01"` and
+no window, so it read **6,467 bars over 3.69 years and grew by seven every
+session**. 3.69 years was never chosen; it is what "no window" evaluates to
+against this lake, and it would have gone on lengthening.
+
+**Six months was the owner's figure and it is now measured.** Five recent
+session bars, final-bar target as a SHARE OF EQUITY -- what `persist.intent`
+carries -- against the whole-lake run on the same bar, universe pinned to
+that day's recorded selection, macro dating fixed on both sides:
+
+    window   bars   reproduces the whole-lake decision
+     12m     1750   5 of 5
+      9m        -   5 of 5
+      6m      890   5 of 5
+      4m        -   5 of 5
+      3m      442   5 of 5
+      2m      308   5 of 5   <- and must not be trusted
+      1m      155   0 of 5
+
+**Two months reproduces and is still wrong**, which is why the number comes
+from the warm-up rather than the sweep's edge. `breakdown_baseline_window` is
+252 bars over a 63-bar `correlation_window`, so 315 bars must exist before
+the longest input does. Two months is 308. It passed five dates from below
+its own floor, which is the shape of a result that reverses on the sixth --
+this file has been caught by exactly that before. Six months is 890 bars,
+2.8x the warm-up.
+
+**The cost, which is what the owner asked for on 2026-09-11.** One live pass,
+50 names:
+
+    full   6,467 bars   17.4s   867MB peak   42% of the 2G ceiling
+     12m   1,759 bars    7.0s   568MB        28%
+      6m     896 bars    4.9s   565MB        28%
+      3m     448 bars    4.2s   562MB        27%
+
+3.6x faster, and since ~560MB is the interpreter and libraries the
+analysis's own footprint falls from about **307MB to about 5MB**. Three
+months buys a further 0.7s for half the margin, so it is not taken.
+
+**The macro calendar fix ships with it because neither is safe alone.**
+`_macro_lookback` resolves to `periods_per_year` = 1,764, so the growth and
+inflation classifiers do a year-over-year change counted in PRICE BARS and
+need about 12.4 months of them. Below that every macro label reads `unknown`,
+and `allow_short` permits a short only on `contraction` or `crisis` with
+`allow_when_unknown` False. **Shortening the window alone would have silently
+stopped the book shorting** -- half of a two-sided strategy -- and the run
+would have looked healthy doing it.
+
+**Research is untouched**, which is the same split `INTENT_EXECUTION_LAG`
+already makes and the reason no recorded figure moves. A backtest needs 3.65
+years to MEASURE across many periods; the dealer needs recent bars to
+PREDICT the next few hours. Same engine, two uses; only the second is
+bounded, and `RegimeConfig.macro_on_own_calendar` still defaults False.
+
+**The suite found a defect in the first version, and it is the useful part.**
+Six months is a statement about RECENCY, so it only means the same thing at
+the interval it was measured on -- 890 bars hourly, about 126 daily.
+`test_run_once_through_the_cli` runs at `1d` and reported `no data to trade`:
+an empty book from a starved panel, indistinguishable from an empty book from
+a quiet market. `_intent_window_start` now takes the LONGER of six months and
+whatever the warm-up needs at the interval in hand, so production is
+unchanged and a coarser resolution still gets its longest input. A second
+defect in the same helper: estimating bars-per-session by rounding gave 6
+where the lake holds 7.06, stretching the production window to 6.8 months and
+quietly overriding the figure that had been measured.
+
+**Verified on the deployed code, on the box**, rather than on a script that
+built the window itself -- `for_live_intent`'s own output against the
+unbounded run, same bar, same pinned universe: **5 of 5 identical**. Absolute
+name counts differ from those recorded on 2026-09-04 because the lake has
+been re-ingested since, so the two are not comparable; what is compared here
+is bounded against unbounded on identical inputs.
+
+Eight mutations checked by breaking them. **Two of my mutations were wrong
+first time** and are recorded as such: one landed in `_completed_bar_end`,
+which carries the same three lines earlier in the file, and one added an
+unused constant and proved nothing. A mutation that does not mutate reports a
+surviving check as an inert test.
+
+**What is still the owner's call.** Whether a monthly, lagged,
+year-over-year macro label should gate this book at all. It is now correctly
+dated rather than resolving to `unknown`, but the gate itself has never been
+measured on its own terms, and this file's own 2026-08-30 finding -- every
+intervention slower than the four-hour hold failed -- is an argument against
+it rather than a measurement of it.
+
 ### The split stopped ingesting, and nothing could have said so, 2026-09-12
 
 Asked whether the system still works the same way after the architectural
