@@ -21,7 +21,21 @@ WorkingDirectory=/opt/cfdinvest
 # compromise would otherwise reach all three.
 EnvironmentFile=/etc/cfdinvest/env
 
-ExecStart=/usr/bin/python3.11 /opt/cfdinvest/deployment/webhook_listener.py
+# The SYSTEM python, unversioned, and deliberately not the venv's.
+#
+# This was /usr/bin/python3.11, which the 22.04 -> 24.04 upgrade purged on
+# 2026-09-12: noble ships 3.12 and there is no python3.11 package. The
+# listener failed 203/EXEC, and because the listener is what receives the
+# push, the box could not be told about the fix by the usual route -- the
+# deploy mechanism had locked itself out.
+#
+# Unversioned so the next OS upgrade cannot repeat it. The listener is
+# standard library only, so whatever python3 the OS ships will run it.
+#
+# NOT the venv's interpreter, on purpose. This process exists to trigger
+# deploys, including the deploy that repairs a broken venv. Pointing it at
+# the venv would mean a venv failure takes out the only route to fixing it.
+ExecStart=/usr/bin/python3 /opt/cfdinvest/deployment/webhook_listener.py
 
 Restart=always
 RestartSec=10
