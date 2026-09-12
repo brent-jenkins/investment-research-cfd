@@ -730,11 +730,15 @@ def fetch_activity(
     that and must not be allowed to -- there is no body and no method
     override.
 
-    Returns the raw activity documents, newest first as Capital returns
-    them, or ``[]`` when the log cannot be read. **Empty means unknown, not
-    "nothing happened"**, and every caller has to treat it that way: a
-    departure whose price cannot be recovered keeps `level=None` rather than
-    acquiring a zero.
+    Returns the raw activity documents, in whatever order Capital sends
+    them, or ``[]`` when the log cannot be read. **The order is not relied
+    upon** -- see `closing_level`, which sorts. Verified live on 2026-09-12:
+    the log came back oldest-first, not newest-first, which would have made
+    a first-match reader return the wrong fill.
+
+    **Empty means unknown, not "nothing happened"**, and every caller has to
+    treat it that way: a departure whose price cannot be recovered keeps
+    `level=None` rather than acquiring a zero.
     """
     import urllib.parse
 
@@ -743,7 +747,12 @@ def fetch_activity(
         logger.warning("No session; the activity log cannot be read")
         return []
 
-    query: dict[str, str] = {"detailed": "true"}
+    # A generous page. Verified against the live account on 2026-09-12: the
+    # default page returned eight rows, all from the OLDEST day in the
+    # window, while the days that mattered were newer. A reader that asks
+    # for one page and assumes it holds the recent ones is reading history
+    # that stops before the event it is looking for.
+    query: dict[str, str] = {"detailed": "true", "pageSize": "1000"}
     if since is not None:
         # Capital wants a naive ISO stamp. A tz-aware one is converted
         # rather than rejected, because every timestamp in this project is
@@ -784,12 +793,23 @@ def closing_level(
     `completed_trips` goes on skipping the trip rather than pairing it
     against a number nobody verified.
 
-    Takes the NEWEST matching close. The log is ordered newest first and a
-    reconciliation asks about the departure that just happened, not an
-    earlier one on the same instrument -- and this book has held the same
-    name repeatedly within a week.
+    Takes the NEWEST matching close, and **sorts to find it rather than
+    trusting the order they arrived in**. Read against the live account on
+    2026-09-12 the log came back OLDEST first, so a first-match reader would
+    have returned the earliest close on the instrument -- and this book holds
+    the same name repeatedly within a week, so that is a different trip at a
+    different price.
+
+    The first version of this documented "the log is ordered newest first"
+    and its test fixture was written newest-first to match, so the fixture
+    encoded the assumption instead of the broker's behaviour and the
+    mutation passed against it. Sorting removes the assumption entirely.
     """
-    for row in activities or []:
+    def _when(row):
+        stamp = (row or {}).get("dateUTC") or (row or {}).get("date") or ""
+        return str(stamp)
+
+    for row in sorted(activities or [], key=_when, reverse=True):
         if str((row or {}).get("epic") or "") != str(epic):
             continue
         status = str((row or {}).get("status") or "").upper()

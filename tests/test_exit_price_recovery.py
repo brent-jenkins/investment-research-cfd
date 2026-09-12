@@ -33,10 +33,18 @@ from cfdinvest.broker.capital import client
 from cfdinvest.persist import orders
 
 
-def activity(epic, direction, level, status="ACCEPTED"):
+def activity(epic, direction, level, status="ACCEPTED", when="2026-09-10T12:00:00"):
+    """One activity row, shaped like the ones the account actually returns.
+
+    Verified against the live account on 2026-09-12: rows carry `dateUTC`,
+    `epic`, `status` and a `details` block, and an EXECUTED row reports
+    `level=0` while the ACCEPTED row beside it carries the real fill. The
+    zero-guard is not hypothetical.
+    """
     return {
         "epic": epic,
         "status": status,
+        "dateUTC": when,
         "details": {"direction": direction, "level": level},
     }
 
@@ -63,25 +71,61 @@ def test_a_long_is_closed_by_a_sell() -> None:
     assert client.closing_level(log, "ABC", direction="long") == 12.0
 
 
-def test_the_newest_matching_close_wins() -> None:
-    """M1712: the log is newest first and this book holds the same name
-    repeatedly within a week. An older close is a different trip."""
-    log = [
-        activity("MU", "BUY", 99.0),
-        activity("MU", "BUY", 80.0),
+def test_the_newest_matching_close_wins_whatever_order_it_arrives_in() -> None:
+    """M1712: this book holds the same name repeatedly within a week, so an
+    older close is a different trip at a different price.
+
+    **The fixture is OLDEST FIRST, because that is what the account
+    returns.** Read live on 2026-09-12 the activity log came back
+    oldest-first, not newest-first as the first version of this code
+    documented -- and its fixture had been written newest-first to match the
+    assumption, so the mutation passed against a shape the broker never
+    sends. Sorting is what removes the assumption; this fixture is what
+    stops it coming back.
+    """
+    oldest_first = [
+        activity("MU", "BUY", 80.0, when="2026-09-08T10:00:00"),
+        activity("MU", "BUY", 99.0, when="2026-09-11T10:00:00"),
     ]
 
-    assert client.closing_level(log, "MU", direction="short") == 99.0
+    assert client.closing_level(oldest_first, "MU", direction="short") == 99.0
+
+    # And the other order, so neither is privileged.
+    assert client.closing_level(
+        list(reversed(oldest_first)), "MU", direction="short"
+    ) == 99.0
 
 
 def test_a_rejected_activity_is_not_a_fill() -> None:
     """M1713: an order that did not execute has no price to report."""
     log = [
-        activity("MU", "BUY", 99.0, status="REJECTED"),
-        activity("MU", "BUY", 95.0, status="ACCEPTED"),
+        activity("MU", "BUY", 99.0, status="REJECTED",
+                 when="2026-09-11T12:00:00"),
+        activity("MU", "BUY", 95.0, status="ACCEPTED",
+                 when="2026-09-11T10:00:00"),
     ]
 
+    # The rejected row is NEWER, so this also proves the sort does not simply
+    # win over the status filter.
     assert client.closing_level(log, "MU", direction="short") == 95.0
+
+
+def test_an_executed_row_reporting_zero_is_skipped_for_the_accepted_one() -> None:
+    """Observed on the live account, not imagined.
+
+    Capital returns a WORKING_ORDER row with `level=0` beside the POSITION
+    row carrying the real fill. Without the zero-guard the recovery would
+    write 0 as the exit price -- the precise thing leaving the field absent
+    exists to prevent.
+    """
+    log = [
+        activity("INTC", "BUY", 0, status="EXECUTED",
+                 when="2026-09-08T20:20:10"),
+        activity("INTC", "BUY", 104.57, status="ACCEPTED",
+                 when="2026-09-08T20:20:10"),
+    ]
+
+    assert client.closing_level(log, "INTC", direction="short") == 104.57
 
 
 def test_an_unreadable_price_stays_absent() -> None:
