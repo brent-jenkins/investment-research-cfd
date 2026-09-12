@@ -7,12 +7,29 @@ name = "cfdinvest"
 version = "0.1.0"
 description = "Multi-asset CFD backtesting engine"
 requires-python = ">=3.11"
+# PINNED, not floors, since 2026-09-12.
+#
+# Floors meant every install drifted on its own, and production drifted
+# AHEAD of the machine the tests run on: on 2026-09-08 prod had pandas
+# 3.0.5, pyarrow 25.0.1, streamlit 1.62.0 and yfinance 1.6.0 against dev's
+# 3.0.3, 24.0.0, 1.58.0 and 1.4.1. A suite that passes on one set of
+# libraries, guarding an account that runs on another, is this project's own
+# recurring failure wearing different clothes: the thing measured is not the
+# thing that runs.
+#
+# Pinned to what PRODUCTION already runs rather than to what dev ran. Those
+# versions have been exercised against the real lake and the real broker for
+# weeks; dev's have not. Moving prod backwards to match dev would be
+# changing the thing that works to match the thing that does not.
+#
+# Raising a pin is now a deliberate commit that runs the suite, which is the
+# point.
 dependencies = [
-    "pandas>=2.2",
-    "numpy>=1.26",
-    "pyarrow>=15.0",
-    "requests>=2.31",
-    "yfinance>=0.2.40",
+    "pandas==3.0.5",
+    "numpy==2.4.6",
+    "pyarrow==25.0.1",
+    "requests==2.34.2",
+    "yfinance==1.6.0",
 ]
 
 [project.scripts]
@@ -24,10 +41,10 @@ cfdinvest-universe = "cfdinvest.universe.cli:main"
 
 [project.optional-dependencies]
 # The dashboard is optional: nothing in the pipeline imports it.
-ui = ["streamlit>=1.49"]
+ui = ["streamlit==1.62.0"]
 # pytest-cov is a development tool, not a runtime dependency: the suite runs
 # without it and only `--cov` needs it.
-dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-cov>=5", "streamlit>=1.49"]
+dev = ["pytest>=8.0", "pytest-mock>=3.12", "pytest-cov>=5", "streamlit==1.62.0"]
 
 [tool.setuptools.packages.find]
 include = ["cfdinvest*"]
