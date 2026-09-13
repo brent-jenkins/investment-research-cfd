@@ -361,21 +361,49 @@ def jobs_due(
     if _due_daily(moment, history.get("ingest-minute"), MINUTE_INGEST_AT_UTC):
         due.append("ingest-minute")
 
+    # Each of these keeps its OWN clock, and the reason is the same one that
+    # split `ingest-intraday` from `run-intraday` a day earlier -- arrived at
+    # there by replaying a session, and here by the thing actually happening.
+    #
+    # All four used to hang off `monitoring-snapshot`'s timestamp. That was
+    # defended on 2026-09-12 as safe because they share a unit and therefore
+    # a process, so ordering holds. **It is only safe if the process
+    # finishes.** On 2026-09-12 and 2026-09-13 `verify-day` raised SystemExit
+    # out of argparse and killed the tick after `monitoring-snapshot` and
+    # `risk-snapshot` had recorded -- so `prune-runs`, which runs behind it,
+    # did not run, and the shared gate then reported the whole group done for
+    # the day. Two days of no retention, and every unit still reporting
+    # success.
+    #
+    # Ordering is unaffected: `jobs_due` returns `[job for job in JOBS if job
+    # in due]`, so within a tick they still come back snapshot, risk, verify,
+    # prune. What changes is that a failure no longer locks the rest out
+    # until tomorrow -- the next tick, five minutes later, owes them again.
     if _due_daily(moment, history.get("monitoring-snapshot"), SNAPSHOT_AT_UTC):
         due.append("monitoring-snapshot")
+
+    if _due_daily(moment, history.get("risk-snapshot"), SNAPSHOT_AT_UTC):
         due.append("risk-snapshot")
-        # Verify the day BEFORE pruning, because a pruned run is one the
-        # verification can no longer read -- and the artefacts it reads are
-        # exactly the ones retention drops first.
-        #
-        # It runs in this daily block, at 03:05 UTC, which is after the US
-        # close and therefore verifies a COMPLETED session. It reports on
-        # the previous day for that reason: at 03:05 "today" has not traded
-        # yet, and a verification of a day that has not happened is the kind
-        # of clean report that means nothing.
+    # Verify the day BEFORE pruning, because a pruned run is one the
+    # verification can no longer read -- and the artefacts it reads are
+    # exactly the ones retention drops first. That ordering still holds: it
+    # comes from the position of these names in `JOBS`, not from their being
+    # appended together here.
+    #
+    # It runs in this daily block, at 03:05 UTC, which is after the US close
+    # and therefore verifies a COMPLETED session. It reports on the previous
+    # day for that reason: at 03:05 "today" has not traded yet, and a
+    # verification of a day that has not happened is the kind of clean
+    # report that means nothing.
+    if _due_daily(moment, history.get("verify-day"), SNAPSHOT_AT_UTC):
         due.append("verify-day")
-        # After the snapshots, so a run is only ever pruned once everything
-        # that describes it has been written.
+
+    # After the snapshots, so a run is only ever pruned once everything that
+    # describes it has been written -- and on its own clock, so a verification
+    # that cannot run is not also a retention that cannot run. Of the two,
+    # retention is the one with a consequence: at roughly 21 runs a session
+    # and 54MB each, a stalled prune is about 1.1GB a day.
+    if _due_daily(moment, history.get("prune-runs"), SNAPSHOT_AT_UTC):
         due.append("prune-runs")
 
     # Daily since 2026-08-29, having been monthly.

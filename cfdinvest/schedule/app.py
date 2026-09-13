@@ -256,6 +256,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     deal.add_argument("--account", default=None, help="account name to deal for")
 
+    # Registered so `_job_args` can resolve it, and NOT only for that.
+    #
+    # `verify-day` was added to `JOBS` and to the daily unit's `--only` on
+    # 2026-09-12 without ever being given a subcommand. `_job_args` builds a
+    # namespace with `build_parser().parse_args([command])`, so the daemon
+    # asked argparse for a choice that did not exist, argparse wrote an
+    # error and raised SystemExit -- which is a BaseException and therefore
+    # walked straight through the loop's `except Exception`. The tick died
+    # on the spot, `prune-runs` never ran behind it, and the whole group
+    # stayed locked out until the next day because it was gated on
+    # `monitoring-snapshot`'s timestamp, which HAD been recorded.
+    #
+    # Every other job in `JOBS` avoids this by borrowing a registered
+    # command's flags -- `record-candidate-spreads` uses `poll-live-quotes`.
+    # Giving this one its own parser is better than borrowing: verifying
+    # yesterday by hand is a thing somebody wants to do after a bad session,
+    # and a job that can only be reached from the scheduler is a job nobody
+    # can check.
+    verify = commands.add_parser(
+        "verify-day", help="verify a completed day and mail anything wrong"
+    )
+    verify.add_argument(
+        "--date", default=None,
+        help="the day to verify, YYYY-MM-DD (default: yesterday)",
+    )
+    verify.add_argument("--account", default=None, help="account name to verify")
+
     commands.add_parser("send-test-email", help="prove the mail path works")
     commands.add_parser("market-status", help="show session state for the universe")
 
@@ -2847,7 +2874,16 @@ def _command_verify_day(args, app_config, smtp, transport) -> int:
     from cfdinvest.verify import verify_day
 
     account = getattr(args, "account", None)
-    day = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=1)).date()
+    # ``--date`` exists so a bad session can be re-verified by hand after the
+    # fact; unset means yesterday, which is what the scheduler always wants.
+    # Wired rather than accepted and ignored -- a flag the parser advertises
+    # and the command discards is this project's inert-gate failure in its
+    # cheapest form.
+    stated = getattr(args, "date", None)
+    day = (
+        pd.Timestamp(stated).date() if stated
+        else (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=1)).date()
+    )
     report = verify_day(app_config, account=account, day=str(day))
 
     print(report.describe())
@@ -3188,6 +3224,23 @@ def _command_daemon(args, app_config, smtp, transport) -> int:
                     run_job(name)
                 except Exception as error:  # noqa: BLE001 - one job, not the loop
                     logger.exception("Daemon: %s failed: %s", name, error)
+                except SystemExit as error:
+                    # SystemExit is a BaseException, so `except Exception`
+                    # does NOT catch it -- and argparse raises it. On
+                    # 2026-09-12 `verify-day` was added to JOBS without a
+                    # subcommand, `_job_args` asked argparse for a choice
+                    # that did not exist, and the exit walked out of this
+                    # loop and killed the tick. `prune-runs` ran after it and
+                    # so did not run at all, for two days, silently.
+                    #
+                    # Caught by name rather than by widening to
+                    # BaseException, which would swallow KeyboardInterrupt
+                    # and make the daemon unstoppable from a terminal.
+                    logger.exception(
+                        "Daemon: %s exited the process (%s). Continuing; a "
+                        "job must not be able to stop the ones behind it.",
+                        name, error,
+                    )
                 # Recorded whether or not it succeeded. A job that fails every
                 # time must not be retried every tick -- that is a hot loop
                 # against someone else's server, and the failure is already
@@ -3426,6 +3479,8 @@ def main(argv: list[str] | None = None) -> int:
             return _command_crontab(args, app_config)
         if args.command == "advisor-alert":
             return _command_advisor_alert(args, app_config, smtp, transport)
+        if args.command == "verify-day":
+            return _command_verify_day(args, app_config, smtp, transport)
         if args.command == "prune-runs":
             return _command_prune_runs(args, app_config)
         if args.command == "poll-live-quotes":

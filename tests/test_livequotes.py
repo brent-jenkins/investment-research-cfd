@@ -293,6 +293,9 @@ def test_nothing_is_owed_twice_in_one_day():
         "poll-live-quotes": pd.Timestamp("2026-08-25 03:58", tz="UTC"),
         "ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
         "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "risk-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "verify-day": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "prune-runs": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
         "screen-universe": pd.Timestamp("2026-08-25 03:10", tz="UTC"),
     }
     assert daemon.jobs_due(pd.Timestamp("2026-08-25 04:00", tz="UTC"), last) == []
@@ -308,6 +311,9 @@ def test_a_restart_after_the_daily_slot_does_not_run_it_again():
         "poll-live-quotes": pd.Timestamp("2026-08-25 03:28", tz="UTC"),
         "ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
         "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "risk-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "verify-day": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "prune-runs": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
         "screen-universe": pd.Timestamp("2026-08-25 03:10", tz="UTC"),
     }
     assert daemon.jobs_due(pd.Timestamp("2026-08-25 03:30", tz="UTC"), last) == []
@@ -317,6 +323,9 @@ def test_the_daily_work_comes_round_again_the_next_day():
     last = {
         "ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
         "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "risk-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "verify-day": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+        "prune-runs": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
         "screen-universe": pd.Timestamp("2026-08-25 03:10", tz="UTC"),
     }
     due = daemon.jobs_due(pd.Timestamp("2026-08-26 03:06", tz="UTC"), last)
@@ -343,6 +352,9 @@ def test_the_snapshots_are_owed_once_a_day_and_not_again():
     """
     last = {"ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
             "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+            "risk-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+            "verify-day": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+            "prune-runs": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
             "screen-universe": pd.Timestamp("2026-08-25 03:10", tz="UTC")}
     due = daemon.jobs_due(pd.Timestamp("2026-08-25 04:00", tz="UTC"), last)
     assert "monitoring-snapshot" not in due
@@ -354,6 +366,9 @@ def test_quotes_are_owed_every_five_minutes():
     last = {"poll-live-quotes": pd.Timestamp("2026-08-25 04:00", tz="UTC"),
             "ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
             "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+            "risk-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+            "verify-day": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
+            "prune-runs": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
             "screen-universe": pd.Timestamp("2026-08-25 03:10", tz="UTC")}
     at = lambda m: pd.Timestamp("2026-08-25 04:00", tz="UTC") + pd.Timedelta(minutes=m)
 

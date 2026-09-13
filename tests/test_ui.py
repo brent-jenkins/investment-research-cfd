@@ -2348,6 +2348,9 @@ def test_signals_are_refreshed_during_the_session_not_once_a_day():
     ran_at_three = {
         "ingest-daily": "2026-08-26T03:00:00Z",
         "monitoring-snapshot": "2026-08-26T03:05:00Z",
+        "risk-snapshot": "2026-08-26T03:05:00Z",
+        "verify-day": "2026-08-26T03:05:00Z",
+        "prune-runs": "2026-08-26T03:05:00Z",
         "poll-live-quotes": "2026-08-26T14:59:00Z",
     }
     midday = "2026-08-26T15:00:00Z"
@@ -2392,6 +2395,9 @@ def test_nothing_intraday_runs_while_the_market_is_shut():
     history = {
         "ingest-daily": "2026-08-26T03:00:00Z",
         "monitoring-snapshot": "2026-08-26T03:05:00Z",
+        "risk-snapshot": "2026-08-26T03:05:00Z",
+        "verify-day": "2026-08-26T03:05:00Z",
+        "prune-runs": "2026-08-26T03:05:00Z",
         "poll-live-quotes": "2026-08-26T02:00:00Z",
     }
     for state in (False, None):
@@ -2413,6 +2419,9 @@ def test_the_snapshots_stay_daily():
         "2026-08-26T15:00:00Z",
         {"ingest-daily": "2026-08-26T03:00:00Z",
          "monitoring-snapshot": "2026-08-26T03:05:00Z",
+         "risk-snapshot": "2026-08-26T03:05:00Z",
+         "verify-day": "2026-08-26T03:05:00Z",
+         "prune-runs": "2026-08-26T03:05:00Z",
          # A refreshed lake, which is what the analysis is gated on since
          # the two jobs became separate units.
          "ingest-intraday": "2026-08-26T14:59:00Z",
@@ -2456,6 +2465,9 @@ def test_the_daily_housekeeping_is_not_judged_against_the_intraday_run():
         "ingest-intraday": "2026-08-26T17:10:00Z",
         "run-intraday": "2026-08-26T17:10:00Z",
         "monitoring-snapshot": "2026-08-26T03:05:30Z",
+        "risk-snapshot": "2026-08-26T03:05:30Z",
+        "verify-day": "2026-08-26T03:05:30Z",
+        "prune-runs": "2026-08-26T03:05:30Z",
         "risk-snapshot": "2026-08-26T03:05:31Z",
         "prune-runs": "2026-08-26T03:05:32Z",
     }
