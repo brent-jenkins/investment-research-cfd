@@ -107,7 +107,16 @@ deploy_steps() {
 
   log "Fetching origin/main"
   local before
-  before="$(git rev-parse HEAD 2>/dev/null || echo none)"
+  # Carried across a re-exec, not re-read. The re-exec happens AFTER the
+  # pull, so a second run would compute before == after and every
+  # "did this change?" test below would answer no.
+  #
+  # That is not hypothetical: on 2026-09-14 a commit changed deploy.sh and
+  # pyproject.toml together, the script re-exec'd itself, the reinstall test
+  # compared c9db193 against c9db193, and psutil was never installed. The
+  # deploy reported success throughout. Found because the package was absent
+  # afterwards, not because anything said so.
+  before="${CFDINVEST_DEPLOY_BEFORE:-$(git rev-parse HEAD 2>/dev/null || echo none)}"
   git fetch --quiet origin main || { fail "git fetch"; return 1; }
   git reset --hard --quiet origin/main || { fail "git reset"; return 1; }
   local after
@@ -121,6 +130,10 @@ deploy_steps() {
   if [[ -z "${CFDINVEST_DEPLOY_REEXEC:-}" ]]      && ! cmp -s "${CFDINVEST_DEPLOY_PINNED}" "${REPO_DIR}/deployment/deploy.sh"; then
     log "deploy.sh changed in this pull -- re-running the new one"
     export CFDINVEST_DEPLOY_REEXEC=1
+    # The revision we STARTED from, so the new run can still tell what this
+    # pull changed. Without it the successor sees before == after and skips
+    # the reinstall -- see the comment where `before` is read.
+    export CFDINVEST_DEPLOY_BEFORE="${before}"
     unset CFDINVEST_DEPLOY_PINNED
     rm -f -- "${_pinned:-}" 2>/dev/null || true
     exec "${REPO_DIR}/deployment/deploy.sh" "$@"
