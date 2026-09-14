@@ -354,7 +354,185 @@ def verify_day(config=None, account: str | None = None, day=None) -> DayReport:
               lambda: _check_account_matches_record(config, account)),
         _safe("flat at the close",
               lambda: _check_flat_at_close(config, account)),
+        # Last, and never a PROBLEM: it measures rather than guards. A day of
+        # poor signals is not a fault, and a verification that shouts on an
+        # ordinary bad session is one nobody reads by the end of the month.
+        _safe("signal skill",
+              lambda: _check_signal_skill(config, account, stamp, trading)),
     ]
     report = DayReport(day=stamp, findings=tuple(findings))
     logger.info("verify %s: %s", stamp, report.verdict)
     return report
+
+
+def _check_signal_skill(config, account, day, trading: bool | None) -> Finding:
+    """Did the direction calls predict, and did confidence order them?
+
+    **A measurement, not a guard.** It reports ``ok`` whatever the numbers
+    say. What it is for is building the series: the only honest answer to
+    "is the app being too cautious" is a run of these readings, and on
+    2026-09-14 the project had exactly one.
+
+    Three readings, and the third is the one that matters.
+
+    HIT RATE and MEAN SIGNED MOVE, gross of costs. Costs are the guards'
+    business; this asks only whether the direction was right. A low hit rate
+    is NOT by itself bad here -- the recorded profile runs 30.5% on short
+    holds against 97.7% on long ones, because the design pays many small
+    losses to find a few large wins. The mean matters, the count does not.
+
+    CONFIDENCE ORDERING, as a rank correlation against the signed move. This
+    is the claim ``confidence_sizing_strength = 0.75`` rests on. The recorded
+    figure on the decision bar over 3.65 years is +0.023, so a single day
+    near zero is normal rather than alarming.
+
+    EXCESS OVER THE UNIVERSE'S OWN MOVE, which separates skill from the tape.
+    A short book on a falling day wins without having picked anything;
+    subtracting the universe's mean leaves only what a cross-sectional
+    strategy can claim. On 2026-09-14 the signed move was -0.568% and the
+    excess -0.597% against a universe that moved -0.050%, so the apparent
+    "right side of the tape" was nothing of the kind and the day's profit
+    came from one name rather than from the book being short.
+    """
+    import pandas as pd
+
+    if trading is False:
+        return Finding("signal skill", OK, f"no session on {day}")
+
+    from cfdinvest.persist import readers
+    from cfdinvest.repository import DataRepository
+
+    run_id = _first_run_of(config, account, day)
+    if run_id is None:
+        return Finding("signal skill", UNCHECKED,
+                       f"no run from {day} to read signals from")
+
+    signals = readers.load_frame("signals", run_id, config, account)
+    if signals is None or getattr(signals, "empty", True):
+        return Finding("signal skill", UNCHECKED,
+                       f"run {run_id} holds no signals")
+
+    frame = signals.reset_index()
+    stamps = pd.DatetimeIndex(frame["timestamp"])
+    if stamps.tz is None:
+        stamps = stamps.tz_localize("UTC")
+    rows = frame[stamps == stamps.max()].copy()
+    rows["confidence"] = pd.to_numeric(rows["confidence"], errors="coerce")
+
+    names = sorted({str(t) for t in rows["ticker"]})
+    market = DataRepository(config).load_market(
+        tickers=names, interval=config.market.interval,
+        end=pd.Timestamp(day) + pd.Timedelta(days=1),
+    )
+    if market is None or getattr(market, "empty", True):
+        return Finding("signal skill", UNCHECKED, "no prices to score against")
+
+    prices = market.reset_index()
+    column = next((c for c in prices.columns
+                   if "time" in c.lower() or "date" in c.lower()), None)
+    index = pd.DatetimeIndex(prices[column])
+    prices["_t"] = index.tz_localize("UTC") if index.tz is None else index
+    session = prices[prices["_t"].dt.date == pd.Timestamp(day).date()]
+    if session.empty:
+        return Finding("signal skill", UNCHECKED, f"no bars on {day}")
+
+    # The session's open to its close, per name: the whole day the signal was
+    # live, rather than the window one position happened to be held.
+    moves = {}
+    for name, block in session.groupby("ticker"):
+        block = block.sort_values("_t")
+        first = float(block["open"].iloc[0])
+        last = float(block["close"].iloc[-1])
+        if first > 0:
+            moves[str(name)] = 100.0 * (last - first) / first
+    if len(moves) < 5:
+        return Finding("signal skill", UNCHECKED,
+                       f"only {len(moves)} name(s) priced on {day}")
+
+    universe = sum(moves.values()) / len(moves)
+
+    signed, excess, confidences = [], [], []
+    for _, row in rows.iterrows():
+        name, side = str(row["ticker"]), str(row["direction"])
+        if side == "flat" or name not in moves:
+            continue
+        sign = 1.0 if side == "long" else -1.0
+        signed.append(sign * moves[name])
+        excess.append(sign * (moves[name] - universe))
+        confidences.append(float(row["confidence"]))
+
+    if len(signed) < 5:
+        return Finding("signal skill", UNCHECKED,
+                       f"only {len(signed)} directional signal(s) on {day}")
+
+    hits = sum(1 for value in signed if value > 0)
+    rho = _rank_correlation(confidences, signed)
+    return Finding(
+        "signal skill", OK,
+        "%d signal(s): %d/%d right (%.0f%%), mean signed %+.3f%%, "
+        "mean EXCESS %+.3f%% over a universe that moved %+.3f%%, "
+        "confidence rho %s. Excess is what separates skill from the tape."
+        % (len(signed), hits, len(signed), 100.0 * hits / len(signed),
+           sum(signed) / len(signed), sum(excess) / len(excess), universe,
+           "unreadable" if rho is None else "%+.3f" % rho)
+    )
+
+
+def _first_run_of(config, account, day):
+    """The earliest run persisted on ``day``, or ``None``.
+
+    The earliest rather than the newest: the question is what the signals
+    said when they could still have been acted on, and the last run of a
+    session decides on a book the flatten has already emptied.
+    """
+    from cfdinvest.persist import readers
+
+    for lister in ("list_runs", "run_ids", "runs"):
+        call = getattr(readers, lister, None)
+        if call is None:
+            continue
+        try:
+            found = list(call(config, account))
+        except Exception:  # noqa: BLE001 - a verification must not raise
+            continue
+        prefix = str(day).replace("-", "")
+        same_day = sorted(str(r) for r in found if str(r).startswith(prefix))
+        if same_day:
+            return same_day[0]
+    return None
+
+
+def _rank_correlation(left, right):
+    """Spearman, computed rather than delegated.
+
+    `pandas` sends ``method="spearman"`` to `scipy`, which is not installed
+    on the deployment -- so asking for it raises, in a function whose whole
+    contract is never to. Ties share the average rank, which is what makes
+    this Spearman rather than a correlation of ``argsort``.
+    """
+    def ranked(values):
+        order = sorted(range(len(values)), key=lambda i: values[i])
+        out = [0.0] * len(values)
+        position = 0
+        while position < len(order):
+            stop = position
+            while (stop + 1 < len(order)
+                   and values[order[stop + 1]] == values[order[position]]):
+                stop += 1
+            share = (position + stop) / 2.0 + 1.0
+            for index in range(position, stop + 1):
+                out[order[index]] = share
+            position = stop + 1
+        return out
+
+    if len(left) != len(right) or len(left) < 3:
+        return None
+    a, b = ranked(list(left)), ranked(list(right))
+    count = len(a)
+    mean_a, mean_b = sum(a) / count, sum(b) / count
+    top = sum((x - mean_a) * (y - mean_b) for x, y in zip(a, b))
+    spread_a = sum((x - mean_a) ** 2 for x in a)
+    spread_b = sum((y - mean_b) ** 2 for y in b)
+    if spread_a <= 0 or spread_b <= 0:
+        return None
+    return top / (spread_a ** 0.5 * spread_b ** 0.5)
