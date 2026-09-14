@@ -119,6 +119,46 @@ CANDIDATE_SPREAD_AT_UTC = (16, 0)
 #: it.
 MINUTE_INGEST_AT_UTC = (23, 0)
 
+#: When each once-a-day job is owed, in one place.
+#:
+#: `jobs_due` reads these and so does the dashboard. It used to be two
+#: copies: `ui/vitals.py` labelled every daily row except `ingest-daily`
+#: with `SNAPSHOT_AT_UTC`, which is right for three of them and wrong for
+#: three -- `record-candidate-spreads` runs at 16:00, `ingest-minute` at
+#: 23:00, `screen-universe` at 03:10. The page told the owner a job would
+#: next run at 03:05 tomorrow when it was really due at 16:00 today.
+#:
+#: "One owner per threshold" is the house rule and this is what the second
+#: copy costs: not a crash, but a page that is confidently wrong about the
+#: thing it exists to report.
+DAILY_APPOINTMENTS: dict[str, tuple[int, int]] = {
+    "ingest-daily": INGEST_AT_UTC,
+    "record-candidate-spreads": CANDIDATE_SPREAD_AT_UTC,
+    "ingest-minute": MINUTE_INGEST_AT_UTC,
+    "monitoring-snapshot": SNAPSHOT_AT_UTC,
+    "risk-snapshot": SNAPSHOT_AT_UTC,
+    "verify-day": SNAPSHOT_AT_UTC,
+    "prune-runs": SNAPSHOT_AT_UTC,
+    "screen-universe": SCREEN_AT_UTC,
+}
+
+#: Daily jobs that also need an open market, and therefore cannot run at a
+#: weekend at all.
+#:
+#: `record-candidate-spreads` reads live quotes, so it is gated on the
+#: session as well as the hour -- moving it to 16:00 fixed the hour and not
+#: the day, and on a Saturday every hour is out of session.
+#:
+#: The consequence is a staleness threshold nothing can satisfy. It last
+#: runs Friday 16:00 and cannot run again until Monday 16:00, which is
+#: SEVENTY-TWO hours, against a rule that warns past thirty-six. So it warned
+#: from Saturday morning to Monday teatime every week, by construction --
+#: about a third of the time, for a job doing exactly what it was told.
+#:
+#: The monthly branch in `ui/vitals.py` already carries this lesson in its
+#: own comment. This set is what lets the daily branch apply it.
+MARKET_GATED_DAILY: frozenset[str] = frozenset({"record-candidate-spreads"})
+
 #: How often the lake and the signals are refreshed while a market is open.
 #:
 #: A daily pipeline on daily bars gave one decision per instrument per
@@ -329,7 +369,7 @@ def jobs_due(
             # mirror of the two-schedulers-on-one-lake failure the pipeline
             # timer is kept disabled to avoid.
 
-    if _due_daily(moment, history.get("ingest-daily"), INGEST_AT_UTC):
+    if _due_daily(moment, history.get("ingest-daily"), DAILY_APPOINTMENTS["ingest-daily"]):
         due.append("ingest-daily")
 
     # Once a day, not on the intraday cadence: the snapshots and the prune
@@ -351,14 +391,15 @@ def jobs_due(
     # taken on a guess about whether the exchange was open is not a
     # measurement of anything.
     if market_open and _due_daily(
-        moment, history.get("record-candidate-spreads"), CANDIDATE_SPREAD_AT_UTC
+        moment, history.get("record-candidate-spreads"),
+        DAILY_APPOINTMENTS["record-candidate-spreads"]
     ):
         due.append("record-candidate-spreads")
 
     # Deliberately NOT gated on the market being open: this runs after the
     # close, so by construction it is never due while trading. Gating it on
     # an open market would mean it never ran at all.
-    if _due_daily(moment, history.get("ingest-minute"), MINUTE_INGEST_AT_UTC):
+    if _due_daily(moment, history.get("ingest-minute"), DAILY_APPOINTMENTS["ingest-minute"]):
         due.append("ingest-minute")
 
     # Each of these keeps its OWN clock, and the reason is the same one that
@@ -379,10 +420,11 @@ def jobs_due(
     # in due]`, so within a tick they still come back snapshot, risk, verify,
     # prune. What changes is that a failure no longer locks the rest out
     # until tomorrow -- the next tick, five minutes later, owes them again.
-    if _due_daily(moment, history.get("monitoring-snapshot"), SNAPSHOT_AT_UTC):
+    if _due_daily(moment, history.get("monitoring-snapshot"),
+        DAILY_APPOINTMENTS["monitoring-snapshot"]):
         due.append("monitoring-snapshot")
 
-    if _due_daily(moment, history.get("risk-snapshot"), SNAPSHOT_AT_UTC):
+    if _due_daily(moment, history.get("risk-snapshot"), DAILY_APPOINTMENTS["risk-snapshot"]):
         due.append("risk-snapshot")
     # Verify the day BEFORE pruning, because a pruned run is one the
     # verification can no longer read -- and the artefacts it reads are
@@ -395,7 +437,7 @@ def jobs_due(
     # day for that reason: at 03:05 "today" has not traded yet, and a
     # verification of a day that has not happened is the kind of clean
     # report that means nothing.
-    if _due_daily(moment, history.get("verify-day"), SNAPSHOT_AT_UTC):
+    if _due_daily(moment, history.get("verify-day"), DAILY_APPOINTMENTS["verify-day"]):
         due.append("verify-day")
 
     # After the snapshots, so a run is only ever pruned once everything that
@@ -403,7 +445,7 @@ def jobs_due(
     # that cannot run is not also a retention that cannot run. Of the two,
     # retention is the one with a consequence: at roughly 21 runs a session
     # and 54MB each, a stalled prune is about 1.1GB a day.
-    if _due_daily(moment, history.get("prune-runs"), SNAPSHOT_AT_UTC):
+    if _due_daily(moment, history.get("prune-runs"), DAILY_APPOINTMENTS["prune-runs"]):
         due.append("prune-runs")
 
     # Daily since 2026-08-29, having been monthly.
@@ -426,7 +468,7 @@ def jobs_due(
     # runs of identical selections. Recording only changes would have been
     # the other fix and the wrong one -- it loses the evidence that the
     # screen ran at all, which is most of what the record is for.
-    if _due_daily(moment, history.get("screen-universe"), SCREEN_AT_UTC):
+    if _due_daily(moment, history.get("screen-universe"), DAILY_APPOINTMENTS["screen-universe"]):
         due.append("screen-universe")
 
     return [job for job in JOBS if job in due]

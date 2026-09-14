@@ -89,10 +89,49 @@ def _utc(value) -> pd.Timestamp | None:
     return stamp.tz_localize("UTC") if stamp.tz is None else stamp.tz_convert("UTC")
 
 
-def _next_daily(now: pd.Timestamp, at: tuple[int, int]) -> pd.Timestamp:
+def _next_daily(
+    now: pd.Timestamp, at: tuple[int, int], *, weekdays_only: bool = False
+) -> pd.Timestamp:
+    """The next time this appointment comes round.
+
+    ``weekdays_only`` for a job gated on the market being open: Saturday's
+    16:00 is not a time it can run, so offering it as "next due" is telling
+    the reader something that will not happen.
+    """
     hour, minute = at
     today = now.normalize() + pd.Timedelta(hours=hour, minutes=minute)
-    return today if now < today else today + pd.Timedelta(days=1)
+    following = today if now < today else today + pd.Timedelta(days=1)
+    if weekdays_only:
+        # At most two skips: Saturday and Sunday.
+        while following.dayofweek >= 5:
+            following = following + pd.Timedelta(days=1)
+    return following
+
+
+def _weekday_appointments_between(
+    last: pd.Timestamp, now: pd.Timestamp, at: tuple[int, int]
+) -> int:
+    """How many weekday slots have passed since ``last`` without a run.
+
+    The staleness measure for a market-gated job. Hours since the last run
+    counts weekends the job was never allowed to work, so it condemns a job
+    for the calendar rather than for its behaviour.
+
+    Weekday rather than a real exchange calendar, deliberately: a holiday
+    costs this one missed slot out of the two it tolerates, which reads as
+    slack rather than as a false alarm. Reaching for the calendar here would
+    put a second copy of the session rules in the UI layer, which is the
+    fault this whole change exists to remove.
+    """
+    hour, minute = at
+    missed = 0
+    day = pd.Timestamp(last).normalize()
+    while day <= pd.Timestamp(now).normalize():
+        slot = day + pd.Timedelta(hours=hour, minutes=minute)
+        if day.dayofweek < 5 and last < slot <= now:
+            missed += 1
+        day = day + pd.Timedelta(days=1)
+    return missed
 
 
 def job_report(
@@ -219,15 +258,48 @@ def job_report(
             # once-a-day snapshot is *always* older than the newest run and
             # the check would warn every session about a scheduler doing
             # exactly what it was told.
-            at = (
-                daemon.INGEST_AT_UTC
-                if name == "ingest-daily"
-                else daemon.SNAPSHOT_AT_UTC
+            # Read from `daemon`, never restated. This branch used to label
+            # every daily job but `ingest-daily` with SNAPSHOT_AT_UTC, which
+            # is right for three of the eight and wrong for three: the page
+            # said `record-candidate-spreads` runs at 03:05 and was next due
+            # tomorrow morning, when it runs at 16:00 and was due that
+            # afternoon. A second copy of a schedule is a schedule that
+            # drifts.
+            at = daemon.DAILY_APPOINTMENTS.get(name, daemon.SNAPSHOT_AT_UTC)
+            gated = name in daemon.MARKET_GATED_DAILY
+            schedule = (
+                f"Daily at {at[0]:02d}:{at[1]:02d} UTC"
+                + (" while open" if gated else "")
             )
-            schedule = f"Daily at {at[0]:02d}:{at[1]:02d} UTC"
-            next_due = _next_daily(moment, at)
+            next_due = _next_daily(moment, at, weekdays_only=gated)
             if last is None:
                 status, detail = "unchecked", "Has not run yet."
+            elif gated:
+                # A market-gated job cannot run at a weekend, so an hour
+                # count judges it against a clock it does not live on. From
+                # Friday 16:00 to Monday 16:00 is SEVENTY-TWO hours of
+                # blameless staleness against a thirty-six hour rule, so it
+                # warned about a third of every week for doing as it was
+                # told -- which is how a status page teaches you to stop
+                # reading it, the same lesson the monthly branch above
+                # already carries.
+                #
+                # Counted in APPOINTMENTS MISSED instead: how many weekday
+                # slots have come and gone since it last ran. One is slack
+                # for a late or failed run; two means it is genuinely not
+                # running.
+                missed = _weekday_appointments_between(last, moment, at)
+                status = "pass" if missed <= 1 else "warning"
+                hours = (moment - last).total_seconds() / 3600.0
+                detail = (
+                    f"Last ran {hours:.0f} hours ago"
+                    + (
+                        "; the market has not been open at "
+                        f"{at[0]:02d}:{at[1]:02d} UTC since."
+                        if missed == 0
+                        else f"; {missed} weekday slot(s) missed."
+                    )
+                )
             else:
                 hours = (moment - last).total_seconds() / 3600.0
                 # A day and a half: a missed slot is visible, and an ordinary
