@@ -130,7 +130,13 @@ deploy_steps() {
   # up source changes on its own; entry points and dependencies do not.
   if ! git diff --quiet "${before}" "${after}" -- pyproject.toml 2>/dev/null; then
     log "pyproject.toml changed -- reinstalling"
-    "${VENV}/bin/pip" install --quiet -e "${REPO_DIR}[ui]" || { fail "pip install"; return 1; }
+    # `monitoring` alongside `ui`: psutil is optional to the LIBRARY and
+    # wanted on the DEPLOYMENT, which is what an extra is for. Without it the
+    # monitor reports CPU and memory as "not measured" -- honest, and blind in
+    # exactly the place that cost the 2026-09-09 throttle and the 2026-09-11
+    # stall.
+    "${VENV}/bin/pip" install --quiet -e "${REPO_DIR}[ui,monitoring]" \
+      || { fail "pip install"; return 1; }
   fi
 
   # The broker rules table. One file in the repository is the source; the
