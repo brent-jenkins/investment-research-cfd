@@ -492,6 +492,124 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE 0.75 GATE IS A BREAKOUT GATE, 2026-09-14
+
+Asked why the app opened two positions from a hundred tracked names. The
+answer is not the screen, not the last look and not caution. It is that a
+flat breakout component dilutes `strength` by a third, and the gate was
+raised to a level that dilution puts out of reach.
+
+**The chain, each step measured.**
+
+    100 candidates -> 50 traded -> 40 with a direction -> 5 intended -> 2 opened
+
+    distinct names clearing 0.75 at ANY bar, out of ALL 100:   9
+    the best single bar (13:00):                               6
+    median confidence among names with a direction:         0.34
+
+So deleting the screen entirely would have offered nine candidates, not
+thirty. The binding constraint is the gate, and the gate sits at roughly the
+**90th percentile** of the strength distribution.
+
+**`confidence` is `|strength|` for three-quarters of the book.**
+`environment_in_confidence` ships False, so support is 1.0, and agreement is
+1.0 for 53 of 68 names. The same six names clear on either measure.
+
+**AND STRENGTH IS DILUTED BY A COMPONENT THAT ABSTAINS.**
+
+    crossover   non-zero on 105 of 105 names
+    momentum    non-zero on 105 of 105
+    breakout    EXACTLY ZERO on 87 of 105 (83%)
+
+`trend_strength` renormalises over components that are `notna()`, so a
+breakout reading of **0.0 is present and counts in the denominator at full
+weight**. `component_agreement` does the opposite and says so in its own
+docstring -- zero "treated as abstaining... so a flat breakout does not
+dilute a genuine agreement between the other two". **The two functions hold
+opposite conventions for the same value**, and only one of them dilutes.
+
+The consequence is arithmetic:
+
+    crossover +1.0, momentum +1.0, breakout flat -> (1+1+0)/3 = 0.667
+    the gate                                                   0.75
+
+**A name with maximal trend and maximal momentum cannot clear the gate
+unless the breakout component is live.** Measured on the same bar: all 6
+names clearing 0.75 had a non-zero breakout, 6 of 6. Had zeros abstained as
+agreement treats them, median strength would be 0.556 rather than 0.371.
+
+**This is the `environment_in_confidence` failure in a new place**, and this
+file already states its shape: "no signal can score above 0.5 in a volatile
+market however strong it is, and any gate above 50% silently forbids
+trading". Same mechanism, different factor, and it arrived the same way --
+the gate moved and nobody re-checked what the scale could reach.
+
+**It was harmless until 2026-09-04.** At `entry_confidence = 0.35` a 0.667
+ceiling is irrelevant. Raising the gate to 0.75 made the dilution binding,
+and the sweep that justified 0.75 was itself measured on diluted strength,
+so it could not have seen this.
+
+**The gate and the dilution are entangled and must not be changed apart.**
+0.75 on diluted strength is roughly 0.50 on undiluted -- and 0.55 measured
+at cost/gross 98.5% against 0.75's 37.2%. So "fixing" the dilution alone
+lowers the effective gate into a range already measured as far worse. The
+honest experiment is to correct the convention AND re-sweep the gate, and
+the likely outcome is a higher nominal number giving the same selectivity:
+no change in behaviour, but a knob that means what it says.
+
+**What is genuinely untested** is the rule this has silently imposed: that
+this book may not take a strong trend without a breakout. Nobody chose that,
+it has never been measured, and it is not obviously wrong.
+
+**Trade count is not arbitrary -- it tracks how far the tail reaches.**
+
+    day          median   p90     cleared 0.75
+    2026-09-08    0.394   0.727        8
+    2026-09-09    0.465   0.746        7
+    2026-09-10    0.420   0.558        2
+    2026-09-11    0.388   0.472        1
+    2026-09-14    0.371   0.739        6
+
+The median barely moves; the p90 does, and the count follows it exactly. The
+gate fires on days when signals are strong and stays quiet when they are
+not, which is the behaviour the owner asked to protect when raising the
+question -- and the reason not to reach for a lower bar.
+
+**AGREEMENT EARNS ITS PLACE, AND IT MAY BE THE FIRST LOSING SUBSET THIS
+PROJECT HAS FOUND.** 374 signals over five days, decision bar to session
+close:
+
+    agreement 1.000   n=325   mean +0.413%   win 66%
+    agreement 0.500   n= 48   mean -0.314%   win 38%
+    difference                     +0.746pp
+
+Divided components LOSE. Every selection idea in this file has died on
+"no band is unprofitable" -- the confidence bands, the sixteen-feature
+model, the news programme. This one has a band that is, and it is already
+computed on every bar.
+
+It is currently used only to HALVE confidence. If divided signals genuinely
+lose, halving is too generous and refusing is the rule to test.
+
+**Both readings are screens and neither may be adopted on one.** They are
+overlays over persisted runs, scored decision-bar-to-close rather than over
+the engine's real holding period, on five days. The rule is that a finding
+is re-measured with the rule expressed as `ExecutionConfig` settings and
+applied by the engine before it ships, and three findings in one weekend were
+once measured one way and implemented the other.
+
+**Agreement is effectively binary**, which is worth knowing before anyone
+tunes it: 0.5 is arithmetically impossible with three voters, and 48 of 374
+observations sit at exactly 0.5 with one at 0.667. Two components vote,
+almost always -- because the third is the one that abstains.
+
+**The settings behind all of this are stale and the owner said so before the
+measurement did.** `component_weights` is `{crossover: 1.0, breakout: 1.0,
+momentum: 1.0}` -- never tuned. `breakout_window` is 55 hourly bars, about
+eight sessions. Both predate the intrabar look-ahead correction, and this
+file already lists the breakout lookback among the parameters "still fitted
+to the flawed engine".
+
 ### The macro gate, measured at last, 2026-09-12
 
 Asked to measure it and then decide. The answer is that **the gate as this
