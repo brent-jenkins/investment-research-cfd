@@ -914,6 +914,40 @@ is within 2x of the recorded 577 and drawdown within 2x of -13.1%, against
   2268% -- where this file records flattening as worth +55.4pp. That
   disagreement is the largest single piece of the residual.
 
+  **RETRACTED 2026-09-14. The flatten is worth 1.7pp and is not the
+  residual.** That comparison set the flatten against an arm differing in
+  more than the flatten. Run properly -- ONE membership mask, two arms
+  differing only in whether a position may live past the bell, same gate,
+  same costs, same names:
+
+      arm                 trips     CAGR    maxDD  med bars  max  8+ bars
+      flatten at bell     3,234   -53.8%   -94.4%       4      6      0%
+      carry overnight     2,607   -52.1%   -93.6%       5     34     16%
+
+  1.7pp, inside the 8pp floor, and drawdown identical rather than halved.
+
+  **And it takes two recorded findings with it.** Carry unlocks exactly the
+  cohort the flatten makes impossible -- 16% of trips at eight bars or more,
+  up to 34 -- and the book is no better for it. So "trips held 8+ bars earn
+  GBP528k... 20% of trips produce all the profit" does not survive here
+  either; that reading is from 2026-08-30, the flawed-engine era, and has
+  never been re-measured since the time stop's look-ahead was corrected.
+  Neither has "+55.4pp with drawdown roughly halved".
+
+  Both are screens on a harness that does not reproduce, so neither recorded
+  figure is REFUTED -- but neither can be quoted, and the flatten is no
+  longer a lead worth chasing.
+
+  **What survives as the lead is turnover, and it is large.** Both arms trade
+  far more than anything recorded: 3,234 and 2,607 round trips against the
+  577 recorded for gate 0.75 on 2026-09-04. Four to five times. At a measured
+  7.14bp that is most of the 0.2586 percentage points per trade separating
+  the reconstruction from the record -- and "the trade count is orders out"
+  is how the 2026-08-31 harness error was caught.
+
+  Also confirmed in passing, and it agrees with the corrected engine: the
+  time stop now closes **4.7%** of positions against the 88% it once did.
+
 **Eliminated by measurement rather than argument**, each with the reading
 that ruled it out: exposure (mean leverage 0.71 against the recorded 0.89),
 `spread_panel` and `entry_gate` being None (both resolve at run time), and
