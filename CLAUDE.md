@@ -492,6 +492,160 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE TURNOVER GAP WAS TWO DIFFERENT STRATEGIES, 2026-09-15
+
+Chased the residual the flatten measurement left behind -- the
+reconstruction trading four to five times the recorded 577 round trips.
+Most of it is a comparison error, the rest is still open, and on the way
+the engine turned out to be running a rule nobody described.
+
+**FIRST, THE TURNOVER IS NOT ANOMALOUS.** There is no churn to explain:
+
+    names held per bar        2.03      bars per session      7.0
+    mean hold                 5.0 bars  trips per session     2.81
+    2.03 * 7.0 / 5.0                                       -> 2.83 predicted
+
+The arithmetic closes to two decimal places. A book doing more trips is a
+book holding more names, and nothing else is happening.
+
+**SECOND, THE RECORDED 577 DESCRIBES A TEN-NAME BOOK.** Commit 56d0b13 is
+docs-only, so the sweep script is gone -- but the configuration at that
+commit is not. `universe.max_target` **did not exist** (added two hours
+later at b6696dd, as 25), so `resolve_target` fell through to the size
+curve, which peaked at 10 (82.3) with `size_preference = "largest"` and an
+8pp floor putting 12 (73.8) outside it. The reconstruction ran twenty-five.
+
+    arm                     trips   vs record   cost/gross     gross      cost
+    RECORDED 2026-09-04       577          --        37.2%       n/a       n/a
+    cap5/t25                2,604       4.51x       862.4%    12,247   105,621
+    cap5/t10                1,337       2.32x       320.6%    28,010    89,803
+    cap5/t8                 1,151       1.99x       219.4%    38,397    84,249
+    cap5/t10 PINNED         1,352       2.34x       332.0%    29,429    97,714
+
+Matching the universe halves both gaps. **It closes neither**, and 2.32x on
+the count with 8.6x on the cost share is what is left.
+
+**GROSS FALLS AS THE UNIVERSE WIDENS** -- 38,397 to 12,247 -- while cost
+rises only a quarter. So the cost share is driven by collapsing gross
+rather than by trading more, which is the opposite of what a turnover
+explanation predicts, and it reproduces from a new direction the
+2026-09-12 finding that the size curve's ordering reverses.
+
+**A PREDICTION WAS STATED AND FAILED.** The last structural difference
+between the two experiments was that a research run from the production
+config pins ONE list across the span while the harness re-selects weekly
+across forty distinct names. Predicted, before the run: pinning lands well
+under 1,337 trips and well under 320%. Measured: **1,352 and 332.0%** --
+fractionally *worse* on both. Re-selection is not the remaining cause, and
+recording the failed prediction is the point of having made it.
+
+The sizing sequence in the engine loop is byte-identical between 56d0b13
+and today, so what remains are the five engine commits that landed after
+the sweep, the lake having been re-ingested since, and whatever the lost
+script did. **The battery still does not reproduce and is still the top
+open item.**
+
+**CAGR IS UNREADABLE ON THESE ARMS.** Every one ends with equity at or
+below zero, so `arm_metrics` reports `nan` and only trips, gross and cost
+mean anything. That is itself a statement about the reconstruction.
+
+**AND THE ENGINE IS RUNNING A RULE NOBODY DESCRIBED: THE DECAYED TRIM
+COMPOUNDS.** Four lines of the loop, in this order:
+
+    resize       = needs_resize(units, target_units, threshold=3.0)
+    keep         = (new_held == held) & (new_held != 0) & ~resize
+    target_units = np.where(keep, units, target_units)      <- target := HELD
+    target_units = _trim_decayed(target_units, units, confidence, config)
+
+`rebalance_threshold` is 3.0, so a held position is almost never "drifted",
+so `keep` is True and the third line **replaces the freshly computed target
+with what is already held**. The trim then multiplies that by 0.5. Next bar
+the held figure is the trimmed one and it is halved again.
+
+The threshold cannot stop it and makes it worse: `needs_resize` measures
+drift relative to CURRENT units, so as a position shrinks its distance from
+full conviction grows, and once the ratio passes 3.0 the position is
+restored to full size and the decay restarts. Over 11,058 held-bar pairs:
+
+    shrank past half   29.2%   <- 0.375x, being conviction 0.75 x trim 0.5
+    halved              2.2%
+    roughly unchanged  25.8%
+    grew               34.3%   <- the restore
+
+    units at exit / at entry              median 0.1844
+    trips exiting under 10% of entry size          29.2%
+
+**The median trip exits holding 18% of the size it entered with.** The rule's
+own commit says the opposite in as many words: "Trimming to half leaves a
+position that continues to run."
+
+**Confirmed on the live persisted run**, not only in a research arm --
+three consecutive bars of one position, 0.75 conviction times 0.5 trim:
+
+    2026-08-07 14:00   6945.28   1.617x
+    2026-08-07 15:00   2604.48   0.375x
+    2026-08-07 16:00    976.68   0.375x
+    2026-08-07 17:00    366.25   0.375x
+
+**THE ACCOUNT DOES NOT DO THIS, AND THAT IS THE PART THAT MATTERS.**
+`bridge.plan_orders` scores the same step with the same `needs_resize` at
+the same threshold: 0.375x is a drift of 0.625 against 3.0, so the intent
+is `action="none", reason="inside the rebalance threshold"` and no order is
+placed. **The engine's book decays toward nothing while the account holds
+full size**, so the backtest models a fraction of the exposure the account
+carries. That is the direction that understates gross, and this file
+records the reconstruction generating gross worth 4.7% of average equity
+where the record generates 250%.
+
+It also explains a cost channel measured today and not previously priced:
+**resizes are 58% of the entire spread bill in every arm**, 1.4x what the
+round trips themselves cost, while drift rebalancing is switched off.
+
+**IT WAS LATENT UNTIL THE GATE MOVED.** The trim's threshold is
+`entry_confidence` by deliberate design -- "one owner, and raising the entry
+bar raises this with it". It was swept at 0.35, where a held position's
+confidence often recovers above the bar and the trim stops firing. At the
+0.75 shipped on 2026-09-04, against a median confidence of 0.34 among names
+with a direction, it essentially never recovers. **This is the third time
+the same mechanism has been found in eight days** -- the breakout gate's
+0.667 ceiling, the last look's unreachable pass mark, and now this. The
+gate moved and nothing re-checked what moved with it.
+
+**WHY FOUR PASSING TESTS MISSED IT.** `tests/test_entry_gate.py` covers this
+rule four ways and every one calls `_trim_decayed` ONCE with
+``target == units``. The function is correct in isolation; the defect is the
+order of the calls around it, and a test of the function can never reach it.
+A check on what went in, where the failure was in what came out.
+
+**NOTHING IS CHANGED.** Correcting the order moves every recorded figure in
+this file, including the sweep that chose `decayed_multiplier = 0.5` -- that
+table measured the compounding version, so it describes a rule nobody
+stated. `tests/test_the_decayed_trim_compounds.py` asserts the behaviour
+that runs today so it cannot change quietly in either direction, the way
+`entered_bars_ago` is reported and not enforced. Four mutations checked.
+
+**ONE MUTATION DID NOT MUTATE, AND IT IS THE SECOND TIME.** M1730 was meant
+to apply the trim to the fresh target instead of the held units. The first
+attempt INSERTED that call and left the original in place, so the original
+went on compounding and all five tests passed -- a surviving mutation
+reporting an inert test that is not inert. Moving the call rather than
+adding one fails three tests, and incidentally demonstrates the fix:
+under that order the position settles at half and stays there.
+
+**A FIGURE RECORDED YESTERDAY NEEDS ITS ARM NAMED.** This file says "the
+time stop now closes 4.7% of positions against the 88% it once did". That
+is true of the FLATTEN arm, where the bell closes everything before a
+0.29-day stop can fire. In the carry arm it closes **69.4%** of positions.
+The 4.7% describes what the account does, since the account flattens; as a
+statement about the corrected engine it is wrong.
+
+**Today's arms are a new series and must not be compared with the
+2026-09-12 table.** That entry records 1,171 trades for cap5/t25 carry and
+says it was run with `environment_in_confidence` True; the flag reads False
+in `config.toml` at every commit checked, including 56d0b13. The
+discrepancy is unexplained and both numbers stay where they are rather than
+one being quietly adopted.
+
 ### THE 0.75 GATE IS A BREAKOUT GATE, 2026-09-14
 
 Asked why the app opened two positions from a hundred tracked names. The
@@ -947,6 +1101,11 @@ is within 2x of the recorded 577 and drawdown within 2x of -13.1%, against
 
   Also confirmed in passing, and it agrees with the corrected engine: the
   time stop now closes **4.7%** of positions against the 88% it once did.
+
+  **QUALIFIED 2026-09-15: that is the FLATTEN arm only.** The bell closes
+  everything before a 0.29-day stop can fire, so 4.7% describes what the
+  account does rather than what the engine does. In the carry arm the time
+  stop closes **69.4%** of positions.
 
 **Eliminated by measurement rather than argument**, each with the reading
 that ruled it out: exposure (mean leverage 0.71 against the recorded 0.89),
