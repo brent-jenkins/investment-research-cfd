@@ -559,7 +559,7 @@ its config:
 The chown hands them to the owning user so the app's own retention removes
 them on its own schedule, rather than deleting data by hand.
 
-**What was changed in code, and NOT deployed.** `_prune_old_runs` now
+**What was changed in code.** `_prune_old_runs` now
 catches `OSError` per directory, carries on to the next, and returns the
 refusals with the error each raised; `run_pipeline` logs one warning naming
 them and finishes the run normally. A warning rather than a failure, because
@@ -581,6 +581,51 @@ reported a pass against the *old* code. A harness that restores the wrong
 baseline is the same error as a mutation that does not mutate, and it fails
 the same way: green for the wrong reason. It now restores from a pristine
 copy, and every mutation was re-run against it.
+
+**RETRACTED WITHIN THE HOUR: "NOT DEPLOYED" IS NOT A STATE THIS PROJECT
+CAN BE IN.** This entry said the fix was committed and not deployed, and the
+commit message for 586f2d4 ends with the words "Not deployed." Both are
+false. `deployment/webhook_listener.py` deploys on **every push to main** --
+`should_deploy` is "a push to main, and nothing else" -- and it had already
+deployed the fix **two seconds after the push**, before either sentence was
+written:
+
+    06:41:30  === deploy starting ===        (webhook, ~30s after the push)
+    06:41:32  Now at 586f2d4 (was b329d18)
+    06:45:04  === deploy starting ===        (the deliberate deploy)
+    06:45:06  Now at 586f2d4 (was 586f2d4)   <- already there
+
+The same is true of every commit this week. Checking the box immediately
+after a push and reading `8fb034a` proved nothing except that the webhook
+had not fired *yet*; it fired seconds later. So "committed, not deployed,
+your call" -- said repeatedly this week -- was never available, and saying
+it was the assistant describing a workflow the deployment does not have.
+
+**THERE IS NO SESSION GUARD, AND THE RULE HAS ALREADY BEEN BROKEN TWICE.**
+This file states "Do not deploy during a session" as a lesson that cost five
+dealing passes on 2026-09-10. Nothing enforces it. Read off the deploy log:
+
+    2026-09-14T19:25:00Z  a88497b   35 minutes before the close, market OPEN
+    2026-09-14T19:39:33Z  a88497b   21 minutes before the close, market OPEN
+
+Both were pushes of a docs-and-tests commit, so nothing behavioural shipped
+into a live session and no pass is known to have been lost -- the units are
+`Type=oneshot` now, so a restart no longer costs the nine minutes the
+2026-09-10 entry measured. That is luck rather than design: the same
+mechanism would ship an engine change mid-session just as readily.
+
+**The distinction worth keeping.** "Recorded rather than adopted" is still
+real and still safe -- `leverage_cap_selects`, `entry_recheck`,
+`max_opens_per_pass` and the decayed trim are all code that deploys and
+changes no behaviour, because they are defaults nothing wires in. What does
+not exist is **"changed but not deployed"**. A push is a deploy, and the
+only thing standing between a commit and a live trading host is whether the
+market happens to be open.
+
+Not fixed here. A guard belongs either in the listener (refuse while a
+market in the universe is open, and say so) or in `deploy.sh`, and choosing
+which -- and whether an urgent fix may override it -- is the owner's
+decision rather than a side effect of finding this.
 
 **The alarm clears by itself at market open** and was not silenced by hand.
 `last_success` is a true record of the last successful run; writing a
