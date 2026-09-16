@@ -166,25 +166,60 @@ def _account_output_root(repository: DataRepository, config: RunConfig) -> Path:
     ) / config.output_dir
 
 
-def _prune_old_runs(repository: DataRepository, config: RunConfig) -> None:
+def _prune_old_runs(
+    repository: DataRepository, config: RunConfig
+) -> list[tuple[Path, OSError]]:
     """Delete the oldest run directories beyond ``keep_runs``.
 
     Unattended runs accumulate. Without a cap, a VM fills its disk after a
     few months and the failure surfaces as something unrelated.
+
+    **Housekeeping never fails the run, and one bad directory never stops
+    the sweep.** Both halves were learned on 2026-09-15. Three run
+    directories had been written by root during an investigation four days
+    earlier; ``unlink`` on them raised ``PermissionError``, and because this
+    is called from inside ``run_pipeline``'s try block *after* the artefacts
+    are already on disk, the exception skipped ``_record_finish``. Every run
+    from 15:36 onward was recorded as FAILED while having done its whole job
+    -- 39 "RUN FAILED" mails in one afternoon and 120 monitoring alerts
+    after it, for a book that was never at risk and a decision that was
+    always fresh.
+
+    The second half matters as much: the old loop abandoned the entire
+    sweep at the first undeletable file, so retention stopped completely and
+    the disk went on growing. 143MB was reclaimed the moment it could run
+    again.
+
+    ``persist.retention.prune_runs`` -- the standalone ``prune-runs`` job --
+    already documents itself as "Never fails the caller". This is the same
+    responsibility implemented twice with different contracts, and the
+    weaker one ran on the critical path.
+
+    Returns the directories that could not be removed, with the error each
+    raised, so the caller can say so rather than infer silence.
     """
     if config.keep_runs is None:
-        return
+        return []
 
     root = _account_output_root(repository, config)
     if not root.is_dir():
-        return
+        return []
 
+    refused: list[tuple[Path, OSError]] = []
     directories = sorted((p for p in root.iterdir() if p.is_dir()), reverse=True)
     for stale in directories[config.keep_runs :]:
-        for item in sorted(stale.rglob("*"), reverse=True):
-            item.unlink() if item.is_file() else item.rmdir()
-        stale.rmdir()
+        try:
+            for item in sorted(stale.rglob("*"), reverse=True):
+                item.unlink() if item.is_file() else item.rmdir()
+            stale.rmdir()
+        except OSError as error:
+            # Carry on to the next directory: the point of the sweep is the
+            # disk, and one directory nobody can remove must not protect
+            # every other one from being cleaned up.
+            refused.append((stale, error))
+            continue
         logger.debug("Pruned old run directory %s", stale)
+    return refused
 
 
 def _persist(result, summary_fields: dict, directory: Path) -> dict[str, str]:
@@ -345,7 +380,22 @@ def run_pipeline(
                 )
             )
             summary = _with_paths(summary, paths)
-            _prune_old_runs(repository, settings)
+            refused = _prune_old_runs(repository, settings)
+            if refused:
+                # A warning rather than a failure: the artefacts above are
+                # written and the decision is fresh. What is wrong is the
+                # disk, and saying "the run failed" about it sends everyone
+                # to look at the wrong thing.
+                logger.warning(
+                    "Retention could not remove %d old run director%s (%s); "
+                    "first error: %s. The run itself is unaffected -- its "
+                    "artefacts are on disk -- but the disk will grow until "
+                    "this is cleared.",
+                    len(refused),
+                    "y" if len(refused) == 1 else "ies",
+                    ", ".join(path.name for path, _ in refused[:5]),
+                    refused[0][1],
+                )
 
         _record_finish(repository, summary, settings.account)
         _run_monitoring(repository, settings, summary)

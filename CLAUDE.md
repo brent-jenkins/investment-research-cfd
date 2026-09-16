@@ -492,6 +492,116 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### A TIDY-UP FAILED AND CALLED IT A FAILED RUN, 2026-09-15/16
+
+Reported as a flood of error mail. The run was fine, the account was never
+at risk, and the alarm was true about the thing it measured and false about
+everything a person would infer from it.
+
+**The sequence, from the journal, three milliseconds apart:**
+
+    19:53:36.028  Persisted 10 artefact(s) to .../runs/20260915T195329Z
+    19:53:36.031  Scheduled run 20260915T195329Z failed
+                  run_pipeline -> _prune_old_runs -> item.unlink()
+                  PermissionError: .../runs/20260911T200634Z/trades.parquet
+
+`_prune_old_runs` is called from inside `run_pipeline`'s try block **after**
+`_persist`. So the run did its whole job -- analysis, regimes, signals,
+execution, and the artefacts the dealer reads on disk -- and then the
+tidy-up raised, skipping `_record_finish`. `last_success` never advanced.
+
+    39   "RUN FAILED" mails on the afternoon of the 15th
+    120  monitoring alerts over the next 14 hours, one every 30 minutes
+    0    positions at risk
+    0    stale decisions -- every run persisted normally throughout
+
+`check_scheduler_health` then said "The last run started and never
+completed. Everything on the dashboard is from an earlier run." Both
+sentences were false, and it is the kind of false that sends somebody to
+look at the wrong thing during a session.
+
+**THE CAUSE WAS MINE, FROM FOUR DAYS EARLIER.** The 2026-09-11 leak hunt ran
+the pipeline three times in one process to measure retained memory. It was
+run as **root**, so it left 43 artefacts owned by root -- three run
+directories at 20:05:48, 20:06:11 and 20:06:34, plus four monitoring
+snapshots. They sat harmlessly until retention reached back far enough to
+delete them, which happened on the 15th.
+
+**Research on the box runs as the service user.** `sudo -u cfdinvest -E` was
+used for every measurement this week and was not used on 09-11. The cost was
+not the files; it was that they were a delayed-action fault in the one
+process that must not fail.
+
+**THE SECOND HALF IS WORSE AND WAS NEARLY MISSED.** The loop had no
+per-directory handling, so the first undeletable file abandoned the entire
+sweep. Retention did not partially work -- it stopped. **143MB was reclaimed
+the moment it could run again**, and `runs/` went 223MB to 86MB. A
+housekeeping job that silently stops is precisely the failure its own
+docstring warns about: "a VM fills its disk after a few months and the
+failure surfaces as something unrelated."
+
+**AND THE RIGHT CONTRACT ALREADY EXISTED, ONE MODULE OVER.**
+`persist.retention.prune_runs`, which the standalone `prune-runs` job calls,
+documents itself as **"Never fails the caller"** and returns its error in the
+result. So one responsibility is implemented twice with different contracts,
+and the weaker one sat on the critical path. That duplication is **recorded
+rather than resolved**: the two also disagree about policy -- `RunConfig.
+keep_runs` deletes, while `retention.DEFAULT_KEEP_FULL` slims and
+`DEFAULT_KEEP_RUNS` deletes -- so collapsing them changes what is kept, and
+that is a decision rather than a bug fix.
+
+**What was done on the box**, market shut, nothing touching the account or
+its config:
+
+    chown 43 root-owned artefacts back to cfdinvest   runs/ and monitoring/
+    cfdinvest-schedule prune-runs                     slimmed 6, freed 143MB
+
+The chown hands them to the owning user so the app's own retention removes
+them on its own schedule, rather than deleting data by hand.
+
+**What was changed in code, and NOT deployed.** `_prune_old_runs` now
+catches `OSError` per directory, carries on to the next, and returns the
+refusals with the error each raised; `run_pipeline` logs one warning naming
+them and finishes the run normally. A warning rather than a failure, because
+the artefacts are written and the decision is fresh -- what is wrong is the
+disk.
+
+`tests/test_housekeeping_cannot_fail_a_run.py`, five mutations checked:
+re-raising, `break` instead of `continue`, ignoring the keep window,
+swallowing the refusal silently, and the call site dropping the result.
+All five caught by the test each was aimed at. The undeletable file is
+monkeypatched rather than chmod'ed, so the test means the same thing on
+Windows, where a read-only bit does not reproduce a POSIX denial.
+
+**THE MUTATION HARNESS RESTORED THE WRONG BASELINE, AND IT IS THE THIRD
+TIME THIS CLASS HAS APPEARED IN A WEEK.** It restored with `git checkout --`
+against a fix that was not committed, so the first mutation silently
+reverted the fix and the next three reported "anchor not found" while one
+reported a pass against the *old* code. A harness that restores the wrong
+baseline is the same error as a mutation that does not mutate, and it fails
+the same way: green for the wrong reason. It now restores from a pristine
+copy, and every mutation was re-run against it.
+
+**The alarm clears by itself at market open** and was not silenced by hand.
+`last_success` is a true record of the last successful run; writing a
+success that did not happen to stop the mail would be falsifying the one
+store that says whether this machine is working. The first `run-intraday`
+after 13:30 UTC records success and the monitor goes quiet.
+
+**Checked and benign, because it looks alarming in the log.** The intent
+line reads "Engine intends 11 position(s) on **equity 7861497.74**" against
+an account balance of £4,747. That is the engine's own compounded research
+equity used only as a denominator -- `persist.intent` computes `share =
+units x price / (equity x exposure_per_unit_size)` and the dealing path
+applies the resulting SHARE to the broker's real balance. Not a fault.
+
+**What the account actually did on the 15th:** `opened 0, resized 0, closed
+0, refused 11, balance 4747.13` on every pass through the afternoon. All
+eleven intents were entered on an earlier bar and refused by the last look.
+That is the stale-intent loop this file already records as safe, noisy and
+unfixed -- unrelated to the mail, and still the largest open item in the
+dealing path.
+
 ### THE TURNOVER GAP WAS TWO DIFFERENT STRATEGIES, 2026-09-15
 
 Chased the residual the flatten measurement left behind -- the
