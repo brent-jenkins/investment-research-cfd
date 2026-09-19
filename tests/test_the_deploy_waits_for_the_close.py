@@ -60,6 +60,7 @@ Mutations checked:
   M1763 the override removed, so an urgent fix cannot go out
   M1764 a box behind origin/main reported as healthy
   M1765 unreadable revisions reported as current rather than unchecked
+  M1766 the guard silent when it PERMITS, so there is no evidence it ran
 
 And one gap the SUITE caught rather than a mutation: `deploy` was added to
 `monitoring.TYPES` without a matching entry in `aggregate.TYPE_LABELS`, so
@@ -155,6 +156,30 @@ def test_an_urgent_fix_can_still_go_out() -> None:
     )
     assert 'if [[ -z "${CFDINVEST_DEPLOY_INTO_OPEN_MARKET:-}" ]]' in source, (
         "the override is named but not consulted"
+    )
+
+
+def test_the_guard_leaves_a_trace_when_it_permits() -> None:
+    """M1766: silent on the way through.
+
+    The first deploy after this guard went in logged nothing about it --
+    the refusal path speaks and the permit path did not -- so there was no
+    evidence the guard had run at all. A gate that is silent when it
+    permits cannot be distinguished from one that has stopped running,
+    which is this project's oldest failure and the reason the completed-bar
+    trim shipped inert twice in one afternoon while every test passed.
+    """
+    source = DEPLOY.read_text(encoding="utf-8")
+
+    permits = [
+        line for line in source.splitlines()
+        if "Session guard" in line
+        and "closed" in line
+        and not line.lstrip().startswith("#")
+    ]
+    assert permits, (
+        "the guard says nothing when it lets a deploy through, so a guard "
+        "that stopped running would look exactly like one that ran"
     )
 
 

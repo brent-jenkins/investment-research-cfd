@@ -156,6 +156,13 @@ deploy_steps() {
       log "  which is the single reason the 2026-09-10 deploys were right."
       return 1
     fi
+    # Say so on the way THROUGH as well, not only on the way back. A guard
+    # that is silent when it permits cannot be told apart from a guard that
+    # has stopped running -- which is this project's oldest failure, "a gate
+    # reporting success while doing nothing", and the reason the completed-
+    # bar trim shipped inert twice in one afternoon. The first deploy after
+    # this guard went in left no trace that it had run at all.
+    log "Session guard: every market closed; deploying"
   else
     log "SESSION GUARD OVERRIDDEN -- deploying into a live market deliberately"
   fi
