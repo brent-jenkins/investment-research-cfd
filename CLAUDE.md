@@ -664,10 +664,55 @@ cross-check is exact and comes from two independent readings: 10 fresh-only
 plus 20 both is 30 refused instrument-days, and `refusal_summary`
 independently reports 19 blocked plus 11 opened-anyway, also 30.
 
-**The elevated refusal rate is therefore unexplained again**, and it is the
-real open item. 30 of 36 instrument-days refused, against 18.7% modelled,
-with `not re-checked` appearing zero times -- so the gate is forming
-opinions and refusing on them, and the cause is not the loop.
+**The refusal rate is therefore unexplained again**, and it is the real
+open item. 30 of 36 instrument-days refused, with `not re-checked`
+appearing zero times -- so the gate is forming opinions and refusing on
+them, and the cause is not the loop.
+
+**RETRACTED SAME DAY: "against 18.7% modelled" is a comparison this file
+forbids, and it was made four times before anyone checked.** The sentence
+above originally carried it. Fifteen hundred lines further down this file
+already rules on it: "the 2026-09-03 last-look figures -- 18.7% modelled,
+20.7% measured -- describe the 0.35-gate configuration on a check that has
+since been shown unable to reach 0.75. They must not be quoted against the
+current setup."
+
+So **52.8% has nothing established to be high against.** No modelled
+refusal rate exists for a 0.75 gate, and the measured one from the
+account's first week was taken on the 0.35 configuration, on a check later
+shown unable to reach 0.75 at all. Quoting them together compares two
+different systems, which is the error this file spends most of its length
+guarding against, committed here in the act of writing the guard.
+
+**AND A HIGH RATE IS WHAT THE 0.75 GATE PREDICTS**, from figures already
+recorded rather than from anything new. The 2026-09-14 entry measures the
+gate at roughly the **90th percentile** of the strength distribution, with
+a median confidence of 0.34 among names carrying a direction. Everything
+clearing 0.75 is therefore in the extreme tail and marginal by
+construction, and a marginal reading is one a small adverse move in the
+live quote knocks below the bar. A re-check against a bar in progress
+should refuse most of what a 90th-percentile gate admits. That is a
+mechanism, not a measurement, and it is the hypothesis to test rather than
+the answer.
+
+**ONE NUMBER WOULD SETTLE IT AND IT IS NOT KEPT.** `livecheck.holds`
+computes the live confidence, compares it against the bar, and returns
+`(False, "no longer clears the bar")` -- discarding the reading. So the
+record says THAT a name fell below the bar and never HOW FAR. The two
+outcomes look identical in the store and mean opposite things:
+
+    clustered just under 0.75    marginality, expected of this gate,
+                                 not a defect
+    collapsed to 0.3-0.5         the 2026-09-10 provisional-bar failure
+                                 returning, where every live reading came
+                                 in a third low and the gate had a pass
+                                 mark the check could not reach
+
+This is the same shape as `entered_bars_ago` before 2026-09-19: a number
+that reaches a decision and not the record, so the question can only be
+answered by re-running the check rather than by reading what happened.
+Recording the live reading on the refusal row is the cheap fix, and a week
+of sessions then answers it. Not built.
 
 **WHAT ENFORCEMENT WOULD BUY: NOTHING.** Refusing an open on a non-zero age
 is the obvious fix and was left unenforced pending this measurement. It
@@ -1717,7 +1762,14 @@ written down.**
     first week, 2026-09-03    6 blocked outright of 29 considered   20.7%
     seven days to 2026-09-12 16 blocked outright of 34 considered   47.1%
 
-Against 18.7% modelled. This file says a sustained rate far above 20.7% is
+Against 18.7% modelled -- **a comparison retracted on 2026-09-19, because
+both that figure and the 20.7% below were taken on the 0.35-gate
+configuration and this file elsewhere forbids quoting them against the
+current setup. No modelled refusal rate exists for a 0.75 gate, so neither
+47.1% nor the 52.8% measured a week later has anything established to be
+high against.** What follows was written believing otherwise.
+
+This file says a sustained rate far above 20.7% is
 the gate misfiring rather than protecting -- and the reasons say it is not:
 `no longer clears the bar` 28, `no longer a signal` 4, and **zero `not
 re-checked`**. A broken check fails closed and shows up as that third
