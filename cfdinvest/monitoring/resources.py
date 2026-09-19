@@ -101,3 +101,46 @@ def read_system_resources(path: Path | str | None = None) -> dict[str, Any]:
         if value is not None
     )
     return resources
+
+
+def read_deployed_revisions(repo: Path | str | None = None) -> dict[str, Any]:
+    """What the box is running against what origin/main holds, from disk.
+
+    LOCAL ONLY -- no fetch, no network. `deploy.sh` fetches before it decides
+    whether to deploy, so origin/main on disk is already as fresh as the last
+    deploy attempt. That is exactly what makes a refused deploy visible: the
+    fetch happened, the reset did not, and the two revisions differ.
+
+    A health check that reached the network to answer this would fail
+    whenever the network did and report the box as unknowable for a reason
+    that has nothing to do with the box.
+
+    Returns empty when the directory is not a checkout, which the check
+    reports as unchecked rather than as current.
+    """
+    import subprocess
+
+    root = Path(repo or "/opt/cfdinvest")
+    if not (root / ".git").exists():
+        return {}
+
+    def git(*args: str) -> str | None:
+        try:
+            done = subprocess.run(
+                ["git", "-C", str(root), *args],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception:  # noqa: BLE001 - a missing git is not an outage
+            return None
+        return done.stdout.strip() if done.returncode == 0 else None
+
+    head = git("rev-parse", "HEAD")
+    origin = git("rev-parse", "origin/main")
+    if not head or not origin:
+        return {}
+
+    behind = None
+    counted = git("rev-list", "--count", f"{head}..{origin}")
+    if counted and counted.isdigit():
+        behind = int(counted)
+    return {"head": head, "origin": origin, "behind": behind}

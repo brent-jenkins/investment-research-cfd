@@ -29,7 +29,10 @@ import pandas as pd
 from cfdinvest.monitoring import core
 from cfdinvest.monitoring.aggregate import MonitoringSnapshot, summarise_monitoring_state
 from cfdinvest.monitoring.core import MonitoringIssue, MonitoringThresholds
-from cfdinvest.monitoring.resources import read_system_resources
+from cfdinvest.monitoring.resources import (
+    read_deployed_revisions,
+    read_system_resources,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +193,9 @@ def collect_issues(
         state, limits, now=moment))
     issues += _guarded("disk", "disk space", lambda: core.check_disk_space(
         machine, limits, now=moment))
+    issues += _guarded("deploy", "deployed revision",
+                       lambda: core.check_deploy_is_current(
+                           read_deployed_revisions(), now=moment))
     issues += _guarded("run", "run failure", lambda: core.check_run_failures(
         run_metadata, now=moment))
     issues += _guarded("pipeline", "missing artefact", lambda: core.check_missing_frames(

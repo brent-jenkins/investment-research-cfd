@@ -83,6 +83,7 @@ __all__ = [
     "check_live_quote_freshness",
     "check_scheduler_health",
     "check_disk_space",
+    "check_deploy_is_current",
     "check_run_failures",
     "check_missing_frames",
     "check_confirmation_mismatches",
@@ -97,6 +98,11 @@ __all__ = [
 TYPES: tuple[str, ...] = (
     "livequotes",
     "lake", "scheduler", "disk", "run", "confirm", "email", "pipeline", "system",
+    # Whether the machine is running what the repository says. Added with the
+    # deploy session guard on 2026-09-19: that guard defers a deploy while a
+    # market is open, and a deferred deploy nobody can see is a box quietly
+    # running last week's code.
+    "deploy",
     "credentials",
     # The daemon being ALIVE and the account being LOOKED AT are different
     # facts, and until 2026-09-09 only the first was checked. A cgroup
@@ -748,6 +754,70 @@ def check_scheduler_health(
 # --------------------------------------------------------------------------- #
 # Disk
 # --------------------------------------------------------------------------- #
+def check_deploy_is_current(
+    revisions: Mapping[str, Any] | None,
+    thresholds: MonitoringThresholds | None = None,
+    *,
+    now: pd.Timestamp | None = None,
+) -> list[MonitoringIssue]:
+    """Is the box running what the repository says it should?
+
+    ``revisions`` is ``{"head", "origin", "behind"}`` -- the deployed
+    revision, what origin/main holds on disk, and how many commits separate
+    them. Taking the numbers rather than shelling out to git keeps this pure
+    and lets a test describe a stale box without having one.
+
+    **This exists because of the guard that needs it.** The session guard in
+    `deploy.sh` refuses to deploy while a market is open, and refuses AFTER
+    fetching -- so a refused deploy leaves origin/main ahead of HEAD. Without
+    something reading that, the guard would trade a deploy landing mid-session
+    for a box silently running last week's code, which is the worse failure
+    and the exact shape of the 2026-09-12 MemoryHigh finding: "the repository,
+    the tests and the deploy all described one configuration and the machine
+    ran another."
+
+    It is a WARNING rather than critical. Being a commit behind is normal for
+    the minutes between a push and the deploy, and on a weekday afternoon it
+    is the guard working as designed. What it must never be is invisible.
+
+    Absence is reported as unchecked rather than as current: a box whose
+    revisions cannot be read is not thereby up to date.
+    """
+    moment = _now(now)
+
+    if not revisions:
+        return [_unreadable("deploy", "Deployed revision", "no reading")]
+
+    head = str(revisions.get("head") or "")
+    origin = str(revisions.get("origin") or "")
+    if not head or not origin:
+        return [_unreadable("deploy", "Deployed revision", "revision unreadable")]
+
+    if head == origin:
+        return []
+
+    behind = revisions.get("behind")
+    count = f"{int(behind)} commit(s)" if _finite(behind) else "an unknown number"
+    return [
+        MonitoringIssue(
+            type="deploy",
+            severity="warning",
+            message=(
+                f"The box is {count} behind the repository "
+                f"(running {head[:7]}, origin/main is {origin[:7]})."
+            ),
+            timestamp=moment,
+            details={"head": head, "origin": origin, "behind": behind},
+            remedy=(
+                "Expected for the minutes after a push, and expected all "
+                "session if the deploy guard refused. Run "
+                "deployment/deploy.sh after the close, or override the guard "
+                "if what is running is placing wrong trades."
+            ),
+        )
+    ]
+
+
 def check_disk_space(
     usage: Mapping[str, Any] | None,
     thresholds: MonitoringThresholds | None = None,

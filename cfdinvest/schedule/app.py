@@ -285,6 +285,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("send-test-email", help="prove the mail path works")
     commands.add_parser("market-status", help="show session state for the universe")
+    commands.add_parser(
+        "market-open",
+        help="exit 0 if any market is open, 1 if all closed, 3 if unknown",
+        description=(
+            "For scripts. The exit code is the answer: 0 open, 1 closed, "
+            "3 could not tell. A caller that treats 3 as closed has disabled "
+            "whatever it was guarding."
+        ),
+    )
 
     crontab = commands.add_parser("crontab", help="print crontab lines for the universe")
     # dest is explicit: the subparsers already use dest="command", and a
@@ -3319,6 +3328,49 @@ def _command_send_test_email(args, smtp, transport) -> int:
     return EXIT_OK if sent else EXIT_FAILED
 
 
+#: `market-open` answers in its EXIT CODE, for a shell guard to branch on.
+#: Three states rather than two, because "I could not tell" must not be
+#: spendable as "closed": a deploy guard that disables itself when the
+#: calendar cannot be read is the inert-gate failure this project has
+#: shipped twice, and `plan_orders` already refuses rather than assuming
+#: when a field it needs is missing.
+MARKET_OPEN, MARKET_CLOSED, MARKET_UNKNOWN = 0, 1, 3
+
+
+def _command_market_open(args, app_config) -> int:
+    """Is any market in the traded universe open? Answered as an exit code.
+
+    Reads `scheduler.any_open`, which is the single owner of the question --
+    the dealing pass asks it in exactly these words before every pass. This
+    adds a caller, not a second opinion.
+
+    Prints one line for a person and returns one of three codes for a
+    script. Pure apart from resolving the universe; runs no pipeline, moves
+    no position and touches no broker.
+    """
+    import pandas as pd
+
+    universe = _traded(app_config, getattr(args, "account", None)) or []
+    if not universe:
+        print("No traded universe; cannot tell whether a market is open.",
+              file=sys.stderr)
+        return MARKET_UNKNOWN
+
+    try:
+        now = pd.Timestamp.now(tz="UTC")
+        names = sorted(scheduler_module.open_assets(universe, now))
+    except Exception as error:  # noqa: BLE001 - unknown is not closed
+        print(f"Could not read the session calendar: {error}", file=sys.stderr)
+        return MARKET_UNKNOWN
+
+    if names:
+        print(f"OPEN: {len(names)} of {len(universe)} -- {', '.join(names[:8])}"
+              + (" ..." if len(names) > 8 else ""))
+        return MARKET_OPEN
+    print(f"CLOSED: none of {len(universe)} instruments is trading")
+    return MARKET_CLOSED
+
+
 def _command_market_status(args, app_config) -> int:
     """Print the session state of every instrument in the universe."""
     universe = _universe(args) or _traded(app_config, getattr(args, "account", None))
@@ -3475,6 +3527,8 @@ def main(argv: list[str] | None = None) -> int:
             return _command_send_test_email(args, smtp, transport)
         if args.command == "market-status":
             return _command_market_status(args, app_config)
+        if args.command == "market-open":
+            return _command_market_open(args, app_config)
         if args.command == "crontab":
             return _command_crontab(args, app_config)
         if args.command == "advisor-alert":

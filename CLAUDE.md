@@ -492,6 +492,76 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE DEPLOY WAITS FOR THE CLOSE, 2026-09-19
+
+Built on the owner's instruction, after the 2026-09-16 finding that a push
+to main deploys within seconds and nothing enforced "do not deploy during a
+session" -- a rule this file has carried since 2026-09-10, when nine deploys
+cost roughly four dealing passes, and which had already been broken twice on
+2026-09-14 at 19:25:00Z and 19:39:33Z, thirty-five and twenty-one minutes
+before the close.
+
+**Three parts, and the third is what makes it safe rather than worse.**
+
+    the question   `cfdinvest-schedule market-open` answers in its EXIT
+                   CODE: 0 open, 1 closed, 3 could not tell. It calls
+                   `scheduler.open_assets`, which the dealing pass already
+                   asks before every pass -- a caller, not a second opinion.
+
+    the guard      `deploy.sh` proceeds only on exactly 1. Open refuses, no
+                   universe refuses, an unreadable calendar refuses.
+
+    the visibility `check_deploy_is_current` reports the box as behind the
+                   repository, so a deferred deploy is not a silent one.
+
+**UNKNOWN IS NOT CLOSED.** A guard that waves the deploy through when it
+cannot read the calendar is the inert gate this file records twice in one
+day -- first so strict nothing could pass, then so inert everything did --
+and it is the same shape as the margin guard that "disables itself when a
+field is missing reads as protection while providing none".
+
+**THE PLACEMENT IS LOAD-BEARING AND IS THE WHOLE ARGUMENT.** The guard sits
+AFTER the fetch and BEFORE the reset. A guard alone would trade "a deploy
+landed mid-session" for "the box quietly runs last week's code", and the
+second is worse -- it is the 2026-09-12 MemoryHigh finding word for word:
+"the repository, the tests and the deploy all described one configuration
+and the machine ran another." Refusing after the fetch moves origin/main on
+disk while HEAD stays put, so the divergence is real, local and visible;
+refusing before it would leave the two identical and the deferral silent.
+
+That is also why `read_deployed_revisions` does NOT fetch. The deploy has
+already fetched by the time a refusal happens, so the comparison is
+answerable from disk -- and a health check that reached the network would
+report the box unknowable whenever the network was, for a reason that has
+nothing to do with the box.
+
+**The override is deliberate and differently worded**, the way live dealing
+needs a second variable: `CFDINVEST_DEPLOY_INTO_OPEN_MARKET=1`. The rule has
+always carried its exception -- the 2026-09-10 deploys were recorded as
+correct precisely because what was running was placing wrong trades -- and a
+guard with no way past it would have blocked the one deploy that mattered.
+The refusal prints the override, the revision the box is staying on, and
+that monitoring will report it until a deploy succeeds.
+
+`check_deploy_is_current` is a WARNING rather than critical. Being a commit
+behind is normal for the minutes between a push and the deploy, and all
+session if the guard refused. What it must never be is invisible.
+
+**A MUTATION SURVIVED, AND THE TEST WAS WRONG RATHER THAN THE MUTATION.**
+M1762 removed the guard's invocation, replacing it with `true # market-open`
+-- and the test passed, because it asserted `"market-open" in source` and
+the substring was still there, in a comment. That is the
+`entered_bars_ago` / `entered_bars_ago_renamed` trap again, and the
+unit-file assertion that once passed against a commented-out line. It is the
+third appearance of the same shape and it was found by the mutation rather
+than by reading. The check now requires an uncommented line that invokes the
+command. Six mutations, all caught after the fix.
+
+**What this does not do.** It does not stop the webhook firing, and does not
+try to: the listener writes a request, the deploy decides. One choke point
+is better than two places that could disagree about what a session is, and
+`deploy.sh` is the one every path goes through -- webhook or hand.
+
 ### THE STALE-INTENT LOOP IS REAL, LARGE, AND COSTS NOTHING, 2026-09-19
 
 Asked to look at it as the last open item. Measured at last, using the
@@ -777,10 +847,11 @@ not exist is **"changed but not deployed"**. A push is a deploy, and the
 only thing standing between a commit and a live trading host is whether the
 market happens to be open.
 
-Not fixed here. A guard belongs either in the listener (refuse while a
-market in the universe is open, and say so) or in `deploy.sh`, and choosing
-which -- and whether an urgent fix may override it -- is the owner's
-decision rather than a side effect of finding this.
+**BUILT 2026-09-19** on the owner's instruction: the guard is in
+`deploy.sh`, between the fetch and the reset, refusing unless a market is
+positively closed, with a differently-worded override and a monitoring
+check that reports the box as behind the repository until a deploy
+succeeds. See the 2026-09-19 entry.
 
 **The alarm clears by itself at market open** and was not silenced by hand.
 `last_success` is a true record of the last successful run; writing a

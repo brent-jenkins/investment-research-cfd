@@ -43,6 +43,11 @@ TYPE_LABELS: dict[str, str] = {
     "pipeline": "Pipeline output",
     "system": "The machine",
     "credentials": "Broker credentials",
+    # Whether the machine runs what the repository says. Added with the
+    # deploy session guard: that guard defers a deploy while a market is
+    # open, and the deferral has to be legible to a person rather than
+    # leaving the box quietly behind.
+    "deploy": "Deployed revision",
     # Not "is the daemon running" -- "is the account being looked at". The
     # two came apart on 2026-09-09 for 45 minutes of an open session while
     # every other label here reported fine.

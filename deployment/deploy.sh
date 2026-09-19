@@ -118,6 +118,48 @@ deploy_steps() {
   # afterwards, not because anything said so.
   before="${CFDINVEST_DEPLOY_BEFORE:-$(git rev-parse HEAD 2>/dev/null || echo none)}"
   git fetch --quiet origin main || { fail "git fetch"; return 1; }
+
+  # THE SESSION GUARD, and it sits HERE deliberately: after the fetch and
+  # before the reset.
+  #
+  # "Do not deploy during a session" has been this project's rule since
+  # 2026-09-10, when nine deploys cost roughly four dealing passes. Nothing
+  # enforced it, and on 2026-09-14 two deploys landed at 19:25 and 19:39 UTC
+  # -- thirty-five and twenty-one minutes before the close, market open --
+  # because a push to main deploys within seconds and nobody chose that.
+  #
+  # Refusing AFTER the fetch is what makes the refusal visible. origin/main
+  # is updated on disk and HEAD is not, so the box is measurably behind the
+  # repository and `check_deploy_is_current` says so on the next monitoring
+  # pass. Refusing before the fetch would leave the two identical and the
+  # deferred deploy would be silent -- which is the failure this guard would
+  # otherwise introduce, and a worse one than the deploy it prevents.
+  #
+  # UNKNOWN IS NOT CLOSED. `market-open` exits 1 only when it has positively
+  # established that every market is shut; anything else -- open, no
+  # universe, an unreadable calendar -- refuses. A guard that waves the
+  # deploy through when it cannot tell is the inert gate this file's own
+  # history is full of.
+  if [[ -z "${CFDINVEST_DEPLOY_INTO_OPEN_MARKET:-}" ]]; then
+    local session=0
+    sudo -u cfdinvest "${VENV}/bin/cfdinvest-schedule" market-open >/dev/null 2>&1       || session=$?
+    if [[ "${session}" -ne 1 ]]; then
+      local why="a market in the universe is open"
+      [[ "${session}" -eq 3 ]] && why="the session calendar could not be read"
+      fail "refusing to deploy: ${why}"
+      log "  The repository is at $(git rev-parse --short origin/main) and this"
+      log "  box stays at $(git rev-parse --short HEAD). Nothing was changed."
+      log "  Monitoring reports the box as behind until a deploy succeeds."
+      log "  It will go out on the next deploy after the close, or now with:"
+      log "    CFDINVEST_DEPLOY_INTO_OPEN_MARKET=1 bash deployment/deploy.sh"
+      log "  Override only for something actively placing wrong trades --"
+      log "  which is the single reason the 2026-09-10 deploys were right."
+      return 1
+    fi
+  else
+    log "SESSION GUARD OVERRIDDEN -- deploying into a live market deliberately"
+  fi
+
   git reset --hard --quiet origin/main || { fail "git reset"; return 1; }
   local after
   after="$(git rev-parse HEAD)"
