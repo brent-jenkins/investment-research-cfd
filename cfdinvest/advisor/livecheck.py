@@ -449,21 +449,48 @@ def reevaluate(
         return {}
 
 
+def _reading(reading) -> float | None:
+    """The live confidence, or None when there is not one to report."""
+    try:
+        return float(reading.get("confidence"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def holds(
     checked: Mapping[str, Mapping[str, Any]],
     ticker: str,
     direction: str,
     threshold: float,
-) -> tuple[bool, str]:
-    """Does the recorded decision still stand? Returns ``(ok, why_not)``.
+) -> tuple[bool, str, float | None]:
+    """Does the recorded decision still stand?
+
+    Returns ``(ok, why_not, live_confidence)``.
 
     An instrument absent from ``checked`` is **not** approved. "The check did
     not run" and "the check passed" are different statements, and only one of
     them is a reason to put money on.
+
+    **The reading comes back with the verdict**, added 2026-09-19. This
+    returned only the verdict, so the record said THAT a name had fallen
+    below the bar and never HOW FAR -- and those two outcomes mean opposite
+    things. Clustered just under the bar is marginality, which is what a
+    gate sitting at the 90th percentile of the strength distribution should
+    produce. Collapsed to a third of the engine's reading is the 2026-09-10
+    provisional-bar failure returning, where no name in the book could reach
+    0.75 and the highest live reading was 0.656.
+
+    A number that reaches a decision and not the record can only be
+    recovered by re-running the check, which is the same gap
+    `entered_bars_ago` had until the same day.
+
+    ``None`` when there is no reading to report -- absent, unparseable, or
+    refused before confidence was consulted -- never 0.0, because zero is a
+    confident statement that the signal died.
     """
     reading = (checked or {}).get(ticker)
     if not reading:
-        return False, "not re-checked"
+        return False, "not re-checked", None
 
     now_direction = str(reading.get("direction") or "").lower()
     wanted = str(direction).lower()
@@ -476,12 +503,12 @@ def holds(
         # cannot tell them apart cannot say whether the gate is catching
         # reversals or just declining marginal signals.
         if now_direction in ("", "flat"):
-            return False, "no longer a signal"
-        return False, "direction reversed since the signal"
+            return False, "no longer a signal", _reading(reading)
+        return False, "direction reversed since the signal", _reading(reading)
     try:
         now = float(reading.get("confidence"))
     except (TypeError, ValueError):
-        return False, "not re-checked"
+        return False, "not re-checked", None
     if now < float(threshold):
-        return False, "no longer clears the bar"
-    return True, ""
+        return False, "no longer clears the bar", now
+    return True, "", now

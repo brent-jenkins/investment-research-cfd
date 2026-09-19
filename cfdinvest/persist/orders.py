@@ -85,6 +85,9 @@ def record_plan(report, config=None, account: str | None = None, *, now=None) ->
             "notional": intent.notional,
             "reason": intent.reason,
             "entered_bars_ago": getattr(intent, "entered_bars_ago", None),
+            "engine_confidence": getattr(intent, "engine_confidence", None),
+            "live_confidence": getattr(intent, "live_confidence", None),
+            "confidence_bar": getattr(intent, "confidence_bar", None),
             "halted": bool(getattr(report, "halted", False)),
             "halt_reason": getattr(report, "halt_reason", ""),
             "balance": getattr(report, "balance", None),
@@ -637,6 +640,20 @@ def refusal_summary(
         "fresh_events": 0,
         "chase_events": 0,
         "age_unknown_events": 0,
+        #: How far below its own bar a refused reading fell, over the
+        #: refusals that recorded one. The single number that says whether
+        #: a high refusal rate is this gate working or a broken check:
+        #: clustered just under the bar is marginality, which is what a
+        #: gate at the 90th percentile of the strength distribution should
+        #: produce, while a collapse to a third of the engine's reading is
+        #: the 2026-09-10 provisional-bar failure returning.
+        #:
+        #: Measured against the bar RECORDED ON THE ROW, never against
+        #: today's configuration. The gate moved from 0.35 to 0.75 on
+        #: 2026-09-04 and every refusal figure predating it had to be
+        #: retracted for being read against the wrong one.
+        "shortfall_median": None,
+        "shortfall_sample": 0,
         "recent": [],
     }
     if not rows:
@@ -656,6 +673,7 @@ def refusal_summary(
 
     opened: set[tuple[str, str]] = set()
     refused: dict[tuple[str, str], set[str]] = {}
+    shortfalls: list[float] = []
     for row in rows:
         if str(row.get("kind") or "") != "plan":
             continue
@@ -684,6 +702,13 @@ def refusal_summary(
                 else:
                     summary["fresh_events"] += 1
 
+                live, bar = row.get("live_confidence"), row.get("confidence_bar")
+                if live is not None and bar is not None:
+                    try:
+                        shortfalls.append(float(bar) - float(live))
+                    except (TypeError, ValueError):
+                        pass
+
     blocked = set(refused) - opened
     summary["considered"] = len(set(opened) | set(refused))
     summary["blocked"] = len(blocked)
@@ -693,6 +718,14 @@ def refusal_summary(
         for why in reasons:
             counts[why] = counts.get(why, 0) + 1
     summary["reasons"] = dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+    if shortfalls:
+        ordered = sorted(shortfalls)
+        middle = len(ordered) // 2
+        summary["shortfall_median"] = (
+            ordered[middle] if len(ordered) % 2
+            else (ordered[middle - 1] + ordered[middle]) / 2.0
+        )
+        summary["shortfall_sample"] = len(ordered)
     summary["recent"] = sorted(
         (
             {

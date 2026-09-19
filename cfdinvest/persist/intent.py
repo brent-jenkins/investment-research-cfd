@@ -167,14 +167,19 @@ def intended_positions(
             # Carried so the stale-intent loop can be counted rather than
             # inferred: when the account never gets a position the engine
             # entered, the engine goes on intending it and every later pass
-            # attempts an open the last look correctly refuses. That is safe
-            # and noisy, and it is why the refusal rate reads 47.1% against
-            # 20.7% measured in the account's first week.
+            # attempts an open the last look correctly refuses.
             #
-            # Reported, NOT enforced. Refusing to open on a non-zero age
-            # would suppress entries in a book where 20% of trips produce
-            # all the profit, and no measurement yet says which refusals are
-            # the loop. The number has to exist before that can be settled.
+            # MEASURED 2026-09-19, and both claims this comment used to make
+            # were wrong. The loop is 70.5% of refusal EVENTS and 0% of
+            # refused INSTRUMENT-DAYS -- every chase echoes a fresh refusal
+            # earlier the same day -- so it does NOT explain the refusal
+            # rate, and "47.1% against 20.7%" was itself a comparison
+            # against a figure taken at the old 0.35 gate, retracted the
+            # same day.
+            #
+            # Reported, NOT enforced, and now for a measured reason rather
+            # than a cautious one: enforcement would remove 557 repeated
+            # refusals and zero trades.
             "entered_bars_ago": ages.get(name),
         })
     logger.info(

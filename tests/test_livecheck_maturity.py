@@ -112,7 +112,10 @@ def test_a_declined_instrument_is_refused_by_holds():
     reading into "not re-checked", which the bridge records by name -- so a
     trade blocked this way is visible rather than silent.
     """
-    ok, why = holds({}, "TGT", "short", 0.75)
+    # Three values since 2026-09-19: the reading comes back with the
+    # verdict so a refusal can record how far below the bar it fell.
+    ok, why, live = holds({}, "TGT", "short", 0.75)
+    assert live is None, "an absent reading must not be reported as a number"
 
     assert ok is False
     assert why == "not re-checked"

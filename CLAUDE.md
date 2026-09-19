@@ -711,8 +711,48 @@ outcomes look identical in the store and mean opposite things:
 This is the same shape as `entered_bars_ago` before 2026-09-19: a number
 that reaches a decision and not the record, so the question can only be
 answered by re-running the check rather than by reading what happened.
-Recording the live reading on the refusal row is the cheap fix, and a week
-of sessions then answers it. Not built.
+
+**BUILT the same day.** `livecheck.holds` now returns
+``(ok, why_not, live_confidence)``, and a refusal row carries three numbers
+rather than none:
+
+    engine_confidence   what the engine decided on
+    live_confidence     what the re-check actually read
+    confidence_bar      THE GATE IN FORCE AT THAT MOMENT
+
+**The bar is on the row because of this very retraction.** A reading
+without its threshold cannot be read later, which is exactly how 18.7% and
+20.7% came to be quoted against a 0.75 gate they predate. A row carrying
+its own bar cannot be misread that way whatever the gate does next, and
+`refusal_summary` computes `shortfall_median` against each row's own bar
+rather than against today's configuration -- so a future gate change
+cannot silently corrupt every earlier refusal.
+
+``None`` is never ``0.0``. Zero is a confident statement that the signal
+died, and the summary would fold it in as a full-bar collapse --
+manufacturing the failure the field exists to detect.
+
+Five mutations checked. **M1771 survived first time**: every test built an
+`Intent` directly, so the bridge's wiring was never exercised and a field
+that is always ``None`` is the same as no field. It is now tested through
+the real `plan_orders`, which is stronger than the source assertion that
+would otherwise have been reached for -- source checks failed twice on
+2026-09-19 alone, M1762 passing against a call replaced by
+``true # market-open``.
+
+Changing `holds` broke two existing tests that unpacked two values. They
+are adapted rather than weakened, and one now asserts the new property that
+an absent reading reports ``None``.
+
+**What it will say, and the reading is pre-registered here so it cannot be
+chosen after the fact.** Shortfall clustered just under the bar is
+marginality -- what a gate at the 90th percentile of the strength
+distribution should produce, and not a defect. A large shortfall, with live
+readings collapsing toward a third of the engine's, is the 2026-09-10
+provisional-bar failure returning. A week of sessions separates them.
+Nothing is concluded before that, and the gate is not touched meanwhile:
+0.75 sits on diluted strength and this file records that the gate and the
+dilution must not be changed apart.
 
 **WHAT ENFORCEMENT WOULD BUY: NOTHING.** Refusing an open on a non-zero age
 is the obvious fix and was left unenforced pending this measurement. It

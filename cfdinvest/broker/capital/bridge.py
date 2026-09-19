@@ -100,6 +100,15 @@ class Intent:
     #: here makes that reproducible from the order store, which is what the
     #: store is for.
     entered_bars_ago: int | None = None
+    #: What the last look judged, and the bar it judged against. All three
+    #: together, because a reading without its threshold cannot be read
+    #: later: the gate moved from 0.35 to 0.75 on 2026-09-04 and every
+    #: refusal figure taken before it had to be retracted on 2026-09-19 for
+    #: being quoted against the wrong one. A row that carries its own bar
+    #: cannot be misread that way.
+    engine_confidence: float | None = None
+    live_confidence: float | None = None
+    confidence_bar: float | None = None
 
     @property
     def acts(self) -> bool:
@@ -314,12 +323,20 @@ def plan_orders(
             # as a new decision.
             age = None
 
-        def refuse(why: str) -> Intent:
+        try:
+            engine_confidence = float(row.get("confidence"))
+        except (TypeError, ValueError):
+            engine_confidence = None
+
+        def refuse(why: str, live: float | None = None) -> Intent:
             return Intent(
                 ticker=ticker, epic=epic, direction=direction,
                 held_units=held_units, target_units=held_units,
                 action="refused", reason=why, price=price,
                 entered_bars_ago=age,
+                engine_confidence=engine_confidence,
+                live_confidence=live,
+                confidence_bar=float(entry_confidence),
             )
 
         if market is None or price is None or price <= 0:
@@ -443,9 +460,11 @@ def plan_orders(
                         "signal is not an approved one"
                     ))
                     continue
-                still, why = holds(rechecked, ticker, direction, entry_confidence)
+                still, why, live = holds(
+                    rechecked, ticker, direction, entry_confidence
+                )
                 if not still:
-                    intents.append(refuse(why))
+                    intents.append(refuse(why, live))
                     continue
 
             # The margin this open would commit, against what is left.

@@ -588,9 +588,9 @@ def test_a_faded_signal_and_a_reversed_one_are_told_apart():
     faded = {"AAPL": {"direction": "flat", "confidence": 0.0}}
     reversed_ = {"AAPL": {"direction": "short", "confidence": 0.9}}
 
-    ok, why_faded = holds(faded, "AAPL", "long", 0.35)
+    ok, why_faded, _ = holds(faded, "AAPL", "long", 0.35)
     assert ok is False
-    ok, why_reversed = holds(reversed_, "AAPL", "long", 0.35)
+    ok, why_reversed, _ = holds(reversed_, "AAPL", "long", 0.35)
     assert ok is False
 
     assert why_faded != why_reversed, "a fade and a reversal read the same"
