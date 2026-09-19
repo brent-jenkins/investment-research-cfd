@@ -24,6 +24,19 @@ shipping inert twice.
 
 The fix carries the starting revision across the re-exec in the environment.
 
+**RETRACTED 2026-09-19: the re-exec it carries across DIES.** `exec` is
+given the pulled script as a program, and `deployment/deploy.sh` is mode
+100644 -- at this commit and every other -- so it exits 126, "found but not
+executable". The carrying is implemented correctly and never runs. psutil
+was installed that day by the FOLLOWING deploy, not by this fix.
+
+The checks below are why it was believed: they assert the script's TEXT --
+that the variable is exported and that it is read back -- which is a check
+on what went in where the failure was in what came out. "Tested two ways,
+because neither alone is enough for a shell script" was still one way
+short, because neither way executed the re-exec. `test_the_reexec_actually_
+executes` is the third way, and the box was what found it.
+
 Tested two ways, because neither alone is enough for a shell script:
 
   THE DECISION, exercised with real `git` in a temporary repository -- does
@@ -37,6 +50,8 @@ Mutations checked:
   M1720 the successor re-reading `before` instead of inheriting it
   M1721 the re-exec not exporting the starting revision
   M1722 the reinstall test comparing something other than the two revisions
+  M1723 the re-exec invoking the file as a program again, which exits 126
+        because the file is mode 644 -- see test_the_reexec_actually_executes
 """
 from __future__ import annotations
 
@@ -137,6 +152,39 @@ def test_the_script_carries_the_revision_across_the_reexec() -> None:
     assert 'git diff --quiet "${before}" "${after}" -- pyproject.toml' in source, (
         "the reinstall test no longer compares the two revisions, so what it "
         "answers is anyone's guess"
+    )
+
+
+def test_the_reexec_actually_executes() -> None:
+    """The re-exec ran the file directly, and the file is not executable.
+
+    Found on 2026-09-19 by reading the box, not the suite.
+    `cfdinvest-deploy.service` died with **status=126** -- "found but not
+    executable" -- on two consecutive deploys, both of which had pulled and
+    reset and then stopped before restarting anything or running the
+    verification block.
+
+    `deployment/deploy.sh` is mode **100644** in git and has been at every
+    commit checked, including 8efc0e9, the commit whose whole subject was
+    fixing this re-exec. So the re-exec path has almost certainly never
+    worked, and the fix recorded for it was verified by asserting on the
+    script's TEXT -- a check on what went in, where the failure was in what
+    came out.
+
+    It only fails on commits that change deploy.sh itself, which is why it
+    stayed invisible: every other deploy skips this branch entirely.
+
+    The pinned copy at the top works precisely because it `chmod +x`es
+    itself first. Going through `/bin/bash` matches how the systemd unit
+    invokes the script and does not depend on a file mode that git on
+    Windows will not reliably carry.
+    """
+    source = DEPLOY.read_text(encoding="utf-8")
+
+    assert 'exec /bin/bash "${REPO_DIR}/deployment/deploy.sh"' in source, (
+        "the re-exec runs deploy.sh as a program. It is mode 644, so that "
+        "exits 126 and the deploy stops after the reset -- code pulled, "
+        "nothing restarted, no verification run"
     )
 
 

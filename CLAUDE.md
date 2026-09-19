@@ -492,6 +492,62 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE DEPLOY RE-EXEC HAS NEVER WORKED, 2026-09-19
+
+Found by reading the box after deploying the session guard, not by the
+suite, and it is the more serious of the two findings that afternoon.
+
+    cfdinvest-deploy.service
+      Active: failed (Result: exit-code)
+      Process: ExecStart=/bin/bash .../deploy.sh (code=exited, status=126)
+
+**126 is "found but not executable".** Line 188 runs the pulled script as a
+program -- `exec "${REPO_DIR}/deployment/deploy.sh"` -- and
+`deployment/deploy.sh` is mode **100644** in git, at every commit checked,
+INCLUDING 8efc0e9, whose entire subject was fixing this same re-exec. The
+pinned copy at the top of the file works only because it `chmod +x`es
+itself first.
+
+**It fails only on commits that change deploy.sh**, because every other
+deploy skips the branch entirely. That is why it sat unnoticed: the
+condition for the bug is the condition for the code path.
+
+**What it cost, twice, on 2026-09-19.** Both deploys fetched, reset to the
+new revision, logged "deploy.sh changed in this pull -- re-running the new
+one", and stopped. Units were not reinstalled, services were not restarted,
+and the verification block -- the half this project added precisely because
+"a deploy that does not check what it produced is a deploy that can fail
+quietly" -- never ran. The box carried the new code only because every
+service is `Type=oneshot` against an editable install, so the timers pick it
+up regardless. The dashboard, which is `Type=simple`, was not restarted.
+
+**IT ALSO EXPLAINS A SILENCE THAT WAS BLAMED ON SOMETHING ELSE.** The
+session guard's new permit-path log line did not appear after its own
+deploy, which read as the guard failing to log. The guard was never reached:
+the re-exec'd copy never started.
+
+**RETRACTED at 2026-09-14: "the fix carries the starting revision across the
+re-exec".** The carrying is implemented correctly and the path it runs on
+dies at 126, so `psutil` was installed that day by the *next* deploy rather
+than by the fix. `tests/test_deploy_installs_dependencies.py` asserted the
+script's TEXT -- that the variable is exported and read -- which is a check
+on what went in where the failure was in what came out. Same shape as the
+five recorded on 2026-08-29, and it is why that entry's own conclusion,
+"tested two ways, because neither alone is enough for a shell script", was
+still one way short: neither way ran the re-exec.
+
+Fixed by going through the interpreter, `exec /bin/bash "...deploy.sh"`,
+which is how the systemd unit already invokes the script and does not depend
+on a file mode that git on Windows will not reliably carry. Guarded by
+`test_the_reexec_actually_executes`; M1723 checked by restoring the old form
+and confirming the test fails.
+
+**The verification is the deploy that carries it**, since that commit
+changes `deploy.sh` and therefore takes the re-exec path -- and the session
+guard's permit line appearing afterwards proves both fixes at once. Evidence
+from the box rather than from the suite, which is the only kind this
+particular bug was ever going to produce.
+
 ### THE DEPLOY WAITS FOR THE CLOSE, 2026-09-19
 
 Built on the owner's instruction, after the 2026-09-16 finding that a push

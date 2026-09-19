@@ -185,7 +185,13 @@ deploy_steps() {
     export CFDINVEST_DEPLOY_BEFORE="${before}"
     unset CFDINVEST_DEPLOY_PINNED
     rm -f -- "${_pinned:-}" 2>/dev/null || true
-    exec "${REPO_DIR}/deployment/deploy.sh" "$@"
+    # Through bash, NOT as a program. The file is mode 100644 in git and
+    # always has been, so `exec "...deploy.sh"` fails with 126, "found but
+    # not executable" -- and it fails only on the commits that change
+    # deploy.sh, which is why it sat unnoticed. The systemd unit already
+    # invokes it this way (`ExecStart=/bin/bash .../deploy.sh`), and the
+    # pinned copy above only works because it `chmod +x`es itself first.
+    exec /bin/bash "${REPO_DIR}/deployment/deploy.sh" "$@"
   fi
 
   # Only reinstall when packaging metadata moved. An editable install picks
