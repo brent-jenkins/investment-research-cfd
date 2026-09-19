@@ -84,6 +84,7 @@ def record_plan(report, config=None, account: str | None = None, *, now=None) ->
             "price": intent.price,
             "notional": intent.notional,
             "reason": intent.reason,
+            "entered_bars_ago": getattr(intent, "entered_bars_ago", None),
             "halted": bool(getattr(report, "halted", False)),
             "halt_reason": getattr(report, "halt_reason", ""),
             "balance": getattr(report, "balance", None),
@@ -626,6 +627,16 @@ def refusal_summary(
         "blocked": 0,
         "opened_anyway": 0,
         "reasons": {},
+        #: Refusal EVENTS split by whether the engine had entered on the
+        #: newest completed bar. Events rather than instrument-days, because
+        #: that is the granularity the split lives at: measured on
+        #: 2026-09-19, chases were 70.5% of events and 0% of blocked
+        #: instrument-days, every one echoing a fresh refusal earlier the
+        #: same day. So `blocked` above is NOT inflated by the loop, which
+        #: is the opposite of what was believed for nine days.
+        "fresh_events": 0,
+        "chase_events": 0,
+        "age_unknown_events": 0,
         "recent": [],
     }
     if not rows:
@@ -662,6 +673,16 @@ def refusal_summary(
             why = str(row.get("reason") or "")
             if why in LAST_LOOK_REASONS:
                 refused.setdefault(key, set()).add(why)
+                # Absent is its own answer. Rows written before the age was
+                # carried have none, and counting those as fresh would read
+                # a silent gap as a measurement.
+                age = row.get("entered_bars_ago")
+                if age is None:
+                    summary["age_unknown_events"] += 1
+                elif int(age) > 0:
+                    summary["chase_events"] += 1
+                else:
+                    summary["fresh_events"] += 1
 
     blocked = set(refused) - opened
     summary["considered"] = len(set(opened) | set(refused))

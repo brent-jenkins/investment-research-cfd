@@ -575,6 +575,67 @@ not hold.
 Whether that costs anything is **not measured**. It is the question worth
 asking next, and it is a different question from the one this entry closes.
 
+**THE PHANTOM BOOK: TWO OF THREE CHANNELS WERE WRONG, AND THE THIRD IS
+NARROWER THAN CLAIMED.** Measured 2026-09-19, same day, on the owner's ask.
+The claim was that because the engine holds positions the account never got,
+"the account is sized against a book it does not hold". Three channels were
+named for it and two do not exist.
+
+* *The bridge is not sized against it.* `plan_orders` computes
+  `wanted_notional = share x exposure_per_unit_size x BALANCE` -- the
+  account's own -- and its gross accumulates over the broker's positions.
+  This file already says so in the 2026-09-10 retraction: "every position
+  figure comes from `positions`, which is the broker's own answer."
+* *The share does not shrink when the engine holds more names.*
+  `_target_units` sizes each position independently and "no slot count
+  divides the equity", so share_i carries no dependence on the rest of the
+  book.
+* *The concentration cap cannot transmit it either*, and this is the one
+  that had to be read rather than assumed:
+
+      ceiling = max_leverage x equity x concentration
+
+  The per-name ceiling is a share of the gross CEILING, not of gross held --
+  the function's docstring says exactly that, "so the limit does not tighten
+  as the book empties". A phantom changes gross and therefore changes
+  nothing here. The cap is NOT inert (removing it doubles SLB's target, from
+  -0.109 to -0.220 of equity); it simply does not depend on the rest of the
+  book.
+
+**What survives is the gross cap alone, and it binds on 2.25% of bars** --
+20 of 889 in the live window, pinned exactly at 3.500 against a mean
+leverage of 0.858. That matches the 0.7-5% recorded on 2026-09-07. On those
+bars the whole book is scaled, so composition does reach the account.
+
+**AND THE FRAMING ITSELF WAS WRONG, WHICH MATTERS MORE.** The live intent
+run is an 889-bar simulation from scratch; the account holds whatever it
+managed to open since 2026-08-27. The engine's book has NEVER matched the
+account's and was never meant to -- the refusals do not create a divergence,
+they make a structural one visible. Sizing what that costs needs an engine
+that tracks actual fills, which is the shadow book, deleted on 2026-08-30 on
+measured grounds. So this is not a defect with a fix; it is the architecture,
+and the one narrow channel through it is 2.25% of bars.
+
+**Two method notes.** The first comparison produced two "different" arms
+returning books identical to the decimal -- the signature of an inert arm --
+because `max_leverage` is an input to BOTH caps, so raising it a hundredfold
+disabled the concentration cap as a side effect. It was not a second
+intervention, it was the first one twice. And before reading any of it the
+shipped configuration was run three times unchanged: 0 names differing,
+largest move 0.00000000. A difference between two runs is not a measurement
+until identical runs are known to agree.
+
+**What was built.** `Intent.entered_bars_ago` is carried onto every
+last-look refusal and `record_plan` writes it, so `refusal_summary` now
+reports `fresh_events`, `chase_events` and `age_unknown_events` from the
+STORE rather than from a timestamp join against the journal. Absence is
+counted as unknown rather than fresh: every row written before today has no
+age, and reading that gap as "no chases" is the reassuring half of a
+distinction this file insists on. Five mutations checked, each caught by the
+test it was aimed at. The field is recorded and still never acted on --
+`tests/test_stale_intent_is_visible.py` continues to fail the build if a
+non-zero age starts refusing an open.
+
 Two things that made the measurement possible are worth keeping. The join is
 by timestamp because `entered_bars_ago` is logged and **not** written to the
 order store -- adding it to the refusal row would make this reproducible

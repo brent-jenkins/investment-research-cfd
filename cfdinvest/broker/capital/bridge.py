@@ -88,6 +88,18 @@ class Intent:
     price: float | None = None
     notional: float | None = None
     deal_id: str = ""
+    #: Completed bars since the ENGINE entered this position, carried from
+    #: `persist.intent`. Zero means the engine opened it on the newest
+    #: completed bar -- a fresh opportunity. Anything larger means the
+    #: engine has been holding while the account has not, so an open planned
+    #: from this row is a chase rather than a new decision.
+    #:
+    #: Recorded, never acted on. Measuring the stale-intent loop on
+    #: 2026-09-19 required joining refusals to the journal by timestamp,
+    #: because this number reached the log and not the record. Carrying it
+    #: here makes that reproducible from the order store, which is what the
+    #: store is for.
+    entered_bars_ago: int | None = None
 
     @property
     def acts(self) -> bool:
@@ -293,11 +305,21 @@ def plan_orders(
         price = getattr(market, "offer", None) or getattr(market, "bid", None)
         direction = str(row.get("direction") or "flat").lower()
 
+        age = row.get("entered_bars_ago")
+        try:
+            age = None if age is None else int(age)
+        except (TypeError, ValueError):
+            # An unreadable age is absent, never zero: zero is the claim
+            # "this is a fresh entry", and inferring it would report a chase
+            # as a new decision.
+            age = None
+
         def refuse(why: str) -> Intent:
             return Intent(
                 ticker=ticker, epic=epic, direction=direction,
                 held_units=held_units, target_units=held_units,
                 action="refused", reason=why, price=price,
+                entered_bars_ago=age,
             )
 
         if market is None or price is None or price <= 0:
