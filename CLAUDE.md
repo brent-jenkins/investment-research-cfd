@@ -492,6 +492,100 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE STALE-INTENT LOOP IS REAL, LARGE, AND COSTS NOTHING, 2026-09-19
+
+Asked to look at it as the last open item. Measured at last, using the
+`entered_bars_ago` field added on 2026-09-12 for exactly this and left
+unread since. **The loop exists and is bigger than anyone guessed. It also
+explains none of what it has been credited with.**
+
+Refusal events joined to the intent line of their own pass, five sessions,
+`LAST_LOOK_REASONS` deciding which refusals belong to the gate:
+
+    last-look refusal events                     790
+      age 0   a fresh signal the quote refused   233   29.5%
+      age >0  the engine chasing an entry        557   70.5%
+
+    age of the chase, completed bars   1:163  2:143  3:138  4:113
+                                       median 2, max 4
+
+**Seven in ten refusals are the same decision being re-taken.** Per day the
+inflation runs 2.3x to 4.8x -- on 2026-09-18, 80 fresh refusals produced 291
+chases.
+
+**AND IT CREATES NOT ONE ADDITIONAL BLOCKED INSTRUMENT-DAY.**
+
+    instrument-days refused only while STALE      0
+    instrument-days refused only while FRESH     10
+    both in the same day                         20
+
+    fresh refusal came first                     20 of 20, no exceptions
+    hours from first fresh refusal to last chase median 4.6, max 4.7
+
+Every chase is an ECHO. The engine enters on a bar, the last look refuses it
+there, and the engine then holds a position the account never got while the
+account re-attempts the same open for the rest of the session. The decision
+was taken once, at age 0; everything after it is repetition.
+
+**So the claim this file has carried since 2026-09-10 is WRONG, and it was
+repeated on the morning of 2026-09-19 before this was measured.** That claim:
+the last look's blocked-outright rate -- 20.7% in week one, 47.1% on 09-12,
+52.8% this week -- is "what the stale-intent loop is measuring".
+
+It is not. `refusal_summary` collapses passes to INSTRUMENT-DAYS, and the
+loop does not create instrument-days; it only repeats within one. The
+cross-check is exact and comes from two independent readings: 10 fresh-only
+plus 20 both is 30 refused instrument-days, and `refusal_summary`
+independently reports 19 blocked plus 11 opened-anyway, also 30.
+
+**The elevated refusal rate is therefore unexplained again**, and it is the
+real open item. 30 of 36 instrument-days refused, against 18.7% modelled,
+with `not re-checked` appearing zero times -- so the gate is forming
+opinions and refusing on them, and the cause is not the loop.
+
+**WHAT ENFORCEMENT WOULD BUY: NOTHING.** Refusing an open on a non-zero age
+is the obvious fix and was left unenforced pending this measurement. It
+would remove 557 repeated refusals and **zero trades** -- no stale-only
+instrument-day exists, so none could have opened later. The objection
+recorded against it (that it suppresses entries in a book whose profit is
+concentrated in a few trips, which this week's two-trips-for-86%-of-gross-
+wins keeps alive) turns out not to apply either, because there is nothing to
+suppress.
+
+**It is not adopted, and the reason is the reverse of the old one.** Not
+because it is risky -- it is measurably free -- but because it is worth
+nothing and the noise it removes is the only thing making the divergence
+visible. Silencing a symptom nobody has explained is how a gate ends up
+inert. `tests/test_stale_intent_is_visible.py` keeps failing the build if it
+is enforced without somebody saying so, and that guard now has a measurement
+behind it rather than a caution.
+
+**THIS IS NOT THE LARGEST OPEN ITEM IN THE DEALING PATH, AND CALLING IT THAT
+WAS WRONG.** It is an observability item: log volume, not money.
+
+**What the measurement DID surface, and it is new.** For a median of 4.6
+hours -- most of a session -- **the engine's book and the account's book
+disagree**: the engine holds positions the account never got. Everything the
+engine then computes is computed over that phantom. The concentration cap
+measures a share of a gross that includes it, the leverage cap sums a
+notional that includes it, and `persist.intent` divides by an equity curve
+that has been compounding it. The account is sized against a book it does
+not hold.
+
+Whether that costs anything is **not measured**. It is the question worth
+asking next, and it is a different question from the one this entry closes.
+
+Two things that made the measurement possible are worth keeping. The join is
+by timestamp because `entered_bars_ago` is logged and **not** written to the
+order store -- adding it to the refusal row would make this reproducible
+from the record instead of from a scratch parse of the journal, which is the
+cheap improvement here. And `journalctl` returns nothing to the service
+user, so the first run reported "no intent lines" rather than a permission
+error: a silent empty result, read correctly only because the count was
+zero rather than small. The journal is now dumped by root and read by the
+service user, which also keeps the 2026-09-15 lesson -- research on this box
+runs as `cfdinvest` -- intact.
+
 ### A TIDY-UP FAILED AND CALLED IT A FAILED RUN, 2026-09-15/16
 
 Reported as a flood of error mail. The run was fine, the account was never
@@ -1444,7 +1538,13 @@ reason dominating. The gate is forming opinions and refusing on them.
 The recorded cause is the stale-intent loop of 2026-09-10: the engine goes
 on intending positions it entered on an earlier bar that the account never
 got, so every later pass attempts an open the last look correctly refuses.
-Safe, noisy, and still not fixed -- and it is what this number is measuring.
+Safe, noisy, and still not fixed.
+
+**RETRACTED 2026-09-19: it is NOT what this number is measuring.** The rate
+above is instrument-days, and the loop creates none -- it only repeats
+within a day. Measured: 70.5% of refusal events are chases and 0 of 30
+refused instrument-days were refused only while stale. The elevated rate is
+unexplained again. See the 2026-09-19 entry.
 
 **3. The win/loss ratio is correcting, which is the one the file says must
 happen before any return figure means anything.**
@@ -2246,6 +2346,12 @@ completed-bar trim ship inert twice the same afternoon.
   newest completed bar. That separates the two things a refusal can mean --
   the engine chasing an entry the account never got, against a signal that
   decayed and a gate doing its job -- which reading order rows cannot.
+
+  **MEASURED 2026-09-19: the loop is 70.5% of refusal EVENTS and 0% of
+  refused INSTRUMENT-DAYS, so it explains none of the rate below.** Every
+  chase echoes a fresh refusal earlier the same day, 20 of 20. Enforcement
+  would remove 557 repeated refusals and zero trades. See the 2026-09-19
+  entry; the paragraph below is what was believed before it.
 
   **Reported, NOT enforced, and deliberately.** Refusing to open on a
   non-zero age is the obvious fix and it suppresses entries in a book where
