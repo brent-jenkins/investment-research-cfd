@@ -492,6 +492,84 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE OWNER'S TIMING HYPOTHESIS, MEASURED AGAINST THE ACCOUNT, 2026-09-23
+
+Proposed: open only in the first two hours of the session, then hold until at
+most thirty minutes before the close. **The forward record says the opposite
+about the first half, and cannot answer the second half at all.**
+
+**WHY THE ACCOUNT AND NOT A SWEEP.** The research harness does not reproduce
+the recorded battery and this file forbids reading a parameter claim off it
+until it does. The account's own fills are not hostage to that. They are also
+55 trips, which cannot decide anything -- so this is a SCREEN and is labelled
+one, and the rule stands that nothing is adopted on one.
+
+    opened within 2h of the open   n=31  total   +7.92  mean +0.26  win 29.0%
+    opened later                   n=24  total +117.42  mean +4.89  win 58.3%
+
+    median held   first 2h  273 min      later  122 min
+
+**AND THE CONCENTRATION CONTROL REVERSES THE EARLY WINDOW ENTIRELY.** This
+book's profit is concentrated enough that one trip can manufacture either
+side, so each side is re-read without its best days:
+
+    first 2h   without best   -87.76   without best two  -174.66
+    later      without best   +72.34   without best two   +32.99
+
+The early window's small positive is one trip; strip it and it is deeply
+negative. The later window survives both trims. **The proposal would have
+removed 24 trips worth +117.42 and kept 31 worth +7.92.**
+
+**THIS INDEPENDENTLY REPRODUCES A FINDING THIS FILE HAD WRITTEN OFF.** "Late
+entries are the good ones", 2026-09-01: a trade opened with two bars left
+averaged +11,851 at 52.2% against +810 at 45.1% opened early. That was
+measured on the FLAWED engine, and this file lists it among the results made
+uncertain by the look-ahead correction. It has now appeared again in the
+corrected era, on real fills at real spreads confirmed by a counterparty,
+by a completely different method. **Two independent routes to one effect is
+materially better evidence than either alone**, and it is the same standard
+this file applied to the morning filter when the sixteen-feature model
+agreed with the sweep.
+
+It also explains the shape rather than just reporting it: an early entry is
+held a median of 273 minutes and a later one 122, so the early cohort is
+paying more exposure for a worse win rate. And the morning filter -- SKIP the
+first N bars, the mirror image of this proposal -- measured +81.4pp before it
+was closed as the last look showing through. Three readings now point the
+same way.
+
+**THE SECOND HALF CANNOT BE MEASURED AND THAT IS THE USEFUL PART.** Moving
+the flatten from 19:00 to 19:30 needs the price at 19:30 against 19:00. The
+decision lake is HOURLY -- the 19:00 bar spans 19:00-20:00, so 19:30 is
+inside a bar and invisible -- and `livequotes` holds only `latest.json`, a
+snapshot with no history. **Nothing on the box can answer it.** The engine
+cannot either: it models the flatten as exiting at the open of the session's
+last bar, which is 19:00, so a half-hour finer is below its resolution.
+
+What the flatten is doing today, for what it is worth on 48 observations:
+
+    closed by the flatten     n=48   total +149.01   mean +3.10   win 41.7%
+    closed by anything else   n= 7   total  -23.67   mean -3.38   win 42.9%
+
+That is not an argument either way about 19:30. It says the flatten is not
+obviously destroying value, and nothing finer.
+
+**So the honest route to the owner's second question is to start collecting.**
+A 5-minute series on the traded names would answer it in a few weeks, and
+would also settle `MIN_SESSION_MINUTES = 30.0`, which this file has carried as
+"provisional and unmeasured" since 2026-09-10 and which the livecheck
+docstring says is "measurable from the 5-minute lake -- not yet done". Once
+started it is not stopped, which is this project's own rule and the reason to
+start it deliberately rather than as a side effect.
+
+**NOTHING IS CHANGED.** The proposal is not adopted, and neither is its
+opposite: the early-window cut is a 55-trip screen and this file's own rule
+is that a finding is re-measured through the engine as `ExecutionConfig`
+settings before it ships -- which the harness currently cannot do
+trustworthily. What HAS changed is that "open early, hold long" now has
+evidence against it from two independent directions rather than one
+discredited one.
+
 ### THE PRE-REGISTERED READING CAME IN, AND IT IS THE BAD BRANCH, 2026-09-23
 
 Asked why the account was quiet, why the week was drifting down, and why the
@@ -666,32 +744,38 @@ was nearly reported and would have been worthless: the two worst days in the
 whole record are both busy AND both in week 36, so it would have been the
 configuration split wearing another name.
 
-**AND THE TRIP SUM DISAGREES WITH THE BALANCE BY 142.87, WHICH IS A NEW
-OPEN ITEM.** Asked how the forward record is doing, and the two answers do
-not match:
+**THE TRIP SUM AND THE BALANCE DISAGREE BY ABOUT 112, AND MY FIRST FIGURE
+FOR IT WAS WRONG IN TWO WAYS.** Both errors were mine and both flattered the
+finding, so they are recorded before the residual is.
 
-    realised, shipped arm, 55 trips      +125.34
-    balance change since 2026-09-08       -17.53
-    UNEXPLAINED                          -142.87
+**RETRACTED WITHIN THE HOUR: "-142.87 unexplained, against 173 close rows and
+three unpriced".** Neither number was right.
 
-    close rows                               173
-    close rows carrying no price               3
-    rows marked reconciled (out-of-band)       3
+* `completed_trips` returns P&L **in the instrument's currency**, and says so
+  in its own docstring -- "deliberately not converted... nothing here needs
+  the absolute figure, only the sign". This is a book of US equities in a
+  sterling account, so a USD sum was set against a GBP balance change.
+* The "173 close rows" was counted without filtering `kind == "result"`, so
+  it counted the plan row AND the result row for every action. The real
+  figures are **89 confirmed closes, 3 without a level**, out of 181 result
+  rows against 6,474 plan rows.
 
-This file already records that realised is a FLOOR rather than a total --
-`record_departure` refuses to invent an exit price and `completed_trips`
-skips a close with no level -- and on 2026-09-12 that gap was -36.42 against
-three out-of-band closes, which was the right order of magnitude for the
-cause. **-142.87 against three unpriced closes is not**, and the sign is
-wrong the other way: the trips claim a PROFIT where the account is flat.
+Restated, with the lake's own GBPUSD of 1.3242 rather than an invented rate:
 
-So `completed_trips` is not measuring what it is being read as, and the
-shipped arm's "+125.34" must not be quoted anywhere. **The balance is the
-counterparty's answer and it says -17.53.** Candidates, none tested: the
-store writes a plan row and a result row per action and the pairing may be
-taking both; multi-leg positions may pair a leg against a whole; financing
-is not in the trip figure at all. Not diagnosed, and it blocks every
-forward P&L statement finer than the balance until it is.
+    whole record   trips -124.93   balance -236.74   residual -111.81
+    shipped arm    trips  +94.66   balance  -17.53   residual -112.19
+
+**The two residuals are the same number**, so the pre-2026-09-08 era
+reconciles to about zero and essentially the whole shortfall sits in the
+shipped era -- roughly 2 per trip over 55 trips. Candidates, none tested:
+6 closes that find no open and 3 opens that find no close, 6 resizes which
+the pairing does not represent at all, and financing, which is in NEITHER
+figure because a trip is fill-to-fill. Bounded and open rather than
+diagnosed.
+
+**What survives is that the fill-to-fill figure is sound for RELATIVE cuts**
+-- which is all its docstring ever claimed -- and unusable as a sterling
+total. The balance remains the only quotable forward number.
 
 **The win/loss ratio has crossed below 1.0 for the first time**, which is the
 tripwire this file has carried since the look-ahead was corrected: 2.33x in
