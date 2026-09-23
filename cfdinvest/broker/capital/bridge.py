@@ -441,6 +441,18 @@ def plan_orders(
             continue
 
         if held_units == 0.0:
+            # What the last look READ, carried to the approval as well as to
+            # the refusal.
+            #
+            # Set here rather than at the top of the loop so it cannot carry
+            # from the previous instrument: a reading that leaks across names
+            # is worse than no reading, because it looks measured.
+            #
+            # ``None`` when the check did not run. Only the open path
+            # consults the last look, so a close, a resize and a hold have
+            # nothing to report and say so rather than reporting a zero.
+            live_reading: float | None = None
+
             # The last look, on opens only.
             #
             # It is what the paper book already does, on the same evidence:
@@ -463,6 +475,7 @@ def plan_orders(
                 still, why, live = holds(
                     rechecked, ticker, direction, entry_confidence
                 )
+                live_reading = live
                 if not still:
                     intents.append(refuse(why, live))
                     continue
@@ -500,12 +513,33 @@ def plan_orders(
                 margin_used += needed
 
             gross += abs(target) * price * float(fx_rate or 1.0)
+            # The three numbers go on the APPROVAL too, added 2026-09-23.
+            #
+            # Recording them only on refusals described the left tail of the
+            # live/engine gap and called it the whole distribution. Measured
+            # on the first three days of readings, refused names in the
+            # >=0.75 band read 0.448 against the engine's 0.796 -- the
+            # 2026-09-10 signature -- while every band below agreed to a
+            # thousandth. But names that PASSED recorded nothing, so whether
+            # the gap is bimodal (agrees, or collapses by a third) or simply
+            # the left tail of a noisy check could not be told apart, and
+            # those mean different things.
+            #
+            # `test_the_refusal_records_how_far` already warned about exactly
+            # this censoring, in the docstring of the test asserting that
+            # `holds` reports a reading on approval -- and then only the
+            # refusal path was wired. A test that names a risk it does not
+            # cover is the shape this project keeps rediscovering.
             intents.append(Intent(
                 ticker=ticker, epic=epic, direction=direction,
                 held_units=0.0, target_units=target, action="open",
                 reason="capped by the per-instrument limit" if capped else "",
                 price=price,
                 notional=abs(target) * price * float(fx_rate or 1.0),
+                entered_bars_ago=age,
+                engine_confidence=engine_confidence,
+                live_confidence=live_reading,
+                confidence_bar=float(entry_confidence),
             ))
             continue
 

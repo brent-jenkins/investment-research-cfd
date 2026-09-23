@@ -492,6 +492,213 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE PRE-REGISTERED READING CAME IN, AND IT IS THE BAD BRANCH, 2026-09-23
+
+Asked why the account was quiet, why the week was drifting down, and why the
+open trades closed early. Three questions, three separate answers, and the
+first is the serious one.
+
+**THE READING, taken on the field shipped 2026-09-19 and pre-registered the
+same day so the verdict could not be chosen afterwards.** 727 refusals
+carrying a live reading, three sessions, shortfall measured against each
+row's OWN recorded bar:
+
+    engine band      n    live     gap
+    <0.40           69   0.393  +0.006
+    0.40-0.60      397   0.455  -0.000
+    0.60-0.75       23   0.667   0.000
+    >=0.75         180   0.448  -0.348
+
+**Agreement to a thousandth in every band except the top, which collapses by
+a third.** That is the 2026-09-10 provisional-bar signature almost exactly:
+it read **-0.324** that day, on n=2, and **+0.001** after the fix. This is
+n=180.
+
+The pre-registration named two outcomes. "Clustered just under the bar" is
+marginality and expected of a gate at the 90th percentile; **1.6% of fresh
+refusals sit within 0.05 of the bar**, so it is not that one. "Collapsing
+toward a third of the engine's" is the failure returning; the ratio here is
+0.567 of engine, not a third, but the GAP matches 09-10 to two decimals.
+
+**Flat across the hour** -- -0.344 at :10-19 through -0.350 at :50-59 -- so
+it is not a thin provisional bar early in an hour, which was the obvious
+benign explanation and is now excluded.
+
+**Split by entry age, because pooling could not answer it.** A chase is a
+name the engine entered hours ago whose signal has had a session to decay, so
+a large shortfall there says nothing about the live check:
+
+    fresh (age 0)   n=188   engine 0.787   live 0.455   live/engine 0.567
+    chase (age >0)  n=481   engine 0.448   live 0.450   live/engine 1.000
+
+The chases agree PERFECTLY. The check is not globally broken; it disagrees
+only where the engine reads high, which is the same statement as the band
+table arrived at from a second direction.
+
+**THE SAMPLE IS THE REFUSALS, AND THAT IS A DEFECT I INTRODUCED.** The field
+was populated in the `refuse()` path alone, so a name the gate APPROVED
+recorded nothing. The >=0.75 row above is therefore that band's left tail by
+construction -- names selected FOR having read low -- and two pictures
+survive it: a continuous check whose noise pushes marginal names under, or a
+bimodal one that either agrees or loses a third. Those mean opposite things.
+**24 names opened in the three days**, so something clears the bar, which
+already rules out the total blockage of 2026-09-10 (where the highest reading
+in the whole book was 0.656) and rules out nothing else.
+
+`tests/test_the_refusal_records_how_far.py` NAMED this risk and did not cover
+it: `test_an_approval_also_carries_its_reading` asserts that `holds` returns
+a reading on approval, and its docstring says reading only refusals "would
+describe the left tail... and call it the whole distribution". Then only the
+refusal path was wired. A check on what went in where the failure was in what
+came out -- the fifth appearance of that shape this month.
+
+**FIXED the same day.** The approval carries `entered_bars_ago`,
+`engine_confidence`, `live_confidence` and `confidence_bar` too, and
+`refusal_summary` reports `cleared_median` and `cleared_sample` beside the
+shortfall. The two halves make the distribution readable: a continuous check
+cuts its own distribution at the bar, a collapsing one leaves a hole through
+it. Five mutations checked (M1780-M1784), all caught, the bridge wiring
+exercised through the real `plan_orders` because **M1771 survived a source
+check on this very field**.
+
+**THE MECHANISM IS A HYPOTHESIS AND IS NOT MEASURED.** On 2026-09-14 all six
+names clearing 0.75 had a NON-ZERO breakout, 6 of 6, while breakout is
+exactly zero on 83% of names; `trend_strength` counts a zero breakout in the
+denominator at full weight, which is what makes (1+1+0)/3 = 0.667 a hard
+ceiling under a 0.75 gate. And `advisor/livecheck.py` says in its own
+docstring that the provisional bar understates range, "which matters only to
+the breakout component", calling that the conservative direction. If the live
+recompute loses a breakout the engine had, strength falls about a third for
+exactly the names that can clear the gate and agrees everywhere else -- which
+is the whole table. Consistent with it: the 23 names already pinned at 0.6667
+agree to 0.000, having nothing left to lose.
+
+Read off the lake the same evening, which supports the structure without
+testing the mechanism: median breakout is **+0.000 in every band below 0.75**
+and **-1.000 in the >=0.75 band**.
+
+**The decisive run needs a live session and has not been made.** An offline
+attempt was **INERT and is recorded as such**: with the market shut the
+provisional bar was not appended at all (`provisional=False`), so both arms
+were identical and every delta read +0.000. That is the 2026-09-10 trap --
+"the first calibration fed the lake's own close in, so the update was a no-op
+by construction and every gap read exactly 0.000, which reads as a fix
+working perfectly". The zeros mean nothing and are not evidence of health.
+`scratchpad/components.py --source broker` runs the two arms differing only
+in the repository, at the next open.
+
+**NOTHING IS CHANGED IN THE GATE.** 0.75 sits on diluted strength and this
+file records that the gate and the dilution must not be changed apart.
+
+### THE FLATTEN FIRES AN HOUR EARLY, 2026-09-23
+
+Reported by the owner as "the open trades seemed to close very early today",
+which they did.
+
+    18:30:21  WFC  open   82.39
+    19:00:31  WFC  close  82.26   flattened before the session close
+
+**Thirty minutes of exposure for a full round trip.** Verified against the
+calendar the dealing pass itself uses rather than assumed: `next_close` is
+**20:00 UTC**, the market was still open at 19:50 UTC, and the flatten ran at
+19:00:31. (The owner reads BST and saw 20:00; 19:00 UTC and 20:00 BST are the
+same instant, and the bell is 21:00 BST.)
+
+**One constant is doing two jobs.** `close_delay_minutes = 60` documents
+itself as "Refuse to OPEN within this many minutes of the session close" and
+has its own measurement behind it in that role -- 7.6pp of return, inside the
+floor, for drawdown 10.5% to 7.3%. But `schedule/app.py` computes
+`closing_soon` from it and `bridge.plan_orders` uses that same flag to
+trigger `flatten_before_close`. So the no-open window and the flatten fire on
+**the same boundary**, with no gap between them: an open permitted at 18:59
+is flattened seconds later. This file's description, "stops opening 60
+minutes before the close, flattens at the bell", is wrong -- it flattens 60
+minutes before the bell, and the account has spent the last hour of every
+session flat since 2026-09-06.
+
+**It is not currently costing much and it is not yet changed.** The engine
+models the flatten as exiting at the open of the session's LAST bar, which on
+a seven-bar session is 19:00 -- so account and backtest happen to agree
+today, by coincidence between a clock setting and the bar grid rather than
+because anything ties them. Moving `close_delay_minutes` would move the
+account and not the model. That is "one owner per threshold" broken, and the
+fix is a separate setting for the flatten with its own measurement, not a
+quiet edit: changing it changes what the account holds.
+
+### THE WEEK IS ONE DAY, AND SO WAS THE LAST ONE, 2026-09-23
+
+The owner's read -- "same story last week though, I see a pattern forming" --
+measured rather than agreed with. **The pattern is real and it is symmetric,
+which is the part that changes what it means.**
+
+Shipped configuration only (week 37 on; week 36 ran a different universe and
+sector cap and must not be pooled):
+
+    week 37   net  +81.15   biggest day Tue  +60.65  =  75% of net
+    week 38   net  +97.16   biggest day Thu +106.18  = 109% of net
+    week 39   net  -52.96   biggest day Tue  -58.89  = 111% of net
+
+One day carries the week in all three. **It carried two of them UP.** Net
+over the shipped arm is **+125.34** across 12 days, two weeks up and one
+down. This is the concentration this file already records at every other
+timescale -- six months of 43 carry nine-tenths of the compounding, ten per
+cent of weeks are the whole result -- arriving at daily resolution, where it
+should be expected rather than read as a new failure.
+
+**No weekday signal.** Tuesdays look terrible pooled (-249.58) and that is
+almost entirely week 36's -234.36, a different configuration. On the shipped
+arm Tuesdays are -15.22 over three days.
+
+**The one cut that points somewhere: the busier the day, the worse it goes.**
+
+    busy days (>= median trips)   n=6  trips 43  net  -44.47   per trip  -1.03
+    quiet days                    n=6  trips 12  net +169.82   per trip +14.15
+
+    dropping each side's best day    busy  -65.12   quiet  +63.64
+    dropping each side's best two    busy  -73.32   quiet   +2.99
+
+**The quiet-day advantage is two days and does not survive; the busy-day loss
+DEEPENS as the best days are stripped.** That is the direction this file
+already predicts -- the shipped configuration is believed net-negative
+because cost exceeds gross, so more trading should mean more loss -- and it
+is 12 days, which is a lead and not a result. The pooled version of this cut
+was nearly reported and would have been worthless: the two worst days in the
+whole record are both busy AND both in week 36, so it would have been the
+configuration split wearing another name.
+
+**AND THE TRIP SUM DISAGREES WITH THE BALANCE BY 142.87, WHICH IS A NEW
+OPEN ITEM.** Asked how the forward record is doing, and the two answers do
+not match:
+
+    realised, shipped arm, 55 trips      +125.34
+    balance change since 2026-09-08       -17.53
+    UNEXPLAINED                          -142.87
+
+    close rows                               173
+    close rows carrying no price               3
+    rows marked reconciled (out-of-band)       3
+
+This file already records that realised is a FLOOR rather than a total --
+`record_departure` refuses to invent an exit price and `completed_trips`
+skips a close with no level -- and on 2026-09-12 that gap was -36.42 against
+three out-of-band closes, which was the right order of magnitude for the
+cause. **-142.87 against three unpriced closes is not**, and the sign is
+wrong the other way: the trips claim a PROFIT where the account is flat.
+
+So `completed_trips` is not measuring what it is being read as, and the
+shipped arm's "+125.34" must not be quoted anywhere. **The balance is the
+counterparty's answer and it says -17.53.** Candidates, none tested: the
+store writes a plan row and a result row per action and the pairing may be
+taking both; multi-leg positions may pair a leg against a whole; financing
+is not in the trip figure at all. Not diagnosed, and it blocks every
+forward P&L statement finer than the balance until it is.
+
+**The win/loss ratio has crossed below 1.0 for the first time**, which is the
+tripwire this file has carried since the look-ahead was corrected: 2.33x in
+week one, 1.13x on 09-12, **0.80x on means over 83 trips**. On medians it is
+0.99x, so the inversion is carried by a few large wins rather than by the
+whole distribution, exactly as last week.
+
 ### THE DEPLOY RE-EXEC HAS NEVER WORKED, 2026-09-19
 
 Found by reading the box after deploying the session guard, not by the

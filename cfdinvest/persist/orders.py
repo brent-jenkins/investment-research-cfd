@@ -654,6 +654,22 @@ def refusal_summary(
         #: retracted for being read against the wrong one.
         "shortfall_median": None,
         "shortfall_sample": 0,
+        #: The OTHER half of the same distribution, added 2026-09-23.
+        #:
+        #: `shortfall_*` above describes only names the gate refused, which
+        #: is its left tail by construction. Read alone it cannot separate
+        #: two pictures that mean different things: a check that agrees with
+        #: the engine and refuses the few names noise pushes under the bar,
+        #: against one that either agrees exactly or collapses by a third.
+        #: The first is the gate working; the second is the 2026-09-10
+        #: provisional-bar failure, whose signature is agreement in every
+        #: confidence band except the top one.
+        #:
+        #: `cleared_median` is how far ABOVE its own bar an approved reading
+        #: sat. Together the two say whether the gate is cutting a
+        #: continuous distribution or splitting a bimodal one.
+        "cleared_median": None,
+        "cleared_sample": 0,
         "recent": [],
     }
     if not rows:
@@ -674,6 +690,7 @@ def refusal_summary(
     opened: set[tuple[str, str]] = set()
     refused: dict[tuple[str, str], set[str]] = {}
     shortfalls: list[float] = []
+    headroom: list[float] = []
     for row in rows:
         if str(row.get("kind") or "") != "plan":
             continue
@@ -687,6 +704,15 @@ def refusal_summary(
         action = str(row.get("action") or "")
         if action == "open":
             opened.add(key)
+            # The approval's own reading, so the distribution is not
+            # left-truncated. Only the open path consults the last look, so
+            # this is the complete set of names it approved.
+            live, bar = row.get("live_confidence"), row.get("confidence_bar")
+            if live is not None and bar is not None:
+                try:
+                    headroom.append(float(live) - float(bar))
+                except (TypeError, ValueError):
+                    pass
         elif action == "refused":
             why = str(row.get("reason") or "")
             if why in LAST_LOOK_REASONS:
@@ -726,6 +752,17 @@ def refusal_summary(
             else (ordered[middle - 1] + ordered[middle]) / 2.0
         )
         summary["shortfall_sample"] = len(ordered)
+    if headroom:
+        # The same median, computed the same way, on the approved side.
+        # Deliberately not a mean: one name sitting far above the bar would
+        # move it, and the question is where the BULK of approvals sit.
+        ordered = sorted(headroom)
+        middle = len(ordered) // 2
+        summary["cleared_median"] = (
+            ordered[middle] if len(ordered) % 2
+            else (ordered[middle - 1] + ordered[middle]) / 2.0
+        )
+        summary["cleared_sample"] = len(ordered)
     summary["recent"] = sorted(
         (
             {
