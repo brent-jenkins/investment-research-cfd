@@ -491,6 +491,57 @@ class StrategyConfig:
     #: with ``flatten_before_close`` off would have shipped the losing half
     #: of a winning pair. They are enabled together in config.toml.
     close_delay_minutes: int = 0
+    #: Flatten this many minutes before the session close. ``0`` falls back
+    #: to ``close_delay_minutes``.
+    #:
+    #: **Added 2026-09-23, because one constant was doing two jobs.**
+    #: ``close_delay_minutes`` documents itself as an OPENING rule and had
+    #: its own measurement in that role, and `schedule/app.py` was deriving
+    #: the flatten from the same flag. So the no-open window and the flatten
+    #: fired on the SAME boundary: an open permitted at 18:59 was flattened
+    #: seconds later, and WFC did exactly that on 2026-09-23 -- opened
+    #: 18:30:21, flattened 19:00:31, thirty minutes of exposure for a full
+    #: round trip.
+    #:
+    #: It also meant this file's own description was wrong. "Flattens at the
+    #: bell" was untrue: the book was flat for the last hour of every
+    #: session, and the calendar puts the bell at 20:00 UTC.
+    #:
+    #: Two owners for two questions, which is what "one owner per threshold"
+    #: actually asks for. A fallback of 0 keeps a configuration that has not
+    #: chosen one behaving exactly as before.
+    #:
+    #: **NOT measured at 30.** The owner's instruction, 2026-09-23. It
+    #: cannot be measured here: the decision lake is hourly and the 19:00
+    #: bar spans 19:00-20:00, so 19:30 is inside a bar and invisible, and
+    #: the engine models the flatten as an exit at the open of the last bar.
+    #: A 5-minute series would answer it.
+    flatten_minutes_before_close: int = 0
+    #: Re-check the signal against the broker's live quote before opening.
+    #:
+    #: Defaults TRUE: this is a safety check and a safety check that is off
+    #: unless somebody remembers to switch it on is not one. Turning it off
+    #: is the deliberate act, and it is recorded in ``config.toml``.
+    #:
+    #: **Switched off 2026-09-23 on the owner's instruction**, on the
+    #: evidence that the check disagrees with the engine only where it
+    #: matters. Over 727 refusals carrying a reading it agreed to within
+    #: 0.006 in every confidence band below 0.75 and read 0.448 against
+    #: 0.796 at and above it -- a gap of -0.348 on n=180, which is the
+    #: 2026-09-10 provisional-bar signature (-0.324 then, +0.001 after its
+    #: fix). Since the check only ever runs on names the engine wants to
+    #: OPEN, and those are >=0.75 by construction, it is suspect across its
+    #: whole domain of application.
+    #:
+    #: Turning it off also removes the stale-intent loop as a side effect
+    #: rather than needing a second rule: a chase exists BECAUSE the open
+    #: was refused, so a name that opens on its first pass is never chased.
+    #:
+    #: And it aligns the engine with the account for the first time.
+    #: ``ExecutionConfig.entry_recheck`` defaults False and is not wired, so
+    #: with the live check on, the backtest modelled a system one filter
+    #: short of the one that dealt. With it off they agree.
+    last_look: bool = True
     #: Notional per unit of signal size, as a multiple of equity.
     exposure_per_unit_size: float = 1.0
     #: Days either side of a reporting date to hold no position. ``0`` off.

@@ -669,6 +669,62 @@ def _with_screen_pool(tickers, app_config) -> list[str]:
 #:
 #: ``overnight_profit_take`` banks a position whose gain clears a threshold on
 #: the last bar of a session, so a threshold below any reachable loss closes
+def session_end_windows(
+    describe_fn,
+    tickers,
+    session_open,
+    now,
+    *,
+    open_block_minutes: int,
+    flatten_minutes: int,
+) -> tuple[dict[str, bool], dict[str, bool]]:
+    """Two boundaries at the end of a session, from two constants.
+
+    Returns ``(no_more_opens, closing_soon)``.
+
+    **THEY WERE ONE CONSTANT UNTIL 2026-09-23, AND THAT WAS THE BUG.**
+    ``close_delay_minutes`` documents itself as "refuse to OPEN within this
+    many minutes of the close" and carries its measurement in that role --
+    7.6pp of return, inside the noise floor, for drawdown 10.5% to 7.3%. The
+    flatten was derived from the same flag, so the last permitted open and
+    the flatten fell on the SAME instant and a position opened just inside
+    the boundary was closed seconds later. On 2026-09-23 WFC opened at
+    18:30:21 and was flattened at 19:00:31: thirty minutes of exposure for a
+    full round trip, which is exactly the waste the sixty minutes existed to
+    prevent.
+
+    It also made this project's own description false. "Flattens at the
+    bell" was untrue -- the book was flat for the last hour of every
+    session, against a calendar close of 20:00 UTC.
+
+    Both windows ask the CALENDAR rather than computing a session end, for
+    the same reason the opening window does: holidays, half days and
+    per-instrument sessions are already handled by the thing that knows
+    about them, and a computed end is wrong on exactly the days it matters
+    most.
+
+    ``flatten_minutes`` of 0 falls back to ``open_block_minutes``, so a
+    configuration that has not chosen a flatten time behaves exactly as it
+    did before this split existed. An unreadable calendar is the caller's
+    problem and is handled there, where it already refuses to trade.
+    """
+    import pandas as pd  # noqa: PLC0415 - module-level import is heavy here
+
+    def ending_in(minutes: int) -> dict[str, bool]:
+        if not minutes:
+            return {}
+        ahead = describe_fn(tickers, now + pd.Timedelta(minutes=minutes))
+        return {
+            ticker: (
+                bool(session_open.get(ticker, False))
+                and not bool(ahead["is_open"].get(ticker, False))
+            )
+            for ticker in session_open
+        }
+
+    return ending_in(open_block_minutes), ending_in(flatten_minutes or open_block_minutes)
+
+
 #: every position -- which is what the bridge's ``flatten_before_close`` does
 #: live.
 #:
@@ -2119,20 +2175,33 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         # per-instrument sessions are already handled by the thing that
         # knows about them, and a computed end would be wrong on exactly the
         # days it matters most.
+        # TWO QUESTIONS, TWO CONSTANTS, since 2026-09-23.
+        #
+        # "May a new position be opened?" and "must what is held be closed?"
+        # are different questions about the end of a session, and they were
+        # both answered by `close_delay_minutes` -- which documents itself as
+        # the opening rule and had its measurement in that role. So the last
+        # permitted open and the flatten landed on the SAME instant, and a
+        # position opened just inside the boundary was flattened seconds
+        # later. WFC on 2026-09-23: opened 18:30:21, flattened 19:00:31.
+        #
+        # Both still ask the CALENDAR rather than computing a session end,
+        # for the reason the opening window already does: holidays, half days
+        # and per-instrument sessions are handled by the thing that knows
+        # about them, and a computed end is wrong on exactly the days it
+        # matters most.
         shut = int(getattr(app_config.strategy, "close_delay_minutes", 0) or 0)
-        ending = (describe(dealing_tickers, now + pd.Timedelta(minutes=shut))
-                  if shut else None)
-        closing_soon = {
-            ticker: (
-                ending is not None
-                and bool(session_open.get(ticker, False))
-                and not bool(ending["is_open"].get(ticker, False))
-            )
-            for ticker in session_open
-        }
+        no_more_opens, closing_soon = session_end_windows(
+            describe, dealing_tickers, session_open, now,
+            open_block_minutes=shut,
+            flatten_minutes=int(
+                getattr(app_config.strategy, "flatten_minutes_before_close", 0)
+                or 0
+            ),
+        )
         if shut:
             open_allowed = {
-                ticker: allowed and not closing_soon.get(ticker, False)
+                ticker: allowed and not no_more_opens.get(ticker, False)
                 for ticker, allowed in open_allowed.items()
             }
     except Exception as error:  # noqa: BLE001 - an unknown calendar is closed
@@ -2199,7 +2268,11 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         session_open=session_open,
         placed=placed,
         fx_rate=fx,
-        recheck=True,
+        # The last look, switched off on the owner's instruction 2026-09-23.
+        # Defaults True in `StrategyConfig`: a safety check that is off
+        # unless somebody switches it on is not a safety check, so turning
+        # it off is the deliberate act and it lives in config.toml.
+        recheck=bool(getattr(app_config.strategy, "last_look", True)),
         rechecked=rechecked,
         open_allowed=open_allowed,
         max_opens_per_pass=app_config.strategy.max_opens_per_pass,

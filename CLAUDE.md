@@ -570,6 +570,107 @@ trustworthily. What HAS changed is that "open early, hold long" now has
 evidence against it from two independent directions rather than one
 discredited one.
 
+### THE CONFIGURATION CHANGED, ON THE OWNER'S DECISION, 2026-09-23
+
+"We know the current configuration isn't working and it's a virtual account.
+Let's change it to something sensible and see what happens rather than losing
+more time on a known-poor system." Three changes, all in the dealing path,
+none of them touching a rule the engine owns.
+
+**1. THE LAST LOOK IS OFF, AND STILL REPORTING.** `strategy.last_look`
+defaults **True** -- a safety check that is off unless somebody switches it
+on is not a safety check -- and `config.toml` switches it off, the way live
+dealing needs its own variable.
+
+The evidence is the band table recorded above: agreement to within 0.006 in
+every confidence band below the gate, and -0.348 at and above it on n=180.
+The check only ever runs on names the engine wants to OPEN, and those are
+>=0.75 by construction, so it is suspect across its whole domain of
+application rather than at one edge of it.
+
+**The reading is still taken and still written to the row.** Reported, not
+enforced -- the same pattern as `entered_bars_ago` and the decayed trim.
+Switching the check off must not switch off the evidence that says whether
+doing so was right, which is exactly why this file declined to silence the
+stale-intent loop: "the noise it removes is the only thing making the
+divergence visible". The decision remains falsifiable.
+
+**It removes the stale-intent loop for free**, without a second rule. A chase
+exists BECAUSE the open was refused, so a name that opens on its first pass
+is never chased. `tests/test_stale_intent_is_visible.py` still holds; nothing
+started enforcing an age.
+
+**And it aligns the engine with the account for the first time.**
+`ExecutionConfig.entry_recheck` defaults False and is not wired into
+`_execution_config`, so with the live check ON the backtest modelled a system
+one filter short of the one that dealt. That divergence is now closed in the
+direction of agreement rather than by adding a filter.
+
+**2. THE FLATTEN AND THE NO-OPEN WINDOW ARE TWO CONSTANTS.**
+
+    flatten_minutes_before_close = 30   flatten at 19:30
+    close_delay_minutes          = 90   stop opening at 18:30
+
+They were one, and the last permitted open fell on the same instant as the
+flatten. `schedule.app.session_end_windows` now answers the two questions
+separately, and 0 falls back to the opening constant so an unchosen
+configuration behaves as before.
+
+**NEITHER IS MEASURED AT ITS NEW VALUE.** 30 is the owner's figure and cannot
+be measured on this box: the decision lake is hourly, the 19:00 bar spans
+19:00-20:00, so 19:30 is inside a bar; the engine models the flatten as an
+exit at the open of the session's last bar; and `livequotes` holds only a
+snapshot. A 5-minute series would settle it and none is collected.
+
+What supports widening rather than narrowing is the entry-timing reading
+recorded above: late entries are the better cohort and the old boundary was
+truncating them.
+
+**3. NOTHING ELSE MOVED, DELIBERATELY.** The gate stays at 0.75, the
+breakout dilution stays, the universe stays. 0.75 sits on diluted strength
+and this file records that the gate and the dilution must not be changed
+apart; changing three things in the dealing path already makes attribution
+hard, and changing what the engine selects as well would make it impossible.
+
+**MY OWN WARNING AGAINST THIS WAS WRONG BY A FACTOR OF SIX, AND IT NEARLY
+DECIDED IT.** I told the owner that switching the last look off would take
+opens from 24 to about 212 over three days, "8.8x", and argued against it on
+that basis. That conflated refusal EVENTS with INSTRUMENT-DAYS -- the error
+this file documents in three separate places, including "raw rows
+triple-count a name refused twice before it opens" and the whole 2026-09-19
+retraction about the loop creating no instrument-days. `refusal_summary`
+reports **25 blocked instrument-days over seven days** against roughly 56
+opens a week, so the real figure is about **+45%**. An argument built on a
+number is only as good as the number, and this one was six times too big in
+the direction that defended the status quo.
+
+**THE FORWARD RECORD RESTARTS FROM TODAY'S CLOSE**, at 4,763.26, for the same
+reason it restarted on 2026-09-01 and 2026-09-08: the account is trading a
+different configuration. Week 39's -41.90 belongs to the old one.
+
+**WHAT TO WATCH, in the order it should appear.**
+
+1. *Trade count.* Expect roughly +45% on opens, not 9x. A materially larger
+   jump means the instrument-day arithmetic above is wrong again.
+2. *Whether the readings keep collapsing.* `live_confidence` is still
+   recorded on every open and refusal. If the >=0.75 gap stays near -0.348
+   with the check disarmed, the check was wrong and disarming it was right.
+   If it closes, something else changed and the change needs re-reading.
+3. *Hit rate.* 39.8% over 83 trips. The book needs about 44.3% to stop
+   losing at current sizes and about 47% for roughly 20%/yr -- which is the
+   number that matters, because the owner's aim is gains rather than
+   breakeven.
+4. *Returns.* Still 47 weeks before a forward result separates from noise,
+   and this restart resets that clock again.
+
+**AND THE THING THAT DECIDES THE SIZE OF ANY GAIN IS NOT ANY OF THESE.** The
+book runs a mean gross leverage of **0.858x against its own 3.5x cap**, so it
+is using about a quarter of the size it is permitted. Leverage multiplies
+expectancy and does not create it, so the order is: get expectancy positive,
+establish it is not noise, then size into it. Sizing into a negative
+expectancy is the fastest way to lose the account, and the caps are what have
+been preventing that.
+
 ### THE PRE-REGISTERED READING CAME IN, AND IT IS THE BAD BRANCH, 2026-09-23
 
 Asked why the account was quiet, why the week was drifting down, and why the
@@ -3411,6 +3512,13 @@ describes a configuration the account ran for one session.
                 cap 8 fills 54 so the target is reachable.
     dealing     DAY TRADING. Opens from 30 minutes after the open, stops
                 opening 60 minutes before the close, flattens at the bell.
+                **"FLATTENS AT THE BELL" WAS NEVER TRUE**, corrected
+                2026-09-23: the flatten was derived from the same constant
+                as the no-open window, so it fired SIXTY MINUTES before the
+                bell and the book sat flat for the last hour of every
+                session from 2026-09-06 onwards. Split into two constants
+                on 2026-09-23 -- opening stops at 18:30, the flatten runs
+                at 19:30, against a calendar close of 20:00 UTC.
     book        4,780.79 GBP. First trade of the new configuration opened
                 15:22 UTC, BKNG, after the last look refused it twice.
     forward     restarts today, again -- the configuration changed twice

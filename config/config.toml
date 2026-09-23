@@ -816,7 +816,76 @@ open_delay_minutes = 0
 # 6.96 hours against a six-hour session, so nothing could reach its stop
 # before the close. Nobody chose that.
 flatten_before_close = true
-close_delay_minutes = 60
+
+# **CHANGED 2026-09-23 on the owner's instruction, and the pair is the
+# point.** These two were ONE constant until today: `close_delay_minutes`
+# drove both the no-open window and the flatten, so the last permitted open
+# and the flatten fell on the same instant. WFC opened 18:30:21 and was
+# flattened at 19:00:31 -- thirty minutes of exposure for a full round trip,
+# which is precisely the waste the 60 minutes was measured to prevent.
+#
+# It also meant the book was flat for the LAST HOUR of every session while
+# this project's own notes said "flattens at the bell". The calendar the
+# dealing pass uses puts the bell at 20:00 UTC.
+#
+#   flatten_minutes_before_close = 30   flatten at 19:30
+#   close_delay_minutes          = 90   stop opening at 18:30
+#
+# So there is now a real hour between the last open and the flatten, rather
+# than nothing.
+#
+# NEITHER NUMBER IS MEASURED AT ITS NEW VALUE, and this is not pretending
+# otherwise. 30 is the owner's figure. It cannot be measured on this box:
+# the decision lake is hourly, the 19:00 bar spans 19:00-20:00, so 19:30 is
+# inside a bar and invisible, and the engine models the flatten as an exit
+# at the open of the session's last bar. A 5-minute series would settle it
+# and none is collected.
+#
+# What DOES support widening rather than narrowing: on the account's own
+# fills, trips opened more than two hours into the session returned +117.42
+# at a 58.3% win rate against +7.92 at 29.0% for the earlier ones, and the
+# later cohort survives dropping its best two trips where the earlier one
+# reverses to -174.66. Late entries are the better cohort and the old
+# boundary was truncating them. 55 trips, so a screen and not a result.
+flatten_minutes_before_close = 30
+close_delay_minutes = 90
+
+# **The last look, switched OFF 2026-09-23 on the owner's instruction.**
+#
+# It disagrees with the engine only where it decides anything. Over 727
+# refusals carrying a live reading, three sessions:
+#
+#     engine band      n    live     gap
+#     <0.40           69   0.393  +0.006
+#     0.40-0.60      397   0.455  -0.000
+#     0.60-0.75       23   0.667   0.000
+#     >=0.75         180   0.448  -0.348
+#
+# Agreement to a thousandth everywhere except the top, which collapses by a
+# third. That is the 2026-09-10 provisional-bar signature: -0.324 then, on
+# n=2, and +0.001 after its fix. The check only ever runs on names the
+# engine wants to OPEN and those are >=0.75 by construction, so it is
+# suspect across its whole domain of application.
+#
+# Two things this also does, neither of them the reason but both worth
+# knowing. It removes the stale-intent loop without a second rule: a chase
+# exists BECAUSE the open was refused, so a name that opens on its first
+# pass is never chased. And it aligns the engine with the account for the
+# first time -- ExecutionConfig.entry_recheck defaults False and is not
+# wired, so the backtest was modelling a system one filter short of the one
+# that dealt.
+#
+# THE READINGS ARE STILL TAKEN AND STILL RECORDED. Reported, not enforced,
+# which is what this project does with entered_bars_ago and the decayed
+# trim. Switching the check off must not also switch off the evidence that
+# says whether switching it off was right.
+#
+# The measured case FOR the check is real and is not dismissed: refusing on
+# a live quote removed 197 of 2,139 round trips and those refused won 36.0%
+# against 50.4% kept. That was 2026-08-27, before the feed switch, the cost
+# model and conviction sizing, and on a gate of 0.35 -- a scale the check
+# was later shown unable to reach at 0.75.
+last_look = false
 
 # **UNSET on 2026-09-10.** Its justification named two conditions and day
 # trading has falsified both.

@@ -479,6 +479,23 @@ def plan_orders(
                 if not still:
                     intents.append(refuse(why, live))
                     continue
+            elif rechecked is not None:
+                # REPORTED, NOT ENFORCED -- the house pattern, applied to the
+                # last look itself from 2026-09-23.
+                #
+                # The check is switched off because it disagrees with the
+                # engine by a third at and above the gate, which is the
+                # 2026-09-10 signature. But switching it off would also stop
+                # the readings that say whether that is true, and then
+                # nothing could ever judge the decision to switch it off --
+                # the same trap as silencing the stale-intent loop, which
+                # this project declined for exactly that reason.
+                #
+                # So the reading is still taken and still recorded on the
+                # row. It simply decides nothing.
+                _, _, live_reading = holds(
+                    rechecked, ticker, direction, entry_confidence
+                )
 
             # The margin this open would commit, against what is left.
             #
