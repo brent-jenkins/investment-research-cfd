@@ -492,6 +492,85 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE FIX: THE LIVE CHECK'S BAND EXCLUDED THE WRONG BAR, 2026-09-24
+
+The mechanism measured earlier today turns out to be an off-by-one in which
+bar the breakout band excludes, and it is deterministic rather than a
+reading about the market.
+
+    donchian_bounds:  upper = high.rolling(55).max().shift(1)
+
+    engine   decides on completed bar N   band = max(high[N-55 .. N-1])
+    live     appends a provisional bar
+             for the hour in progress,
+             so its last row is N+1       band = max(high[N-54 .. N])
+
+**The live band includes bar N's own high.** For a name that just broke out,
+bar N's high IS the new band top -- and `close[N] <= high[N]` by definition,
+so a quote equal to the decision bar's close cannot exceed it. **The
+component reads zero on an unchanged price.** It is not measuring that the
+breakout failed; it is asking whether the bar in progress is itself a NEW
+breakout, which is a different question and is almost always no.
+
+That is why the loss was exactly one saturated component, every time, on
+exactly the names a 0.75 gate admits -- and why the 2026-09-14 entry found
+all six names clearing the gate had a live breakout, 6 of 6. The two
+findings are the same fact from opposite ends.
+
+**`SignalConfig.breakout_band_lag`, defaulting to 1.** The live check is the
+only caller that sets it, to 2, which puts its band where the engine's was.
+An unchanged price then reproduces the engine's reading; a price that has
+genuinely fallen back INSIDE the band still reads zero, which is the
+distinction the check exists to make. Expressed in the engine's own signal
+code and read from config, so no second implementation of the rule exists.
+
+**THE ENGINE IS UNTOUCHED.** The default is 1, so no recorded figure moves.
+Whether the engine's own one-bar breakout EVENT should instead be a
+persistent STATE is a separate question with its own sweep, and nothing here
+answers it.
+
+**When the fix is correct, stated as a bound rather than assumed.** It
+depends on the provisional bar sitting exactly one bar past the engine's
+decision bar. Both of `ProvisionalRepository`'s paths maintain that -- the
+update path writes into the lake's in-progress bar, the append fallback adds
+one bar after the lake's newest completed one -- given that the engine
+decided on the lake's newest completed bar, which `for_live_intent`
+guarantees. A run one bar stale would leave a gap of two and the fix would
+undercorrect by a third of a component; `decision_is_stale` already refuses
+opens past two bar spacings, so that window is narrow and guarded.
+
+**Five mutations checked (M1800-M1804), all caught.** The case is synthetic
+and the answer is known by construction -- quiet bars with a band of real
+width, one breakout bar, then an hour in progress at an unchanged price --
+which is the form this file asks for on exactly this kind of off-by-one.
+Two of my own fixture faults are recorded rather than quietly fixed: the
+first version gave the quiet period ZERO band width, so `upper == lower` and
+every price broke out one way or the other, and its "fell back inside the
+band" case read -1, a breakdown, rather than the 0 it asserted. A fixture
+that cannot express the case it is named for proves nothing.
+
+**THE CHECK STAYS DISARMED, AND THAT IS THE POINT.** `last_look` remains
+false. The readings are still recorded, so tomorrow verifies the fix at zero
+risk to what the account trades -- and arming a filter on a computation
+nobody has yet seen work on real data is how this project shipped an inert
+gate twice in one afternoon on 2026-09-10.
+
+**The reading is pre-registered here so it cannot be chosen afterwards.**
+Tomorrow's rows, in the `>=0.75` band:
+
+    gap collapses from -0.337 to near zero, and the two clusters merge
+        -> the diagnosis is right and the check can be re-armed on evidence
+
+    gap persists near -0.337
+        -> the band lag is not the whole cause and the diagnosis is
+           incomplete, whatever the synthetic case shows
+
+    gap inverts, live reading materially ABOVE engine
+        -> lag 2 is overcorrecting and the check would now approve what the
+           engine would not, which is worse than the defect it replaced
+
+Nothing is concluded before that, and the gate is not touched meanwhile.
+
 ### THE LAST LOOK LOSES A SATURATED BREAKOUT, 2026-09-24
 
 The mechanism, established. It was a hypothesis yesterday and it is now

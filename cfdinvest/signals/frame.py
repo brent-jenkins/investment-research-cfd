@@ -43,6 +43,28 @@ class SignalConfig:
     slow_ma: int = 100
     breakout_window: int = 55
     momentum_full_scale: float = 0.10
+    #: How many bars the breakout band excludes. **1 everywhere except the
+    #: live re-check**, which sets 2 and is the only caller that should.
+    #:
+    #: The engine decides on the newest COMPLETED bar, so its band ends one
+    #: bar earlier than that bar. The live check appends a provisional bar
+    #: for the hour in progress, which puts its last row one bar further on
+    #: -- and at a lag of 1 the band then includes the decision bar's own
+    #: high. For a name that just broke out, that high IS the band top, so
+    #: the component reads ZERO even on an unchanged price. It is an
+    #: artefact of the extra bar, not a reading about the market.
+    #:
+    #: Measured 2026-09-24 on the account's own rows, with the check
+    #: disarmed so nothing selected them: six of nine names clearing the
+    #: gate lost a component of implied magnitude 1.009-1.116, median
+    #: 1.026, against a saturation of 1.000, and nothing sat between them
+    #: and the three that lost nothing.
+    #:
+    #: **Defaults to 1, so no recorded engine figure moves.** Whether the
+    #: engine's own one-bar breakout event should instead be a persistent
+    #: state is a separate question needing its own sweep, and is not
+    #: answered by this.
+    breakout_band_lag: int = 1
     #: Relative weight of each trend component in the blended strength.
     component_weights: dict[str, float] = field(
         default_factory=lambda: {"crossover": 1.0, "breakout": 1.0, "momentum": 1.0}
@@ -318,6 +340,7 @@ def generate_signals(
         slow=settings.slow_ma,
         breakout_window=settings.breakout_window,
         momentum_full_scale=settings.momentum_full_scale,
+        breakout_band_lag=settings.breakout_band_lag,
     )
     strength = trend_module.trend_strength(components, settings.component_weights)
     agreement = trend_module.component_agreement(components)

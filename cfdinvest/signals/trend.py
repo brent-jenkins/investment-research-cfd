@@ -111,6 +111,7 @@ def donchian_bounds(
     window: int = 55,
     *,
     min_periods: int | None = None,
+    lag: int = 1,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return the trailing highest high and lowest low, excluding today.
 
@@ -119,6 +120,26 @@ def donchian_bounds(
     and no breakout ever fires. This is the classic off-by-one in a Donchian
     implementation.
 
+    ``lag`` is how many bars the band excludes, and it exists for ONE caller.
+    The live re-check appends a provisional bar for the hour in progress, so
+    its last row sits one bar PAST the bar the engine decided on -- and at
+    ``lag=1`` the band then includes the decision bar's own high. For a name
+    that just broke out, that high IS the new band top, so the live quote
+    must exceed the high of the bar that broke out, and the component reads
+    zero **even when the price has not moved at all**.
+
+    Measured on the account 2026-09-24: six of nine names clearing the gate
+    lost a component of implied magnitude 1.009 to 1.116, median 1.026,
+    against a saturation of 1.000, with nothing between them and the three
+    that lost nothing. `trend_strength` divides by three regardless, so that
+    is exactly a third of the score, every time, on exactly the names the
+    0.75 gate selects.
+
+    At ``lag=2`` the band ends one bar earlier, which is the SAME band the
+    engine's own test used -- so an unchanged price reproduces the engine's
+    reading, and a price that has genuinely fallen back inside the band
+    still reads zero. That is the distinction the check is for.
+
     Returns
     -------
     tuple
@@ -126,12 +147,14 @@ def donchian_bounds(
     """
     if window < 2:
         raise ValueError(f"window must be >= 2, got {window}")
+    if lag < 1:
+        raise ValueError(f"lag must be >= 1, got {lag}")
     if high is None or low is None or high.empty or low.empty:
         return pd.DataFrame(), pd.DataFrame()
 
     effective = min_periods or window
-    upper = high.rolling(window, min_periods=effective).max().shift(1)
-    lower = low.rolling(window, min_periods=effective).min().shift(1)
+    upper = high.rolling(window, min_periods=effective).max().shift(lag)
+    lower = low.rolling(window, min_periods=effective).min().shift(lag)
     return upper, lower
 
 
@@ -142,6 +165,7 @@ def breakout_state(
     window: int = 55,
     *,
     min_periods: int | None = None,
+    band_lag: int = 1,
 ) -> pd.DataFrame:
     """Return ``+1`` on a breakout above the band, ``-1`` on a breakdown below.
 
@@ -161,7 +185,8 @@ def breakout_state(
     lower_source = low if low is not None and not low.empty else close
 
     upper, lower = donchian_bounds(
-        upper_source, lower_source, window, min_periods=min_periods
+        upper_source, lower_source, window,
+        min_periods=min_periods, lag=band_lag,
     )
     if upper.empty:
         return pd.DataFrame()
@@ -213,6 +238,7 @@ def trend_components(
     slow: int = 100,
     breakout_window: int = 55,
     momentum_full_scale: float = 0.10,
+    breakout_band_lag: int = 1,
 ) -> dict[str, pd.DataFrame]:
     """Compute the three trend components, each in ``[-1, +1]``.
 
@@ -231,7 +257,9 @@ def trend_components(
     if not crossover.empty:
         components["crossover"] = crossover
 
-    breakout = breakout_state(close, high, low, breakout_window)
+    breakout = breakout_state(
+        close, high, low, breakout_window, band_lag=breakout_band_lag
+    )
     if not breakout.empty:
         components["breakout"] = breakout
 

@@ -382,6 +382,24 @@ def reevaluate(
             environment_in_confidence=strategy.environment_in_confidence,
             # Off deliberately -- see the module docstring.
             hold_across_session_open=False,
+            # THE ONE CALLER THAT SETS THIS, and the reason is the extra bar.
+            #
+            # This panel carries a provisional bar for the hour in progress,
+            # so its last row is one bar PAST the bar the engine decided on.
+            # At the engine's lag of 1 the breakout band then includes the
+            # decision bar's own high -- and for a name that just broke out
+            # that high IS the band top, so the component reads zero even on
+            # an unchanged price. A third of the score, deterministically,
+            # on exactly the names a 0.75 gate admits.
+            #
+            # Measured 2026-09-24: six of nine names clearing the gate lost
+            # a component of implied magnitude 1.009-1.116 against a
+            # saturation of 1.000, with nothing between them and the three
+            # that lost nothing. At lag 2 the band is the SAME one the
+            # engine tested against, so an unchanged price reproduces the
+            # engine's reading and a genuine fall back inside the band still
+            # refuses -- which is the distinction this check exists to make.
+            breakout_band_lag=2,
         )
         backtest = BacktestConfig(
             tickers=wanted, interval=settings.market.interval, signal=signal_config
