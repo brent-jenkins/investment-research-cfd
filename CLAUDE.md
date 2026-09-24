@@ -492,6 +492,138 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE LAST LOOK LOSES A SATURATED BREAKOUT, 2026-09-24
+
+The mechanism, established. It was a hypothesis yesterday and it is now
+measured, on the account's own rows rather than on a reconstruction.
+
+**WHY THE ACCOUNT'S ROWS AND NOT THE COMPONENT SCRIPT.**
+`scratchpad/components.py --source broker` ran live today and was **INERT
+for the second time**. Its "engine" arm reads the whole lake up to the bar
+IN PROGRESS; the account's engine reads the newest COMPLETED bar over a
+bounded six-month window through `for_live_intent`. So both of its arms were
+the same wrong computation, every delta read ~0.000, and the one name in the
+>=0.75 band agreed to +0.005. **A comparison whose two sides are identically
+wrong reports agreement**, which is the 2026-09-10 no-op trap in a third
+costume. The zeros are not evidence of health and are recorded as void.
+
+**What the account recorded instead.** Approvals carry a reading from today,
+so for the first time the distribution is not left-truncated -- and the check
+is DISARMED, so nothing selects which names appear:
+
+    ticker  engine   live    gap    3 x |gap|
+    UPS     +0.754 +0.382 -0.372      1.116
+    WFC     +0.861 +0.514 -0.347      1.042
+    SCHW    +0.901 +0.556 -0.344      1.033
+    GS      +0.777 +0.438 -0.340      1.019
+    AXP     +0.791 +0.454 -0.337      1.012
+    PGR     +0.842 +0.506 -0.336      1.009
+    AMT     +0.769 +0.774 +0.004     -0.013
+    TMO     +0.780 +0.789 +0.009     -0.026
+    DHR     +0.831 +0.859 +0.029     -0.086
+
+**`trend_strength` divides by three whatever the components read**, so
+losing one costs exactly a third of its magnitude. `3 x |gap|` is therefore
+the magnitude of what was lost, and the component is bounded in [-1, +1].
+
+    six collapsed   median 1.026   min 1.009   max 1.116   sd 0.040
+    three agreed    median -0.026
+    in between      NONE
+
+**The lost component is SATURATED**, to within three per cent, and nothing
+tuned it to that. A noisy check spreads gaps continuously; a check losing one
+saturated component produces two clusters and a hole, which is what this is.
+
+**And the three that agree are not the 2/3-ceiling names.** A name whose
+breakout is already zero cannot exceed (1+1+0)/3 = 0.667 and so could not
+clear the gate at all. All three read ABOVE 0.667 -- 0.769, 0.780, 0.831 --
+so their breakout is live and it SURVIVES the recompute. Six lose it, three
+keep it; what separates them is not established.
+
+**THIS CLOSES THE QUESTION THE OWNER ASKED ON 2026-09-23**, "not much
+activity today", end to end. The 2026-09-14 entry established that the 0.75
+gate is a breakout gate -- all six names clearing it had a non-zero breakout,
+6 of 6 -- because a flat breakout caps strength at 0.667. The live check then
+loses that breakout on about two names in three. **So the account was
+refusing most of exactly what the gate selects, for a reason inside the
+check rather than in the market.** The gap read -0.348 armed and -0.337
+disarmed, so it was never an artefact of which names refusal selected.
+
+**The measured case FOR the check is not overturned**, and is not quoted
+either: refusing on a live quote removed 197 of 2,139 round trips whose
+refused cohort won 36.0% against 50.4%, measured 2026-08-27 on a 0.35 gate,
+before the feed switch and the corrected cost model. What is now established
+is that at 0.75 the check refuses on a reading it computes wrongly.
+
+**The fix is not taken tonight.** Making the live recompute see the breakout
+the engine sees would re-arm a filter with a real measurement behind it, and
+it changes what the account trades for the third time in two days. One
+session of data stands behind the current configuration.
+
+### DAY ONE OF THE NEW CONFIGURATION, 2026-09-24
+
+Against the watch-list written down before the session.
+
+**1. TRADE COUNT: +231%, PREDICTED +45%. WRONG AGAIN, AND THE METRIC COULD
+NOT HAVE SAID OTHERWISE.**
+
+    shipped-arm mean before today   4.8 opens/day
+    today                          16
+
+    16 opens across 9 distinct names
+    re-entries (a name opened twice in one session)   7
+    closes 18   signal 7   flattened 11
+
+**The count is CHURN, not new names.** Seven of sixteen opens were second
+entries into a name the account had closed earlier the same session. I
+predicted +45% from `refusal_summary`'s 25 blocked instrument-days over
+seven days -- and **that metric counts names that never opened at all**, so
+it is structurally incapable of seeing a re-entry the check suppressed: a
+suppressed re-entry looks like a name that DID open, earlier the same day.
+
+So the figure was right for the question it answers and wrong for the one I
+asked it. **Two wrong predictions in two days from the same store**, 8.8x
+too high on Tuesday and 3.3x too low today, in opposite directions -- which
+is worse than one error, because it means the reasoning was not anchored to
+what the field measures either time.
+
+**The re-entries are SMALL**, which is what keeps the cost from matching the
+count: DHR re-opened at 0.2 units against 14.5, TMO 0.2 against 3.5, SCHW
+2.3 against 39.1. The decayed trim shrinks the second entry. The spread bill
+therefore scales with notional rather than with the 3.3x headline.
+
+**2. THE READINGS: the gap persists with the check disarmed.** -0.337 today
+against -0.348 yesterday, on rows nothing selected. That is the pre-
+registered test passing: had the gap closed, the collapse would have been an
+artefact of measuring refusals only, and disarming would have been wrong.
+
+**3. HIT RATE: 43.8% today, 40.4% over 99 trips.** Breakeven needs 44.5% at
+current sizes. Today is the first session at or near it, on 16 trips, which
+is nothing.
+
+**4. RETURNS: flat.**
+
+    balance   4763.26 -> 4758.00    -5.26
+    realised (USD, fill-to-fill)    -6.08   16 trips, won 7 lost 9
+    mean win +18.80  mean loss -15.30  ratio 0.81x
+
+**And one trip carries it**: UPS +82.21 of a -6.08 total, so without it the
+day is -88.29. The same concentration this file records at every timescale,
+now at daily resolution on a single session.
+
+**The three biggest losses are all churn round trips** -- DHR -48.87, TMO
+-33.81, AXP -32.18, every one opened 14:17 and closed on `signal` at 15:18
+or 16:19. Opened large, signal died inside an hour, closed at a loss,
+re-entered small. That is the cost of the re-entries showing up in the P&L
+rather than in the spread bill, and it is the thing to watch before the
+count.
+
+**THE SESSION-END SPLIT WORKED AS CONFIGURED.** The flatten fired at
+19:32:27 -- the first pass after 19:30 -- closing eleven positions, against
+a calendar close of 20:00. The last open was 17:15 and a name wanting to
+open at 19:17 was refused. An hour now separates the last permitted open
+from the flatten where yesterday there was nothing.
+
 ### THE OWNER'S TIMING HYPOTHESIS, MEASURED AGAINST THE ACCOUNT, 2026-09-23
 
 Proposed: open only in the first two hours of the session, then hold until at
