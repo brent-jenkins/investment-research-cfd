@@ -885,7 +885,26 @@ close_delay_minutes = 90
 # against 50.4% kept. That was 2026-08-27, before the feed switch, the cost
 # model and conviction sizing, and on a gate of 0.35 -- a scale the check
 # was later shown unable to reach at 0.75.
-last_look = false
+# **RE-ARMED 2026-09-24 on the owner's decision**, one session after it was
+# switched off, because the cause was found and fixed in between.
+#
+# It was disarmed on 2026-09-23 on evidence that it disagreed with the engine
+# by a third at and above the gate. That disagreement is now diagnosed: the
+# live panel carries a provisional bar for the hour in progress, so its
+# Donchian band included the DECISION bar's own high, and a name that had
+# just broken out could not exceed it -- the component read zero on an
+# unchanged price. `SignalConfig.breakout_band_lag` puts the live band where
+# the engine's was.
+#
+# **The fix is not yet verified on real data**, and arming it means Friday
+# tests two things at once: whether the gap closes, and what a working check
+# does to the re-entry churn that tripled the trade count on 2026-09-24.
+# The owner's call, made knowing that -- the alternative was a free
+# verification with the check disarmed and a re-arm on Monday.
+#
+# If the fix is wrong the account goes quiet again, which is immediately
+# visible in the open count and reversible by setting this back to false.
+last_look = true
 
 # **UNSET on 2026-09-10.** Its justification named two conditions and day
 # trading has falsified both.

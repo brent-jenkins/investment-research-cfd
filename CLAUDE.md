@@ -549,11 +549,23 @@ every price broke out one way or the other, and its "fell back inside the
 band" case read -1, a breakdown, rather than the 0 it asserted. A fixture
 that cannot express the case it is named for proves nothing.
 
-**THE CHECK STAYS DISARMED, AND THAT IS THE POINT.** `last_look` remains
-false. The readings are still recorded, so tomorrow verifies the fix at zero
-risk to what the account trades -- and arming a filter on a computation
-nobody has yet seen work on real data is how this project shipped an inert
-gate twice in one afternoon on 2026-09-10.
+**THE CHECK IS RE-ARMED, ON THE OWNER'S DECISION THE SAME EVENING.**
+`last_look` is true again, one session after it was switched off.
+
+I argued for leaving it disarmed: the readings are recorded either way, so
+Friday would have verified the fix at zero risk to what the account trades,
+and arming a filter on a computation nobody has yet seen work on real data
+is how this project shipped an inert gate twice in one afternoon on
+2026-09-10. **The owner's counter is that an armed session answers two
+questions instead of one** -- whether the gap closes, AND what a working
+check does to the re-entry churn that tripled the trade count today -- with
+a weekend to read it before Monday. That is a better use of one session, and
+the argument against it was about my confidence in the fix rather than about
+any cost the owner had not already weighed.
+
+**The failure mode is visible and cheap.** If the fix is wrong the account
+goes quiet again, which shows up in the open count within a pass and is
+reversed by one line. What it costs is a session, not a position.
 
 **The reading is pre-registered here so it cannot be chosen afterwards.**
 Tomorrow's rows, in the `>=0.75` band:
@@ -788,7 +800,10 @@ Let's change it to something sensible and see what happens rather than losing
 more time on a known-poor system." Three changes, all in the dealing path,
 none of them touching a rule the engine owns.
 
-**1. THE LAST LOOK IS OFF, AND STILL REPORTING.** `strategy.last_look`
+**1. THE LAST LOOK IS OFF, AND STILL REPORTING.**
+**SUPERSEDED 2026-09-24: it was re-armed the following evening**, once the
+band-lag defect behind the evidence below was found and fixed. It was off
+for one session. `strategy.last_look`
 defaults **True** -- a safety check that is off unless somebody switches it
 on is not a safety check -- and `config.toml` switches it off, the way live
 dealing needs its own variable.

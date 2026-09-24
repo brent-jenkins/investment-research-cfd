@@ -1,4 +1,18 @@
-"""The last look decides nothing, and still reports. Owner's call, 2026-09-23.
+"""The last look records what it reads, whether or not it decides on it.
+
+**RENAMED 2026-09-24.** This was `test_the_last_look_is_off_and_still_
+watching.py`, which described a state that lasted one session. The property
+it actually guards outlives that: the reading is taken and written to the
+row in BOTH modes, so the check can always be judged from the record rather
+than by re-running it. A filename describing a setting rather than a
+property is one that goes stale the day the setting moves.
+
+**The history, because the figures below are read in its light.** Switched
+OFF 2026-09-23 on the evidence in the next paragraph; the cause was
+diagnosed and fixed on 2026-09-24 (`SignalConfig.breakout_band_lag`); and
+re-armed the same evening on the owner's decision, to get a session's data
+before the weekend. The fix is NOT yet verified on real data, so Friday
+tests the fix and the re-entry churn at once.
 
 WHY IT WAS SWITCHED OFF. Over 727 refusals carrying a live reading, across
 three sessions, the check agreed with the engine everywhere except where it
@@ -84,11 +98,25 @@ def test_the_last_look_defaults_to_on() -> None:
     )
 
 
-def test_the_deployment_has_switched_it_off_deliberately() -> None:
-    """The shipped value, read from where the live path reads it."""
-    assert load_config().strategy.last_look is False, (
-        "config.toml no longer switches the last look off, so the account "
-        "is re-checking again without anybody saying so"
+def test_the_shipped_value_is_stated_rather_than_drifting() -> None:
+    """M1796: the shipped setting flipped without anybody saying so.
+
+    This asserted False between 2026-09-23 and 2026-09-24, when the check
+    was disarmed on measured evidence. It asserts True now: the cause of
+    that evidence was found -- the live panel's Donchian band included the
+    decision bar's own high, so a name that had just broken out read a
+    breakout of zero on an UNCHANGED price -- and fixed by
+    `SignalConfig.breakout_band_lag`.
+
+    Pinned either way so a silent flip fails the build. What the account
+    re-checks before placing an order is not something that should move in
+    a diff nobody reads.
+    """
+    assert load_config().strategy.last_look is True, (
+        "config.toml no longer arms the last look. It was re-armed on "
+        "2026-09-24 once the breakout band lag was fixed; turning it off "
+        "again is a decision about what the account trades and needs to be "
+        "made deliberately, not inherited"
     )
 
 
