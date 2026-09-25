@@ -492,6 +492,48 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### ENTRY, TOO EARLY, TOO LATE: THE OWNER'S THREE, MEASURED, 2026-09-26
+
+The owner framed the failure points as selection and entry, closing too
+early, and closing too late. Each measured on the 76 shipped-arm trips from
+the best (MFE) and worst (MAE) point reached between entry and exit, off the
+lake's hourly high and low. The entry and exit bars are partial, which
+inflates both excursions and makes a take-profit optimistic.
+
+    excursions   MFE median 0.59%  p75 1.14%    MAE median 0.78%  p75 1.15%
+
+    1) entry     never in profit (MFE < 0.15%)   8 trips   -137.50
+                 26% of all losses
+    2) too early winners capture a median 46% of their best;
+                 11 of 31 keep under a third
+    3) too late  reached >= 0.5% and closed at a loss   16 trips  -117.96
+                 peaked at a median 0.65%, closed at -0.38%
+
+**The finding under all three is the excursion size.** A typical trip swings
+0.6% for it and 0.8% against it inside four hourly bars, several times the
+edge a trip carries. So exits mostly act on noise, and "too early" and "too
+late" are both true at once -- winners are cut before their best while other
+trips give their whole gain back -- because an exit rule cannot tell a dip
+from a turn at that scale.
+
+**Stops lose at every level tried**, on real fills, confirming every earlier
+measurement from the corrected-engine side:
+
+    stop 0.50%  -668.01    0.75%  -439.96    1.00%  -369.81    1.50%  -72.51
+
+**A take-profit is the one exit lever with a positive reading, and it is a
+lead rather than a result:**
+
+    take-profit 0.50%  -29.34   0.75%  +7.13   1.00%  +24.94
+                1.50%  +74.77 (fires 11)       2.00%  -14.18 (fires 4)
+
+Hump-shaped, eleven firings at its best point, a negative neighbour at 2%,
+and priced optimistically. It agrees in direction with the 2026-09-04
+corrected-engine screen, where banking at +2% of notional read +7.5pp inside
+the 9.3pp floor. Under "one engine" it cannot be added to the dealing path
+without engine support, and it cannot be measured properly while the harness
+does not reproduce.
+
 ### WHERE THE MONEY LEAKS, READ OFF THE ACCOUNT, 2026-09-26
 
 The owner asked what the data shows about how to stop losing. Every cut of
