@@ -492,6 +492,79 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### WHAT THE SCORE MEASURES, AND WHETHER HOLDING LONGER HELPS, 2026-09-26
+
+The owner asked what confidence is built from, whether something better
+exists, and -- mid-way -- whether the book should hold for a day or two
+rather than flatten each evening.
+
+**What it is.** `confidence = |strength| x agreement` (the environment term
+is off). `strength` is the equal-weighted mean of three components, each in
+[-1, +1], on HOURLY bars with every window at its code default -- nothing in
+`config.toml` overrides them:
+
+    crossover   sign of the 20-bar mean against the 100-bar     ~3 vs ~14 sessions
+    breakout    close outside the 55-bar high/low band          ~8 sessions
+    momentum    21-bar return, saturating at 10%                ~3 sessions
+
+Every input describes a trend lasting days to weeks. The account holds for
+about five hours and flattens daily. That is a horizon mismatch, and the
+2026-08-30 entry already records that every intervention slower than the
+hold failed.
+
+**THE SCREEN.** Six months of the engine's own session bars (the latest
+run's index, 2026-03-30 to 2026-09-25, 125 sessions, 50 names). One reading
+per name per day at the 13:00 decision bar, entered at the 14:00 open.
+Components recomputed with `trend.trend_components` and checked against the
+run's confidence first: rank correlation **0.935**. Skill is the per-day
+rank correlation across names (IC) against the market-neutral return,
+averaged over days.
+
+    to the 19:00 open, market-neutral      IC       t
+    engine strength (signed)            +0.012   +0.55
+    crossover 20/100                    +0.007   +0.36
+    breakout 55                         -0.002   -0.11
+    momentum 21-bar                     +0.017   +0.75
+    direction alone                     +0.026   +0.97
+    direction x confidence (traded)     +0.012   +0.43
+    return 1 / 3 / 7 / 35 bars          +0.020 / +0.020 / +0.015 / +0.014
+    today so far, open to 13:00         +0.010   +0.50
+    range of the last bar               +0.015   +0.72
+
+**Nothing reaches t = 1.** Not the score, not any component, and not the
+faster readings that would match the holding period. Reweighting inputs
+that carry no skill cannot produce any, so "rebalance the weights" has
+nothing to work with on this evidence, and neither does a swap to short-
+horizon price criteria.
+
+**AND HOLDING LONGER IS WORSE, NOT BETTER.** The same entry, exit at the
+19:00 open N sessions later. Trading the engine's own direction, raw
+returns so the market's own trend counts, t divided by sqrt(N+1) for the
+overlapping windows:
+
+    held          mean per day   t       days up   H1        H2
+    same day        +0.035%    +0.87     56.5%   +0.067%   +0.003%
+    1 night         -0.077%    -0.67     53.7%   -0.080%   -0.075%
+    3 nights        -0.263%    -0.95     41.3%   -0.065%   -0.458%
+    5 nights        -0.394%    -0.81     44.5%   -0.189%   -0.597%
+
+    market-neutral IC at 1 / 3 / 5 / 10 nights: negative for every
+    component, -0.005 to -0.045, none past |t| = 0.9
+
+No horizon is significant, but the sign turns negative after one night and
+deepens, in both halves. Over these six months these names mean-reverted
+over days rather than trending, so a signal built to follow multi-day trends
+would have lost more by holding for them. **The daily flatten stays**: it
+is the least bad horizon on this record, not a proven good one.
+
+**Limits, stated.** A screen, not the engine: the direction is held fixed
+for N sessions where a real carry book would exit on a flip or the time
+stop, and spread and overnight financing are not charged -- both of which
+would make carrying look worse, not better. Six months is one regime. And
+the same-day +0.035% is below the ~0.15% round-trip spread, which is the
+whole forward record restated: the entries carry no measurable edge over
+the window the account trades.
+
 ### OPENED AGAINST REJECTED: NO BETTER, NO WORSE, 2026-09-26
 
 The owner asked whether the account picks the wrong trades more often than
