@@ -492,6 +492,85 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE COST GATE STAYS OFF, AND I HAD RECOMMENDED THE OPPOSITE, 2026-09-25
+
+**RETRACTED: my recommendation, made on 2026-09-23 and again on 2026-09-25,
+to switch the cost gate on.** I called `max_spread_multiple` "built, unused,
+and aimed at what the numbers say is the problem". It is not unused by
+accident. `universe/screen.py` records in the field's own docstring that it
+was switched OFF because it was **measured to lose money at every
+threshold**:
+
+    gate     excluded   net kept   net given up
+    1.5x           10    101,265         17,181
+    2.0x            6    107,842         10,604
+    2.5x            1    116,598          1,848
+    none            0    118,446              0
+
+"A name is usually dear BECAUSE it moves, and movement is what this strategy
+is paid for." I recommended reversing that twice without opening the file
+that explained it. The recommendation never reached this file or the code;
+it lived in conversation, which is where this file says the damaging
+corrections tend to live.
+
+**That measurement predates the 2026-09-04 look-ahead correction**, so by
+this file's own rule it does not bind either -- which leaves the gate
+unsupported in BOTH directions, and switching it on would change what the
+account trades on no evidence at all.
+
+**So the forward record was asked**, the only corrected-era evidence there
+is. 76 shipped-arm trips, each joined to its instrument's recorded spread
+median, cut at 15.87bp. Trip P&L is fill-to-fill, so it already PAYS the
+spread:
+
+    cheap  n=40   net  -37.00   per trip -0.93   win 45.0%   median  9.93bp
+    dear   n=36   net +127.24   per trip +3.53   win 36.1%   median 20.98bp
+
+    without best two    cheap -112.59    dear -55.33
+    spearman, spread vs trip P&L   +0.049 on n=76, standard error ~0.115
+
+**It points the same way as the docstring.** The dear names made money and
+the cheap ones lost it. The dear-side advantage is two trips -- SLB +87.81
+and UPS +100.64 -- and the correlation is nothing, so this is not evidence
+FOR expensive names. But it is plainly no evidence for a gate, and a gate at
+any of the levels above would have refused exactly those two, the best
+trips on the record. **The gate stays `None`.**
+
+**What survives of the cost argument I kept making.** The arithmetic that
+cost per round trip is about the size of the per-trip deficit still stands
+as arithmetic. What does not follow from it is that DEAR NAMES are the cost
+problem -- here they are where the profit was. Cost is a property of
+turnover and holding period at least as much as of the instrument, which is
+what the 2026-09-12 and 2026-09-15 turnover entries measured, and none of
+that is a screen setting.
+
+### THE REFUSAL NAMES ITS WINDOW, 2026-09-25
+
+The reporting defect found on Friday's reading, fixed the same night.
+`open_allowed` is False for two unrelated reasons and both wrote "within the
+opening window"; seventy of Friday's 167 such rows were the CLOSING window.
+A refused open now carries `too near the session close to open` when that is
+why, read from `session_ending` -- the same calendar answer that closed the
+window, handed through from `session_end_windows` rather than re-derived.
+
+**Split by the calendar rather than by the hour, and that is the reason it
+was split at all.** A neutral label would have fixed the false statement
+and still merged the two, leaving an hour-based heuristic to count them
+apart -- and US clocks change on 1 November, moving the session an hour in
+UTC, so that heuristic would mis-assign silently within five weeks.
+
+`session_ending` decides nothing: `open_allowed` has already refused, and a
+test fails the build if the label ever refuses an open on its own. Neither
+reason is in `LAST_LOOK_REASONS`. Three mutations checked (M1810-M1812), all
+caught.
+
+**Two stale claims of mine were corrected on the way**, both created by the
+2026-09-23 split and both still standing until tonight: the `closing_soon`
+exemption in `tests/test_engine_models_dealing.py` said the engine expresses
+that window as `close_delay_minutes`, which stopped being true when the
+flatten got its own constant; and Friday's entry said the reason string fed
+`LAST_LOOK_REASONS`, which it never did.
+
 ### THE PRE-REGISTERED READING RESOLVED: BRANCH ONE, 2026-09-25
 
 Three outcomes were written into this file BEFORE Friday's session. The gap
@@ -572,6 +651,13 @@ changes no behaviour and it will be misread the first time somebody counts
 opening-window refusals, which is the shape of half the retractions in this
 file. Not fixed tonight: the reason string feeds `LAST_LOOK_REASONS`'
 classification and splitting it needs its own test.
+
+**RETRACTED 2026-09-25, same evening: the reason string does NOT feed that
+classification.** `within the opening window` is deliberately absent from
+`LAST_LOOK_REASONS` -- it is a limit, not the gate -- and
+`test_a_limit_refusal_is_not_the_last_look` already asserts so. I stated the
+dependency without opening the file, and it was the reason given for not
+fixing a defect. **FIXED the same night**; see the next entry.
 
 **THE MONEY, and the reading above does not improve it.**
 
@@ -6541,6 +6627,10 @@ from `capital-prices-archive`. Per-bar measured spreads cost about nine
 points of CAGR against the flat 5bp — not the forty-four the archived note
 records, because that was measured on a universe containing INTC at 28.73bp
 and SMCI at 41.61bp, both of which the cost gate now refuses.
+**STALE, corrected 2026-09-25: the cost gate refuses nothing.**
+`max_spread_multiple` was set back to `None` after being measured to lose
+money at every threshold -- see `universe/screen.py` and the 2026-09-25
+entry -- so INTC and SMCI are refused by nothing today.
 
 **`max_open_positions` exists in the engine and nothing configures it.**
 Capacity was previously a side effect of the universe size. Separating them

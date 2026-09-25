@@ -2209,6 +2209,7 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         session_open = {}
         open_allowed = {}
         closing_soon = {}
+        no_more_opens = {}
 
     # **A stale run may not OPEN, and must never stop a CLOSE.**
     #
@@ -2286,6 +2287,9 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         ),
         # Flatten before the bell rather than carrying overnight.
         closing_soon=closing_soon,
+        # Which window blocked an open, so the refusal can say so. Data for
+        # the record only -- `open_allowed` above already decided.
+        session_ending=no_more_opens,
         flatten_before_close=bool(
             getattr(app_config.strategy, "flatten_before_close", False)
         ),

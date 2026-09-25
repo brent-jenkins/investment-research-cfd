@@ -126,10 +126,20 @@ NOT_A_GATE = {
         "equivalent is equity, which it already has."
     ),
     "closing_soon": (
-        "which instruments are within the closing window, read from the "
+        "which instruments are within the FLATTEN window, read from the "
         "exchange calendar. Data, not a rule: the gate that uses it is "
-        "`flatten_before_close`, and the engine expresses the same window "
-        "as `close_delay_minutes` over its own session-restricted bars."
+        "`flatten_before_close`, driven since 2026-09-23 by "
+        "`flatten_minutes_before_close` rather than `close_delay_minutes`. "
+        "The engine models the flatten as an exit at the open of the "
+        "session's last bar, which is coarser than either -- the hourly "
+        "grid cannot express 30 minutes before a close."
+    ),
+    "session_ending": (
+        "which instruments are inside the NO-NEW-OPENS window before the "
+        "close. Decides nothing: `open_allowed` has already refused the "
+        "open, and this only chooses which of two reasons the refusal "
+        "carries, so the record stops calling the closing window the "
+        "opening one."
     ),
     "session_open": (
         "the exchange calendar. Deliberately not modelled: the engine's panel "

@@ -398,6 +398,7 @@ def test_no_order_record_is_unchecked_rather_than_a_quiet_gate(lake):
 def test_a_limit_refusal_is_not_the_last_look(lake):
     """Only the gate's own reasons count, or the panel measures the caps."""
     for reason in ("outside the exchange session", "within the opening window",
+                   "too near the session close to open",
                    "no price", "capped by the per-instrument limit"):
         orders.record_plan(
             _plan([Intent("AAPL", "AAPL", "refused", reason=reason)]),

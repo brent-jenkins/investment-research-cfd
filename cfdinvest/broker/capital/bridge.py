@@ -245,6 +245,7 @@ def plan_orders(
     available: float | None = None,
     max_margin_usage: float | None = None,
     closing_soon: Mapping[str, bool] | None = None,
+    session_ending: Mapping[str, bool] | None = None,
     flatten_before_close: bool = False,
 ) -> BridgeReport:
     """Decide what to place. Pure: it reads and returns, and places nothing.
@@ -345,12 +346,34 @@ def plan_orders(
         # Inside the opening window a *new* position is refused; anything
         # already held may still be closed or resized. The bell is the
         # dearest moment of the day to enter and the cheapest thing to skip.
+        #
+        # **The refusal names the window that blocked it**, from 2026-09-25.
+        # `open_allowed` is False for two unrelated reasons -- too soon after
+        # the open, or too near the close -- and until today both wrote
+        # "within the opening window". Friday's store held 167 such rows, and
+        # the seventy at 17:00-19:00 UTC were the CLOSING window wearing the
+        # opening window's name. Seventy rows a day mislabelled, in the store
+        # this project reads its refusal rates out of.
+        #
+        # Told apart by the calendar rather than by the hour. The hour
+        # separates them today and stops doing so on 1 November, when US
+        # clocks change and the session moves by an hour in UTC -- so a
+        # heuristic would mis-assign silently within five weeks of being
+        # written. `session_ending` is the same calendar answer that closed
+        # the window, handed through rather than re-derived.
+        #
+        # Neither reason is in `persist.orders.LAST_LOOK_REASONS`: both are
+        # limits, not the gate, and `refusal_summary` must not count them.
         if (
             open_allowed is not None
             and held_units == 0.0
             and not open_allowed.get(ticker, False)
         ):
-            intents.append(refuse("within the opening window"))
+            intents.append(refuse(
+                "too near the session close to open"
+                if (session_ending or {}).get(ticker, False)
+                else "within the opening window"
+            ))
             continue
 
         if not open_now.get(ticker, False):
