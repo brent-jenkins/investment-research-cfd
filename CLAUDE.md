@@ -492,6 +492,61 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### OPENED AGAINST REJECTED: NO BETTER, NO WORSE, 2026-09-26
+
+The owner asked whether the account picks the wrong trades more often than
+the right ones. Every candidate since 2026-09-08 scored identically --
+entry at a price, exit at the open of the 19:00 bar, signed by the engine's
+direction, one row per instrument-day -- so opened and refused are
+comparable.
+
+**RETRACTED BEFORE IT WAS REPORTED: opened 66.7% against cleared-not-opened
+24.6%.** The first version entered every candidate at the OPEN of the hour.
+The dealer acts at :05-:17, after the last look has watched the price since
+:00, so that scoring handed the opens the favourable move the check selected
+on and the refusals the adverse move that refused them. A look-ahead in the
+scoring, not a finding -- caught because opens scored at 66.7% on bars while
+the same trades win 39% on real fills.
+
+**Scored from the `price` on each plan row, at the pass itself**, with the
+excursion read only over bars starting after it:
+
+    group                      n    win   gross    net   median  never in profit
+    opened                    67  47.8%  +0.115  -0.059  -0.034       19.4%
+    refused, last look fresh  28  60.7%  +0.245  +0.054  +0.218       17.9%
+    refused, last look chase  22  63.6%  +0.090  -0.069  +0.188       18.2%
+    refused, age unknown      58  48.3%  -0.057  -0.215  -0.007       25.9%
+    refused by the clock     131  45.0%  +0.104  -0.100  -0.059       26.7%
+
+    (% of entry price; refused groups include names opened later that day)
+
+**The account is not systematically picking worse than it rejects -- and it
+is not picking better either.** Every group sits near a coin flip, and a
+win rate on 67 has a standard error near 6pp, so none of these differ. The
+fresh last-look refusals reading a little better than what opened is 28
+instrument-days and is not evidence the check is costing money; it is also
+not evidence it is earning any.
+
+**The eight never-in-profit trips are ordinary.** 19.4% of opens never got
+0.15% into profit, against 18-27% of everything refused. A trade that is
+wrong from the start is the base rate of a coin-flip entry, not a selection
+fault that a better filter would remove.
+
+**The engine's own confidence does not sort outcomes over this window
+either** (bar-open entry, which is unbiased for candidates nothing selected
+intrabar; 606 instrument-days with a direction):
+
+    confidence   <=0.30  0.30-0.45  0.45-0.60  0.60-0.75  >=0.75
+    n               101        302         76         43      84
+    win           52.5%      50.0%      59.2%      44.2%   47.6%
+    gross        -0.030     +0.030     +0.220     -0.162  +0.043
+
+No monotone relation, and the 0.75 band that the gate admits is
+indistinguishable from the whole population (50.8%, +0.032). Three weeks is
+thin, and a trend follower's selection is expected to show over trends
+rather than sessions -- but on this record the gate is choosing which trades
+to take without choosing better ones.
+
 ### ENTRY, TOO EARLY, TOO LATE: THE OWNER'S THREE, MEASURED, 2026-09-26
 
 The owner framed the failure points as selection and entry, closing too
