@@ -492,6 +492,103 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE PRE-REGISTERED READING RESOLVED: BRANCH ONE, 2026-09-25
+
+Three outcomes were written into this file BEFORE Friday's session. The gap
+collapsed, which was the first of them.
+
+    >=0.75 band      n    engine     live       gap
+    Tue, armed     180     0.796    0.448    -0.348
+    Thu, disarmed    9     0.851    0.514    -0.337
+    Fri, FIXED       5     0.797    0.794    -0.003
+
+    every row on Friday
+      AMD    open   engine 0.766  live 0.753  gap -0.014
+      CMCSA  open   engine 0.849  live 0.845  gap -0.004
+      QCOM   open   engine 0.803  live 0.800  gap -0.003
+      AMAT   open   engine 0.795  live 0.794  gap -0.001
+      LRCX   open   engine 0.769  live 0.773  gap +0.004
+
+    collapsed (gap < -0.10)      0 of 5
+    agreeing (|gap| <= 0.05)     5 of 5
+    inverted (gap > +0.10)       0 of 5
+
+    implied lost component, 3 x |gap|:  +0.041 to -0.012
+    against 1.009 to 1.116 on Thursday, where saturation is 1.000
+
+**The third branch is excluded as well as the second.** No reading came in
+materially ABOVE the engine, so `band_lag = 2` is not overcorrecting and the
+check is not now approving what the engine would refuse. That mattered more
+than it sounds: an overcorrected check is worse than the defect it replaced,
+because it fails OPEN.
+
+**And the other bands did not move**, which is what says the fix is narrow
+rather than a rescaling: `<0.40` reads -0.014 and `0.40-0.60` reads -0.001,
+against +0.019 and +0.002 the day before.
+
+**THE CHECK REFUSED NOTHING THE GATE HAD SELECTED.** Checked directly rather
+than inferred from a median, because "the median agrees" and "nothing good
+was refused" are different claims:
+
+    'no longer clears the bar' refusals        85
+      entered_bars_ago   2: 40   3: 30   4: 15
+      at age 0                                  0
+      engine confidence   median 0.432   MAX 0.476
+      at or above the 0.75 gate                 0
+
+Every refusal is a CHASE, and every one is far below the gate. So with the
+band lag corrected the check approved 5 of 5 names the engine selected and
+refused only decayed holds the engine was still intending. That is the job
+description.
+
+**THE CHURN IS GONE, which was the second thing an armed session was meant
+to answer.**
+
+    2026-09-24  opens 16 across 9 names   re-entries 7   closes 18
+    2026-09-25  opens  5 across 5 names   re-entries 0   closes  5
+
+Seven re-entries to none. The three largest losses on Thursday were all
+churn round trips, so this is the mechanism that produced them being
+switched off rather than a quieter market.
+
+**AND THE STALE-INTENT LOOP IS BACK, exactly as predicted.** Disarming
+removed it for free on 2026-09-23 -- a chase exists because the open was
+refused -- so re-arming restores it, and the 85 chase refusals above are it.
+It remains what this file has recorded since 2026-09-19: log volume, not
+money. No chase created a blocked instrument-day then and none is claimed to
+now.
+
+**A REPORTING DEFECT, found while reading the refusals and not yet fixed.**
+167 rows read `within the opening window`, by hour:
+
+    13: 64   14: 33   17: 8   18: 21   19: 41
+
+The 13:00 and 14:00 rows are the opening window. **The 17:00 to 19:00 rows
+are the CLOSING window wearing the opening window's name**, because
+`plan_orders` refuses on `open_allowed` and `schedule.app` sets that flag
+False for both reasons. Seventy rows a day are labelled as something they
+are not, in the store this project reads its refusal rates out of. It
+changes no behaviour and it will be misread the first time somebody counts
+opening-window refusals, which is the shape of half the retractions in this
+file. Not fixed tonight: the reason string feeds `LAST_LOOK_REASONS`'
+classification and splitting it needs its own test.
+
+**THE MONEY, and the reading above does not improve it.**
+
+    Fri  4757.91 -> 4736.00   -21.91   5 trips, 1 winner, realised -29.02 USD
+      QCOM  -16.13 flattened   CMCSA -7.11 signal   AMAT -5.18 signal
+      LRCX   -0.91 signal      AMD   +0.31 signal
+
+    week 4805.16 -> 4736.00   -69.16   -1.44%
+      Mon +3.96   Tue -44.14   Wed -1.72   Thu -5.35   Fri -21.91
+
+    whole record  104 trips  win 39.4%  ratio 0.79x  breakeven 44.1%
+
+**Five trips is nothing and a one-in-five day is nothing**, but the honest
+summary of the week is that a diagnostic succeeded and the account still
+lost money. The two are separate results and the first must not be allowed
+to colour the second.
+
 ### THE FIX: THE LIVE CHECK'S BAND EXCLUDED THE WRONG BAR, 2026-09-24
 
 The mechanism measured earlier today turns out to be an off-by-one in which
