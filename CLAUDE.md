@@ -492,6 +492,66 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### WHERE THE MONEY LEAKS, READ OFF THE ACCOUNT, 2026-09-26
+
+The owner asked what the data shows about how to stop losing. Every cut of
+the 76 shipped-arm trips, each with its concentration control, because the
+harness does not reproduce and the account is the only trustworthy record.
+Screens throughout; nothing is adopted on one.
+
+**THE LOUDEST LINE WAS BETA, AND IT WOULD HAVE BEEN THE WORST CHANGE TO MAKE.**
+
+    long   n=26   net -106.64   win 30.8%   without best two -152.35
+    short  n=50   net +196.88   win 46.0%   without best two  +14.30
+
+Robust to the control, and the obvious reading -- go short-only -- is wrong.
+The book flattens daily, so the control is INTRADAY drift: the median
+open-to-close move across the traded universe, per session. It was negative
+on 8 of 14 sessions, heavily so from 09-08 to 09-17, roughly flat since.
+
+    09-08..09-17  market falling   short +203.21 win 61.9%   long   +6.40
+    09-18..09-25  market flat/up   short   -6.33 win 34.5%   long -113.04
+
+**The short side's entire profit arrived while the market was falling, and
+went when it stopped.** A trend follower short in a falling market is the
+design working, not a selection edge. In the flat stretch the book lost on
+BOTH sides at 30-35%, which is the real reading: no edge in either direction
+once there is no trend to follow. This file already says direction is
+genuinely unpredictable here; this is that, on real fills.
+
+**THE EXITS ARE DOING THEIR JOB -- a clean negative.** Trades closed on
+`signal` lost -104.53 and trades held to the flatten made +194.77, which
+invites "stop exiting early". That comparison is selection: a trade whose
+signal dies is a loser by construction. Asked as a counterfactual instead,
+each signal-closed trip re-priced at the flatten against the broker's own
+bid or offer for its side:
+
+    as actually exited   -104.53      held to the flatten   -149.99
+    per trip   mean -2.53   median +1.57   holding better on 11 of 18
+    without the best one / two     -69.56 / -93.58
+
+Holding usually gains a little and occasionally loses a lot, and the early
+exits pay for themselves by cutting those. **The exit rule is not the leak.**
+
+**Hold time and exit type are outcomes, not levers.** 4h+ trips made
++198.57 and 1-2h trips lost -95.09, but a trip lasts because its signal held;
+the split cannot be traded on.
+
+**15:00 UTC entries look bad** -- n=16, win 18.8%, -195.35 without the best
+two -- and the cohort overlaps Thursday's churn round trips, which the fixed
+last look now suppresses. Thin, confounded, and not acted on.
+
+**What this leaves.** Every selection cut available on 76 trips is now read:
+the cost of an instrument, the direction, the exit, the hour. None is a
+lever. What the record shows is the shape this file has described since
+2026-09-04 -- entries with a small real edge, a cost per trip about the size
+of the deficit, and a trend follower that earns in trends and bleeds when
+there are none. Deciding between the remedies for that -- a regime filter,
+fewer and longer trades, a different gate -- needs a backtest, because the
+forward record separates from noise in about 47 weeks. **The harness that
+does not reproduce is the binding constraint on making money, not any
+setting.**
+
 ### THE COST GATE STAYS OFF, AND I HAD RECOMMENDED THE OPPOSITE, 2026-09-25
 
 **RETRACTED: my recommendation, made on 2026-09-23 and again on 2026-09-25,
