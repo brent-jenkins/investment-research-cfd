@@ -534,6 +534,20 @@ the 9.3pp floor. Under "one engine" it cannot be added to the dealing path
 without engine support, and it cannot be measured properly while the harness
 does not reproduce.
 
+**AND IT DOES NOT SURVIVE ITS CONCENTRATION CONTROL**, run the same day:
+
+    level   change   -best    -best2    H1       H2
+    0.75%    +7.13   -36.75   -70.47   -29.03   +36.16
+    1.00%   +24.94   -29.51   -57.74   +57.65   -32.71
+    1.50%   +74.77    -0.81   -49.85   +69.65    +5.12
+
+One trip carries every level; without it each is zero or negative, and 0.75%
+and 1.00% change sign between halves. **So nothing on the live record says
+how to exit better.** Stops lose, a take-profit is one trip, and signal exits
+beat holding to the flatten (2026-09-26). What is left is entry -- the eight
+trips that never got into profit -- and that is a question about selection
+rather than exits.
+
 ### WHERE THE MONEY LEAKS, READ OFF THE ACCOUNT, 2026-09-26
 
 The owner asked what the data shows about how to stop losing. Every cut of
