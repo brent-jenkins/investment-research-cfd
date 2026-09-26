@@ -492,6 +492,99 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE BACKTEST WORKS, AND THE STRATEGY HAS NO EDGE, 2026-09-26
+
+The owner's instruction: get the backtest working, then investigate a
+different source of edge. The first half is done, and it answers the second
+half's premise.
+
+**THE ANCHOR MOVED FROM A LOST SCRIPT TO THE ACCOUNT.** `research.replay`
+runs the live period through the engine and compares its entries, bar for
+bar, with what the live engine recorded wanting to open -- every plan row
+with `entered_bars_ago == 0`, and every approved open. That cannot have
+been measured wrong, where the 2026-09-08 battery could never be told apart
+from a broken harness. `harness.RECORDED` stays, marked retired.
+
+**Over 2026-09-11 to 2026-09-25, after the fixes below:**
+
+    live engine entries 88      harness entries 96
+    identical (bar, name, side)          70
+    chases (account opened late on an entry the harness has on time)  17
+    unexplained                           1   (MPC, 09-16 15:00)
+    harness entries the live engine never intended   0
+
+And every one of the 30 retained live runs reproduces from a fresh run on
+the same bar and names: 0 directions different, max confidence diff 0.000.
+
+**WHAT IT TOOK: four divergences, each found by pulling one mismatch apart.**
+
+1. *The volatility regime is market-level.* It aggregates across the names
+   in the panel, so adding GE flipped QCOM from long 0.803 to flat on
+   09-25 14:00. Each day must run on the universe traded that day --
+   `selection_segments`. The strategy consequence is noted below.
+2. *Research filled the session's opening bar* on the previous evening's
+   signal, which live never does. `research_backtest` refuses it.
+3. *The engine's closing window measured to the last bar's START.* It
+   refused the 18:00 entry live takes, and on daily bars refused every
+   entry. **And in a live run it took the newest bar as the session's
+   close**, so an hour after an entry that entry was refused retroactively,
+   the engine's book dropped it, and the account closed it "on signal":
+   AXP, PGR, GS, SCHW, DHR, WFC and TMO on 09-24, the churn that day's entry
+   blamed on signals dying. The live runs' trade logs show no position.
+   Fixed in the engine: the day in progress ends no earlier than a normal
+   session would. **This changes what the account does.**
+4. *The engine resized held positions every bar.* The keep decision ran
+   before the decayed trim and confidence sizing, which then multiplied the
+   HELD units -- AMAT opened at 18.87 and was 2.36 an hour later; 277 of 438
+   harness trades in nine days were resizes where the account made 7 in
+   three weeks. The dealer keeps full size inside its 3.0 threshold. The
+   keep now follows the sizing, which ends the compounding trim recorded
+   on 2026-09-15. At 3.0 the trim no longer moves a held position -- as it
+   never has on the account.
+
+Plus, for the account model only: at the gross ceiling the dealer refuses
+the weakest new opens rather than rescaling the book (61 resizes on 09-22
+under scaling), so `research_backtest` sets `leverage_cap_selects`. The
+replay checks the ENGINE, which scales, so it overrides that back
+(`DECISION_OVERRIDES`). And `research_backtest` now refuses an override
+the engine has no field for -- a misspelled one had silently made an arm
+identical to its baseline.
+
+**WHAT IT DOES NOT MODEL, measured rather than assumed.** On 43 trips both
+took, the account paid a median **25.5bp more on entry** than the harness,
+beyond the modelled spread: it deals at :05-:17 after the last look has
+watched the move confirm, the harness at the hour's open. The last look is
+not modelled -- `entry_recheck` keeps 28 of the account's 66 opens and is a
+poor stand-in. Returns correlate 0.75 trip for trip.
+
+**THE BASELINE, 2023-07-03 to 2026-09-25**, 169 weekly re-screens, 83
+names, the account model at the shipped configuration:
+
+    as modelled       CAGR -74.0%   maxDD -98.7%   -0.52%/day   t -7.65
+    + 25bp entry      CAGR -93.6%   maxDD -100%    -1.06%/day   t -15.4
+
+    by year           2023 -47%   2024 -73%   2025 -79%   2026 -58%
+    halves            -0.520%/day   -0.513%/day
+
+    components (summed daily fractions of equity)
+      intraday -0.722   gap +0.070   spread -2.833   slippage -0.716
+
+**Negative in every year and identical across halves, and negative BEFORE
+cost.** That is the forward record, the opened-against-rejected screen, the
+score screen and the holding-period test all saying one thing, now from a
+harness that makes the live engine's decisions. It also retires the
+2026-09-08 battery's +191.0% as an artefact of the lost script: a faithful
+harness lands at -74%.
+
+**The strategy consequence of divergence 1 is open.** Whether a name trades
+depends on which other names the screen picked, through the market-level
+volatility regime. Nobody chose that and it is unmeasured.
+
+**NOT PUSHED.** Divergences 3 and 4 are engine changes and a push deploys.
+Divergence 4's live effect is small -- the dealer already kept full size --
+but divergence 3 stops the account closing positions an hour after opening
+them, which changes what it holds. That is the owner's decision.
+
 ### WHAT THE SCORE MEASURES, AND WHETHER HOLDING LONGER HELPS, 2026-09-26
 
 The owner asked what confidence is built from, whether something better
@@ -734,7 +827,7 @@ there are none. Deciding between the remedies for that -- a regime filter,
 fewer and longer trades, a different gate -- needs a backtest, because the
 forward record separates from noise in about 47 weeks. **The harness that
 does not reproduce is the binding constraint on making money, not any
-setting.**
+setting.** **Resolved the same day**: see the harness entry above.
 
 ### THE COST GATE STAYS OFF, AND I HAD RECOMMENDED THE OPPOSITE, 2026-09-25
 
@@ -1135,6 +1228,14 @@ or 16:19. Opened large, signal died inside an hour, closed at a loss,
 re-entered small. That is the cost of the re-entries showing up in the P&L
 rather than in the spread bill, and it is the thing to watch before the
 count.
+
+**CORRECTED 2026-09-26: the signal did not die.** The engine's closing
+window took a live run's newest bar as the session's close, so an hour
+after an entry that entry sat "an hour from the close" and was refused
+retroactively; the engine's book dropped a position the account held and
+the next pass closed it "on signal". The live runs' own trade logs for AXP
+and PGR that afternoon show no position at all. Fixed in the engine; see
+the 2026-09-26 harness entry.
 
 **THE SESSION-END SPLIT WORKED AS CONFIGURED.** The flatten fired at
 19:32:27 -- the first pass after 19:30 -- closing eleven positions, against
@@ -2110,7 +2211,9 @@ The sizing sequence in the engine loop is byte-identical between 56d0b13
 and today, so what remains are the five engine commits that landed after
 the sweep, the lake having been re-ingested since, and whatever the lost
 script did. **The battery still does not reproduce and is still the top
-open item.**
+open item.** **SUPERSEDED 2026-09-26**: the harness is now anchored to the
+account instead, and reproduces the live engine's own decisions; the
+battery stays unreproduced and is retired as an anchor.
 
 **CAGR IS UNREADABLE ON THESE ARMS.** Every one ends with equity at or
 below zero, so `arm_metrics` reports `nan` and only trips, gross and cost
@@ -2183,6 +2286,12 @@ rule four ways and every one calls `_trim_decayed` ONCE with
 ``target == units``. The function is correct in isolation; the defect is the
 order of the calls around it, and a test of the function can never reach it.
 A check on what went in, where the failure was in what came out.
+
+**SUPERSEDED 2026-09-26: the order IS now corrected**, together with the
+same fault in confidence sizing, because the backtest cannot describe the
+account otherwise. See the 2026-09-26 harness entry and
+`tests/test_a_held_position_keeps_its_size.py`, which replaces the file
+named below.
 
 **NOTHING IS CHANGED.** Correcting the order moves every recorded figure in
 this file, including the sweep that chose `decayed_multiplier = 0.5` -- that
@@ -3817,6 +3926,11 @@ first entry becomes possible when the 13:00 bar completes at 14:00, thirty
 minutes after the 13:30 open: the cadence the owner asked for on
 2026-09-09, arrived at from the data rather than from `open_delay_minutes`,
 which stays at 0 and is now redundant rather than wrong.
+**QUALIFIED 2026-09-26: redundant for the live path and wrong for a
+backtest.** A research run decides on bar N and fills at N+1, so with a
+delay of 0 it filled every session's opening bar on the previous evening's
+signal -- a trade the account never takes. `research_backtest` now refuses
+the opening bar.
 
 **IT SHIPPED INERT TWICE, AND THAT IS THE MORE USEFUL HALF OF THIS ENTRY.**
 

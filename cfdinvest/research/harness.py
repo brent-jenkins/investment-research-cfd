@@ -84,11 +84,36 @@ __all__ = [
 #: harness cannot hit one, either the harness is wrong or the recorded
 #: number is -- and both are worth stopping for, which is why
 #: `assert_reproduces` raises rather than warns.
+#:
+#: **RETIRED AS THE ANCHOR, 2026-09-26.** The battery came from a script that
+#: was never kept, over a lake since re-ingested, so no correct code need
+#: reproduce it -- and a miss could not say whether the harness or the figure
+#: was wrong. The anchor is now the account: ``research.replay`` checks that
+#: the harness makes the live engine's own entry decisions, bar for bar.
+#: These figures stay, and ``assert_reproduces`` still refuses them, so that
+#: nobody reads an arm against them in the belief that they were ever met.
 RECORDED: dict[tuple[int, int], dict[str, float]] = {
     (5, 30): {"cagr": 1.160, "maxdd": -0.072},
     (8, 50): {"cagr": 1.910, "maxdd": -0.066},
     (12, 70): {"cagr": 2.703, "maxdd": -0.077},
 }
+
+#: The engine's opening delay in a research run, at least.
+#:
+#: The live dealer never fills on a session's opening bar. It decides on the
+#: newest COMPLETED bar, and before the first bar of a session completes that
+#: is the previous evening's last -- a book flattened by construction, so it
+#: opens nothing. The research engine decides on bar N and fills at N+1, so
+#: without this it filled the morning's first bar on the previous evening's
+#: signal: a trade the account cannot take. The config's own delay is 0,
+#: recorded on 2026-09-10 as "redundant", which is true of the live path and
+#: false of a backtest.
+#:
+#: Any delay from 1 to 60 minutes refuses exactly the opening bar on hourly
+#: data, because the engine measures elapsed time from the day's first bar.
+#: Found 2026-09-26 replaying the live period; see ``research.replay``.
+FIRST_BAR_DELAY_MINUTES: int = 1
+
 
 def _noise_floor_pp() -> float:
     """The project's noise floor, from its single owner.
@@ -242,7 +267,13 @@ def research_backtest(app_config, *, tickers: Sequence[str], entry_gate=None,
       the flatten lives in ``execution.overnight_profit_take`` rather than in
       a field of its own;
     * the screen's membership is passed as ``entry_gate``, which the runner
-      composes with the breakout mask rather than replacing it.
+      composes with the breakout mask rather than replacing it;
+    * the session's opening bar is refused, because the live dealer never
+      fills on it -- see ``FIRST_BAR_DELAY_MINUTES``;
+    * the gross ceiling SELECTS rather than scales
+      (``leverage_cap_selects``), which is what the dealer does at the cap.
+
+    Explicit overrides win over all of these.
 
     ``execution_lag`` is left where the shipped config puts it. A research
     run must not borrow ``for_live_intent``'s lag of 0: that fills on the bar
@@ -255,13 +286,35 @@ def research_backtest(app_config, *, tickers: Sequence[str], entry_gate=None,
         start = end = universe = account = tickers = None
 
     base = app_module._backtest_config(_Args(), app_config)  # noqa: SLF001
-    execution = dataclasses.replace(
-        base.execution,
-        overnight_profit_take=app_module.FLATTEN_AT_SESSION_END,
-        entry_gate=entry_gate,
-        **{k: v for k, v in overrides.items()
-           if k in {f.name for f in dataclasses.fields(base.execution)}},
-    )
+    fields = {
+        "overnight_profit_take": app_module.FLATTEN_AT_SESSION_END,
+        "entry_gate": entry_gate,
+        "open_delay_minutes": max(
+            int(base.execution.open_delay_minutes or 0), FIRST_BAR_DELAY_MINUTES
+        ),
+        # At the gross ceiling the dealer refuses the weakest new opens and
+        # leaves held positions alone; scaling instead rescaled the whole
+        # book on every bar the cap bound -- 61 resizes on 2026-09-22 alone,
+        # the book pinned at 3.5x all session, where the account resizes
+        # nothing. Found replaying the live period; see research.replay.
+        "leverage_cap_selects": True,
+    }
+    # An explicit override wins over every default above -- and a name the
+    # engine does not have is refused rather than dropped. Dropping it made
+    # an arm silently identical to its baseline on 2026-09-26: an override
+    # spelled `decayed_multiplier` for `decayed_position_multiplier` returned
+    # the shipped book to the trade, which reads as a finding that the rule
+    # does nothing.
+    known = {f.name for f in dataclasses.fields(base.execution)}
+    unknown = sorted(set(overrides) - known)
+    if unknown:
+        raise TypeError(
+            f"research_backtest got override(s) the engine has no field for: "
+            f"{unknown}. An unknown name would be ignored and the arm would be "
+            "the baseline under another label."
+        )
+    fields.update(overrides)
+    execution = dataclasses.replace(base.execution, **fields)
     return dataclasses.replace(
         base,
         tickers=list(tickers),

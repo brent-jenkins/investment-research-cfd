@@ -77,6 +77,24 @@ TRADE_COLUMNS: tuple[str, ...] = (
 )
 
 
+def _bar_span(stamps: pd.DatetimeIndex) -> pd.Timedelta:
+    """How long one bar lasts, read off the index itself.
+
+    The typical gap between consecutive bars WITHIN a day, because the gaps
+    across nights and weekends are not bar lengths. An index with one bar
+    per day has no within-day gap, and there a bar spans the day, so the
+    typical gap between days is used instead. Zero only when there is a
+    single bar, where no span can be read and none is invented.
+    """
+    if len(stamps) < 2:
+        return pd.Timedelta(0)
+    gaps = pd.Series(stamps[1:] - stamps[:-1])
+    same_day = pd.Series(stamps[1:].normalize() == stamps[:-1].normalize())
+    within = gaps[same_day.to_numpy() & (gaps > pd.Timedelta(0)).to_numpy()]
+    chosen = within if len(within) else gaps[gaps > pd.Timedelta(0)]
+    return chosen.median() if len(chosen) else pd.Timedelta(0)
+
+
 def _as_matrix(frame: pd.DataFrame, index, columns, fill=np.nan) -> np.ndarray:
     """Align a panel to the run's grid and return it as a float matrix."""
     if frame is None or frame.empty:
@@ -246,7 +264,37 @@ def run_execution(signal_frame, analysis_frame, config):
     if shut > 0 and len(index):
         _s = pd.DatetimeIndex(index)
         _ends = pd.Series(_s, index=_s).groupby(_s.normalize()).transform("max")
-        remaining = (pd.DatetimeIndex(_ends) - _s).total_seconds() / 60.0
+        # A bar is stamped at its START, so the session closes one bar AFTER
+        # the day's last stamp: the 19:00 bar of a 20:00 close. Measuring to
+        # the stamp credited every bar with one bar less than it had, and
+        # refused the 18:00 entry that live -- stopping at 18:30 under a
+        # 90-minute window -- takes. Found 2026-09-26 by replaying the live
+        # period against the account's intents; on daily bars the old
+        # measure made remaining zero everywhere and refused every entry.
+        #
+        # And the day IN PROGRESS has not reached its close at all. A live
+        # run stops at the newest completed bar, so on its final day the
+        # newest bar is also that day's last stamp -- and measured to it, the
+        # entry made one bar earlier sits "an hour from the close" and is
+        # refused after the fact. The engine's book then drops a position the
+        # account opened, the next intent is flat, and the account closes it
+        # "on signal": seven positions an hour after opening on 2026-09-24.
+        # So the final day ends no earlier than a normal session would.
+        _span = _bar_span(_s)
+        _session_close = pd.DatetimeIndex(_ends) + _span
+        _days = _s.normalize()
+        _final_day = _days[-1]
+        _counts = pd.Series(1, index=_days).groupby(level=0).sum()
+        _complete = _counts[_counts.index != _final_day]
+        if len(_complete):
+            _typical = int(_complete.median())
+            _first = pd.Series(_s, index=_s).groupby(_days).transform("min")
+            _normal_close = pd.DatetimeIndex(_first) + _span * _typical
+            _later = np.asarray(_days == _final_day) & np.asarray(
+                _normal_close > _session_close
+            )
+            _session_close = _session_close.where(~_later, _normal_close)
+        remaining = (_session_close - _s).total_seconds() / 60.0
         allowed_late = np.asarray(remaining >= float(shut), dtype=bool)
         # The frame's final bar is not near a close; it is simply the last
         # bar there is. Same reasoning as `session_end` below, and the same
@@ -660,13 +708,6 @@ def run_execution(signal_frame, analysis_frame, config):
         target_units = _target_units(
             new_held, size[bar], reference, equity, config, tradable
         )
-        resize = state_module.needs_resize(
-            units, target_units, threshold=config.rebalance_threshold
-        )
-        # A position whose direction is unchanged only moves when it has
-        # drifted far enough to be worth the spread.
-        keep = (new_held == held) & (new_held != 0) & ~resize
-        target_units = np.where(keep, units, target_units)
 
         # Slots before sizing. How many positions may be held is a different
         # question from how large each may be, and answering it after the
@@ -689,6 +730,29 @@ def run_execution(signal_frame, analysis_frame, config):
         # After the trim and before the caps: conviction decides how large a
         # position should be, and the caps then decide how large it may be.
         target_units = _size_by_confidence(target_units, confidence[bar], config)
+
+        # A position whose direction is unchanged only moves when it has
+        # drifted far enough to be worth the spread -- judged AFTER the trim
+        # and the confidence sizing, which shape the fresh target, not the
+        # position already held.
+        #
+        # This ran BEFORE them until 2026-09-26, which set the target to the
+        # units held and then multiplied THAT: the trim halved a held
+        # position every bar (recorded 2026-09-15 as compounding, and left
+        # as it was) and confidence sizing rescaled it every bar with each
+        # hour's reading. A position opened at 18.87 units of AMAT was 2.36
+        # an hour later and resized on every bar after, 277 of 438 harness
+        # trades in nine days. The account does none of it: the dealer
+        # compares the engine's target against what is held under this same
+        # threshold, finds the drift inside 3.0, and keeps full size. So the
+        # engine was modelling an eighth of the exposure the account carries
+        # and charging for trades it never places. Found by replaying the
+        # live period against the account, `research.replay`.
+        resize = state_module.needs_resize(
+            units, target_units, threshold=config.rebalance_threshold
+        )
+        keep = (new_held == held) & (new_held != 0) & ~resize
+        target_units = np.where(keep, units, target_units)
 
         target_units, new_held = _apply_position_limit(
             target_units, new_held, units, config

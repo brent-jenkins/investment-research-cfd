@@ -13,6 +13,11 @@ what produced every headline figure in CLAUDE.md.
 
 So a sweep lives here, is committed, and refuses to report an arm until its
 baseline reproduces a recorded result.
+
+**Since 2026-09-26 the result it must reproduce is the account's.**
+``replay`` runs the live period through the engine and checks it made the
+live engine's own entry decisions, bar for bar. The 2026-09-08 battery could
+never be regenerated and is kept in ``RECORDED`` only as a retraction.
 """
 
 from cfdinvest.research.harness import (
