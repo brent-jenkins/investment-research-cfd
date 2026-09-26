@@ -492,6 +492,40 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### OPTION 1, FIRST CANDIDATE: TRADE ONLY WHERE MOVES ARE BIG -- FAILS, 2026-09-26
+
+The owner's option 1 is a different source of edge. This project can
+forecast how far a name moves and not which way. A CFD cannot trade
+magnitude directly, but a trip's cost is fixed in basis points while the
+move scales with volatility, so any directional edge should be worth more
+in loud names.
+
+**The screen said yes, weakly.** Six months of engine signals, 13:00
+decisions held to the 19:00 open: predicted-loud names moved 1.53% against
+0.75% for quiet ones, at no higher spread (11.8bp against 12.7bp), and gated
+calls rose with predicted volatility -- -0.14, -0.13, -0.05, -0.06, +0.21%.
+It failed its split at the top 20% (+0.57% then -0.27%) and survived only
+at the top 10%: n=107, +0.24% net, both halves positive. It agreed in
+direction with the 2026-08-28 finding that momentum pays better in
+predicted-high-volatility names.
+
+**Through the harness over 3.25 years it does not survive**, account model,
+169 weekly re-screens:
+
+    arm                          CAGR    maxDD   intraday  gap    spread
+    baseline, 50 names          -74.0%  -98.7%   -0.722  +0.070  -2.833
+    screen target 20            -48.6%  -88.2%   -0.318  +0.068  -1.418
+    entries in top 10% of vol   -24.7%  -60.8%   -0.418  +0.003  -0.374
+      (screening overlay on the engine's own volatility reading)
+
+    by year, top 10%   2023 -9%   2024 -27%   2025 -24%   2026 -20%
+
+**Both lose less only because they trade less.** Gross -- intraday plus gap
+-- stays negative in every arm; the top-10% arm is -0.415 before a basis
+point of cost. The six-month screen's +0.35% was one regime, scored from
+the hour's open. Magnitude selection is not a source of edge for this
+signal: it concentrates the same coin flip into fewer, louder trades.
+
 ### THE BACKTEST WORKS, AND THE STRATEGY HAS NO EDGE, 2026-09-26
 
 The owner's instruction: get the backtest working, then investigate a
