@@ -492,6 +492,81 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### 24-HOUR HEADLINE SENTIMENT: A LEAK, AND ONE LEAD ON THE LOUD NAMES, 2026-09-27
+
+The owner asked whether the previous 24 hours' sentiment, per stock and for
+the market, calls the next few hours. The 2026-08-31 news programme had
+tested headline sentiment against TRIP P&L on the flawed engine, never
+against this question, and the archive was deleted. Rebuilt for this test
+in the scratchpad only -- the old Google News RSS fetcher from git history,
+WEEKLY windows (up to 100 stories each) over six months, the 50 traded
+names, 27,318 headlines kept after the old boilerplate flags and
+`advisor.sentiment.is_price_report`. Scored with `score_headline`. Outcome:
+10:00 New York to the last bar's open, the account's window.
+
+**RETRACTED BEFORE IT WAS REPORTED AS A RESULT: "+0.133% a trade, t 3.69;
+the loudest fifth +0.301%, t 3.24; market sentiment change t 2.53".** That
+was leakage. **91% of the rebuilt headlines carry a DAY-level stamp --
+exactly 03:00 New York** -- so a story dated the session day may have
+appeared during it, and describe the very move it was scored against. The
+terms that paid were rally, surges, jumps, record, outperform: price
+descriptions the price-report filter misses. Checks by headline age could
+not catch it, because the wrong stamp makes a same-day story look seven
+hours old. A 24-48h placebo already read +0.031%.
+
+**On news knowable before the open** -- day-stamped stories dated the
+previous day or earlier, plus precisely-timed ones before 10:00:
+
+                                   n     mean     t     H1      H2    w/o best 2 days
+    all names, signed            2,795  +0.025%  +0.44  +0.009  +0.027   +0.003
+    all names, market-neutral    2,795  +0.040%  +0.81
+    loudest fifth, signed          802  +0.179%  +1.68  +0.196  +0.181   +0.132
+    loudest fifth, market-neutral  802  +0.192%  +1.78  +0.213  +0.183   +0.142
+
+**The broad effect is gone. On the loud names a lead survives**: above the
+~0.13% round trip, both halves positive, holds without its best two days,
+55% the right way -- and not established at t 1.7 over one six-month
+regime. It is the first lead that fits the owner's own frame -- the names
+that will move most, with the side taken from news.
+
+**A bias the backfill cannot remove.** A search engine returns a past
+window's stories ranked by relevance NOW, so stories followed by a big move
+may be the ones returned. Only headlines recorded AS THEY APPEAR, with the
+fetch time, are point-in-time. So the honest next step is a forward record,
+not a further backfill. Nothing here is adopted and nothing is collected
+yet: the news branch was deleted on the owner's decision on 2026-08-31, and
+restarting collection is also the owner's decision, which this project's
+rule makes permanent once taken.
+
+### PRE-MARKET MOVES PARTLY REVERSE AT THE OPEN -- REAL, AND TOO SMALL, 2026-09-27
+
+The owner asked whether a stock's own pre-market move says which way it goes
+after the open. Capital quotes 57 of the candidates from 08:00 UTC and the
+raw files keep those bars; **`load_market` trims every bar to session hours**,
+so the engine has never seen them and this test reads the raw files.
+
+Previous session's close to the 09:00 New York bar's close, against what
+follows, signed by the pre-market direction (positive = it continues).
+39,030 name-days, 60 names, 928 sessions, New York clock:
+
+    into the first half-hour, 09:00 -> 10:00
+      all                  -0.032%   t -3.12   continues 48.4%   H1 -0.058  H2 -0.016
+      market-neutral       -0.025%   t -3.29
+      by |pre-market|      0.08% -0.003   0.25% -0.008   0.46% -0.031
+                           0.83% -0.040   1.89% -0.078
+
+    the session the account trades, 10:00 -> the last bar
+      all                  -0.020%   t -1.09   continues 48.9%
+      every size bucket    |t| <= 1.4, continues 48-50%
+
+**The first statistically real direction effect this investigation has
+found**: a pre-market move is partly undone by 10:00, in both halves,
+market-neutral, and growing with the size of the move. **It is not
+tradeable.** Fading even the largest fifth earns under 0.08% against a
+round trip of ~0.13%, in exactly the hour -- pre-market and the open --
+where spreads are widest. And by 10:00, where the account can first deal,
+the information is spent.
+
 ### A SMALL UNIVERSE, AND THE MARKET'S OWN DIRECTION, 2026-09-27
 
 The owner's framing, restated so it is not lost: the aim is not to find
