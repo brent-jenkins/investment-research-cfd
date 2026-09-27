@@ -492,6 +492,28 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### "EXPERT IN A FEW STOCKS": PER-NAME SKILL DOES NOT PERSIST, 2026-09-27
+
+The owner's idea: rather than a wide book, become expert at predicting a
+small number of names. The trap is hindsight -- the fixed eight were chosen
+in 2026 -- so every candidate was traded through the account-faithful
+harness over 2023-07 to 2026-09, ranked on the FIRST half only, and judged
+on the second. Each name's realised P&L as a share of the equity it was
+traded on; split 2025-02-12; ten names a run.
+
+    rank correlation, H1 result against H2 result       -0.180
+    best  5 on H1   +0.051 -> +0.018   (all names H2 -0.009)
+    best 10 on H1   +0.040 -> -0.028
+    best 20 on H1   +0.029 -> -0.012
+    positive in both halves   15 of 100, against 19.3 expected by chance
+
+**Last period's best names were slightly WORSE than a random pick.** The
+best-five figure rests on MU (+0.082 then +0.080) and CDNS; one name in a
+hundred holding its sign is what chance produces. On this signal there is
+no stock it is quietly good at: expertise in a few names would need
+information specific to those names, which is what the headline record is
+now collecting.
+
 ### MINUTE BARS HAD STOPPED FOR SIX MONTHS; HEADLINES RECORDED AGAIN, 2026-09-27
 
 **THE MINUTE SERIES WAS SILENTLY STOPPED, breaking "once collected, never
