@@ -492,6 +492,45 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### OPTION 1: REVERSAL AND EARNINGS DRIFT ARE ABSENT TOO, 2026-09-27
+
+Two more candidates for a different source of edge, each a SCREEN over the
+whole lake -- all 100 candidates, 929 sessions from 2023-01-03 -- priced at
+the 19:00 bar's open where the account flattens, market-neutral. Neither
+earns a run through the harness.
+
+**Short-term reversal.** A name's return over the past N sessions against
+the next M. Every information coefficient is slightly negative, the
+reversal direction, and none reaches |t| 1.1 (overlap-adjusted). Buying the
+bottom fifth and selling the top fifth makes about +0.1% per 3-5-session
+trade before cost, t under 0.75 -- below one round trip's spread before
+overnight financing -- and flips sign by year: past-5/next-5 read -0.24%
+in 2023 and +0.44% in 2026. The mild reversal seen over six months on
+2026-09-26 is not a stable effect.
+
+**Post-earnings drift.** The reaction measured across both sessions a
+report can land on (the stored dates carry no time of day), then the drift
+over the next M sessions, signed by the reaction:
+
+    events 1,494   median |reaction| 4.19%
+    next  1   -0.046%  t -0.68   continue 51%   H1 +0.069  H2 -0.161
+    next  3   -0.002%  t -0.02   continue 49%   H1 +0.112  H2 -0.116
+    next  5   -0.069%  t -0.58   continue 50%   H1 +0.145  H2 -0.283
+    next 10   +0.082%  t +0.51   continue 51%   H1 +0.458  H2 -0.293
+
+No horizon differs from zero, every one flips sign between halves, and there
+is no gradient with the size of the reaction -- the largest quarter, median
+10.6%, drifts -0.19%. The best-documented anomaly in equities is absent in
+these large, heavily followed names, which is where the literature says it
+has faded.
+
+**Where option 1 now stands.** Four candidates on this universe at hours to
+days -- the trend signal, magnitude selection, reversal, earnings drift --
+all at zero before cost. Every directional reading this project can make
+from hourly mid-quotes and reporting dates on 100 US large caps sits inside
+the noise, and the cost of a round trip does not. That is a statement about
+this universe and these horizons, not about the engine.
+
 ### OPTION 1, FIRST CANDIDATE: TRADE ONLY WHERE MOVES ARE BIG -- FAILS, 2026-09-26
 
 The owner's option 1 is a different source of edge. This project can
