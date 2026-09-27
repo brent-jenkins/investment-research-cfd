@@ -492,6 +492,65 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### MINUTE BARS HAD STOPPED FOR SIX MONTHS; HEADLINES RECORDED AGAIN, 2026-09-27
+
+**THE MINUTE SERIES WAS SILENTLY STOPPED, breaking "once collected, never
+stopped".** `ingest-minute` ran every night, rewrote its files and reported
+success, and most of the 66 `capital_1m` series had not gained a bar since
+2026-04-02; MU stopped 2026-08-07 and INTC 2026-08-28. Found while checking
+what finer data existed for the owner's questions, not by any check.
+
+The cause, measured against the live API: asked for minute bars from
+20:00, Capital returns the 60 bars to 20:59 and stops at the overnight gap.
+The walk then asked again FROM 20:59, got that one bar back, saw nothing
+new and ended. Asked from 20:59:01 the server answers with the next
+session. So every night the ingest resumed at its tail, reached the first
+gap, added nothing and reported success. `fetch_prices` now steps one
+second past the newest bar. `tests/test_the_price_walk_crosses_a_gap.py`
+serves bars the way Capital does, gap and all; M1850-M1851 caught.
+
+**Most of the hole is recoverable**: Capital serves 180 days of minute bars
+and the tails sit just inside it. A catch-up was run by hand after the
+deploy rather than leaving the nightly job to walk forward while the oldest
+days age out. 5-minute bars need no series of their own: they aggregate
+from 1-minute. The old `capital_5m` store was a one-off backfill.
+
+**Headlines are recorded again, on the owner's decision.** The 2026-08-31
+branch is restored from git history rather than rewritten, with three
+changes, each mutation-checked (M1860-M1862):
+
+* **hourly and never market-gated**, rather than twice a day -- the record
+  exists to say when a story became visible;
+* **`first_seen` on every story**, the time this store first held it, which
+  no later event can move -- `published` is a day-level date for 91% of
+  older stories and is what leaked on 2026-09-27;
+* **never pruned** by the scheduled job -- it is now the forward record, and
+  observation stores are append-only.
+
+It sits in `cfdinvest-daily`, the housekeeping unit, not beside the intraday
+ingest: a paced fetch of ~110 names must not delay the lake the dealer reads.
+Coverage is traded, held, ever-selected and every screen candidate.
+
+**The test it exists for**, pre-registered here so it cannot be chosen
+afterwards: sentiment of stories FIRST SEEN in the 24 hours before 10:00
+New York, per name, signed, on the loudest fifth by predicted volatility,
+against 10:00 to the last bar's open, net of the measured spread. The lead
+it tests read +0.18% a trade at t 1.7 on a backfill. After about six months
+of sessions:
+
+    net positive, t >= 2, both halves positive   -> a real edge, build it
+                                                    into the engine properly
+    gross positive, net negative                 -> real and not tradeable
+    near zero                                    -> the backfill lead was the
+                                                    search engine's hindsight
+
+**And after-hours moves say nothing for the session either.** Split from the
+pre-market: 16:00-20:00 New York the day before, 59 names, 741 sessions.
+Against the first half-hour it reverses slightly (-0.029%, t -2.9), the same
+open reversal as pre-market; against 10:00 to the last bar it is nothing --
+continuation 49.8-50.9% in every cut, no |t| above 1.2 -- and the overnight
+leg and the two legs agreeing say nothing either.
+
 ### 24-HOUR HEADLINE SENTIMENT: A LEAK, AND ONE LEAD ON THE LOUD NAMES, 2026-09-27
 
 The owner asked whether the previous 24 hours' sentiment, per stock and for

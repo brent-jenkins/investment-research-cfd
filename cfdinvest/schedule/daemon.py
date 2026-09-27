@@ -35,6 +35,7 @@ __all__ = [
     "SCREEN_AT_UTC",
     "CANDIDATE_SPREAD_AT_UTC",
     "MINUTE_INGEST_AT_UTC",
+    "HEADLINE_INTERVAL_MINUTES",
     "JOBS",
     "EXTERNAL_JOBS",
     "jobs_due",
@@ -159,6 +160,20 @@ DAILY_APPOINTMENTS: dict[str, tuple[int, int]] = {
 #: own comment. This set is what lets the daily branch apply it.
 MARKET_GATED_DAILY: frozenset[str] = frozenset({"record-candidate-spreads"})
 
+#: How often headlines are recorded, in minutes. Not market-gated.
+#:
+#: Hourly, and around the clock, because what the record is for is knowing
+#: WHEN a story became visible. Restored on 2026-09-27 on the owner's
+#: decision, after a six-month backfill showed why a backfill cannot answer
+#: the question: 91% of the feed's older stories carry a day-level date, so a
+#: story "dated" the session day could have appeared during it and described
+#: the move it was scored against -- a signal of t 3.7 that was leakage. Each
+#: story is stored with the time THIS job first saw it, which no later event
+#: can move. The first version collected twice a day; an hourly record bounds
+#: that time to within an hour, which is what a 10:00 New York decision
+#: needs.
+HEADLINE_INTERVAL_MINUTES = 60
+
 #: How often the lake and the signals are refreshed while a market is open.
 #:
 #: A daily pipeline on daily bars gave one decision per instrument per
@@ -218,6 +233,7 @@ JOBS: tuple[str, ...] = (
     # month.
     "record-candidate-spreads",
     "ingest-minute",
+    "record-headlines",
     "monitoring-snapshot",
     "risk-snapshot",
     # Did the system do what it said it would, yesterday? Every fault in the
@@ -401,6 +417,15 @@ def jobs_due(
     # an open market would mean it never ran at all.
     if _due_daily(moment, history.get("ingest-minute"), DAILY_APPOINTMENTS["ingest-minute"]):
         due.append("ingest-minute")
+
+    # Hourly and never market-gated: news does not stop when the exchange
+    # does, and a story that lands overnight is exactly the kind a morning
+    # decision needs to have seen -- with the time it was first seen.
+    headlines_last = _utc(history.get("record-headlines"))
+    if headlines_last is None or (
+        (moment - headlines_last).total_seconds() >= HEADLINE_INTERVAL_MINUTES * 60
+    ):
+        due.append("record-headlines")
 
     # Each of these keeps its OWN clock, and the reason is the same one that
     # split `ingest-intraday` from `run-intraday` a day earlier -- arrived at

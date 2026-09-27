@@ -228,7 +228,20 @@ def fetch_prices(
             # No progress. A server repeating its last page would otherwise
             # spin here until max_calls, quietly costing a rate limit.
             break
-        cursor = newest
+        # One second PAST the newest bar, not on it. At minute resolution the
+        # server ends a page at a session's close -- 60 bars from 20:00 stop
+        # at 20:59 -- and asked again FROM 20:59 it returns that one bar and
+        # nothing else. The walk read that as the end of history. Asked from
+        # 20:59:01 it answers with the next session, because a start inside a
+        # gap is served from the next bar there is. Measured on 2026-09-27.
+        #
+        # So every nightly minute ingest resumed from its tail, hit the first
+        # overnight gap, added nothing and reported success: most of the 66
+        # capital_1m series stopped on 2026-04-02 and MU on 2026-08-07, while
+        # the job ran and its files were rewritten every night. This project
+        # rules that a series once collected is never stopped; this one was
+        # stopped for six months by one line, with nothing saying so.
+        cursor = newest + pd.Timedelta(seconds=1)
         pause(REQUEST_INTERVAL_SECONDS)
 
     rows = [seen[key] for key in sorted(seen)]
