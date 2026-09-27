@@ -492,6 +492,59 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### A SMALL UNIVERSE, AND THE MARKET'S OWN DIRECTION, 2026-09-27
+
+The owner's framing, restated so it is not lost: the aim is not to find
+long-term winners but to pick what will move most, long or short, in the
+next few hours. Picking the movers works -- the loudest fifth moves twice as
+far as the quietest -- and a CFD still pays only on the right side, so the
+open question is always direction.
+
+**A small universe, through the account-faithful harness** (2023-07 to
+2026-09, deployed engine, 169 weekly re-screens):
+
+    universe        CAGR    maxDD   gross (intraday+gap)   spread   slippage
+    screen 50      -74.0%  -98.7%          -0.652          -2.833   -0.716
+    screen 20      -48.6%  -88.2%          -0.250          -1.418   -0.386
+    screen 10      -29.2%  -67.6%          -0.100          -0.719   -0.225
+    screen 5       -10.9%  -33.4%          +0.107          -0.330   -0.116
+    fixed 8        -20.1%  -51.8%          +0.115          -0.625   -0.175
+      (MU INTC AMD LRCX AMAT TSLA CAT BKNG, chosen in 2026 with hindsight)
+
+    screen 5 by year   2023 -16.5%   2024 -9.4%   2025 +0.5%   2026 -9.5%
+
+**Gross rises monotonically as the universe narrows and turns slightly
+positive at five names** -- the screen ranks mostly on volatility, so this
+is the loudest names -- and it is still a third of the spread alone.
+Smaller is less bad; it is not an edge net of cost. The fixed eight carry
+hindsight and do no better than the screen's five.
+
+**The market's own direction within the day: absent.** If the whole
+market's afternoon were predictable, the loud names could be traded in that
+direction and their size would amplify a small edge. The documented form is
+the S&P 500's first half-hour predicting its last. 928 sessions, the
+equal-weighted 100 candidates, session times from the New York clock:
+
+    move to 10:00 -> 10:00 to the last bar   corr -0.074  same sign 49.5%  t -1.00
+    move to 10:00 -> the last hour            corr -0.001  same sign 51.7%  t +1.00
+    strongest 30% of mornings -> the rest     mean -0.060%  t -1.43, both halves negative
+
+If anything a strong morning is partly undone, consistently across all four
+years, at 0.02-0.06% a trade against ~0.13% of cost. Not tradeable.
+
+**What the data cannot see, and would have to be bought.** Every direction
+reading so far comes from mid-quote prices and reporting dates. Absent:
+signed order flow (trades at the bid or the ask; Capital's volume is a tick
+count 414x off), options-market flow and skew, and earnings surprises
+against consensus. The first two are the best-documented short-horizon
+direction sources and both are paid feeds; order flow is strongest over
+minutes and is professionally contested at hours.
+
+**Finer data on disk is not being collected.** `capital_5m` holds 12 names
+from 2025-01 to 2026-08-28 and `capital_1m` 66 names to about 2026-04-02 --
+backfills, not running series, so the "once collected, never stopped" rule
+is not breached. Nothing finer than hourly is being recorded now.
+
 ### OPTION 1: REVERSAL AND EARNINGS DRIFT ARE ABSENT TOO, 2026-09-27
 
 Two more candidates for a different source of edge, each a SCREEN over the
