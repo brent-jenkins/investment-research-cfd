@@ -294,6 +294,7 @@ def test_nothing_is_owed_twice_in_one_day():
         # Hourly since 2026-09-27; a recent run so this test stays about
         # the jobs it names.
         "record-headlines": pd.Timestamp("2026-08-25 03:58", tz="UTC"),
+        "record-client-sentiment": pd.Timestamp("2026-08-25 03:58", tz="UTC"),
         "ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
         "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
         "risk-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
@@ -313,6 +314,7 @@ def test_a_restart_after_the_daily_slot_does_not_run_it_again():
     last = {
         "poll-live-quotes": pd.Timestamp("2026-08-25 03:28", tz="UTC"),
         "record-headlines": pd.Timestamp("2026-08-25 03:28", tz="UTC"),
+        "record-client-sentiment": pd.Timestamp("2026-08-25 03:28", tz="UTC"),
         "ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
         "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
         "risk-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
@@ -369,6 +371,7 @@ def test_the_snapshots_are_owed_once_a_day_and_not_again():
 def test_quotes_are_owed_every_five_minutes():
     last = {"poll-live-quotes": pd.Timestamp("2026-08-25 04:00", tz="UTC"),
             "record-headlines": pd.Timestamp("2026-08-25 04:00", tz="UTC"),
+            "record-client-sentiment": pd.Timestamp("2026-08-25 04:00", tz="UTC"),
             "ingest-daily": pd.Timestamp("2026-08-25 03:00", tz="UTC"),
             "monitoring-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),
             "risk-snapshot": pd.Timestamp("2026-08-25 03:05", tz="UTC"),

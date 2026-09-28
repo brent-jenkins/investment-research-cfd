@@ -492,6 +492,38 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### CLIENT SENTIMENT IS RECORDED FROM TODAY, 2026-09-28
+
+On the owner's decision, the proposal in the entry below is built.
+`record-client-sentiment` asks Capital every thirty minutes, around the
+clock, for the share of its clients long and short on every traded, held,
+ever-selected and candidate name, and appends one row per market to
+`client_sentiment/YYYY-MM.jsonl` under the account root: the time the
+reading was taken, the ticker, `long_pct`, `short_pct`. It runs in
+`cfdinvest-quotes`, the unit that already reads the broker, and it asks and
+never deals.
+
+**Once started it is not stopped**, under this file's own rule, and nothing
+prunes it. A market the broker does not answer for is written with nulls,
+never a number: 0% long is a confident claim that the crowd is all short,
+and an absence folded in as that would manufacture the extreme the reading
+is for. One refused identifier retries its batch a market at a time, so it
+cannot lose the rest. Four mutations checked (M1870-M1873).
+
+**The test it exists for, pre-registered so it cannot be chosen
+afterwards.** For each name, the long share at the last reading before
+10:00 New York, against that name's own trailing 20-session median --
+because the level is always long-heavy (85-92% on the first day) and only a
+DEPARTURE from a name's usual crowd can be a signal. Signed contrarian --
+the crowd unusually long predicts a fall -- against 10:00 to the last bar's
+open, on the loudest fifth by predicted volatility, net of the measured
+spread. After about six months of sessions:
+
+    net positive, t >= 2, both halves positive   -> a real direction source
+    gross positive, net negative                 -> real and not tradeable
+    near zero, or positive un-signed             -> the crowd is not wrong
+                                                    here, or is right
+
 ### VOLUME PREDICTS HOW FAR, NOT WHICH WAY; CLIENT SENTIMENT IS AVAILABLE, 2026-09-28
 
 The owner asked whether volume is still captured and whether it says

@@ -42,7 +42,7 @@ WorkingDirectory=/opt/cfdinvest
 EnvironmentFile=/etc/cfdinvest/env
 
 ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule daemon --max-ticks 1 \
-    --only poll-live-quotes,advisor-alert
+    --only poll-live-quotes,advisor-alert,record-client-sentiment
 
 TimeoutStartSec=120
 

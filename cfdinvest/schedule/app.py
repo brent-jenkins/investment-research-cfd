@@ -3138,6 +3138,8 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         )
     elif name == "ingest-minute":
         _command_ingest_minute(args, app_config)
+    elif name == "record-client-sentiment":
+        _command_record_client_sentiment(args, app_config)
     elif name == "record-headlines":
         _command_record_headlines(args, app_config)
     elif name == "screen-universe":
@@ -3300,6 +3302,44 @@ def _command_record_headlines(args, app_config) -> int:
         "Headlines: %d new of %d fetched across %d instruments; archive now "
         "%d stories over %d days",
         written, len(rows), len(wanted), have["stories"], have["days"],
+    )
+    return EXIT_OK
+
+
+def _command_record_client_sentiment(args, app_config) -> int:
+    """Record the share of Capital's clients long and short, per market.
+
+    The same coverage as the headline record -- traded, held, every name any
+    screen has selected, and every candidate the screen may rank -- because
+    the broker keeps no history of this reading, so a name not recorded now
+    can never be tested later. Read-only against the broker: it asks, it
+    does not deal. See ``broker.capital.sentiment``.
+    """
+    from cfdinvest.broker.capital import client as capital
+    from cfdinvest.broker.capital.sentiment import fetch_client_sentiment
+    from cfdinvest.persist import client_sentiment as store
+
+    account = getattr(args, "account", None)
+    wanted = _with_held(_traded(app_config, account), app_config, account) or []
+    for extra in list(_ever_selected(app_config, account)) + list(_screen_candidates(app_config)):
+        if extra not in wanted:
+            wanted.append(extra)
+    if not wanted:
+        return EXIT_OK
+
+    settings = capital.CapitalConfig.from_env()
+    if not getattr(settings, "complete", True):
+        logger.debug("No Capital credentials; client sentiment not recorded")
+        return EXIT_OK
+    session = capital.open_session(settings)
+    # The ticker is the market id, the same convention the price ingest
+    # uses; a name the broker does not answer for is recorded as absent.
+    readings = fetch_client_sentiment(wanted, session, settings)
+    written = store.record_client_sentiment(readings, app_config, account)
+    answered = sum(1 for value in readings.values() if value is not None)
+    logger.info(
+        "Client sentiment: %d of %d market(s) answered; %d row(s) recorded",
+        answered, len(readings), written,
     )
     return EXIT_OK
 

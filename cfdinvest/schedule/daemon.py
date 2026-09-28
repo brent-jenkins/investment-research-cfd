@@ -36,6 +36,7 @@ __all__ = [
     "CANDIDATE_SPREAD_AT_UTC",
     "MINUTE_INGEST_AT_UTC",
     "HEADLINE_INTERVAL_MINUTES",
+    "CLIENT_SENTIMENT_INTERVAL_MINUTES",
     "JOBS",
     "EXTERNAL_JOBS",
     "jobs_due",
@@ -174,6 +175,17 @@ MARKET_GATED_DAILY: frozenset[str] = frozenset({"record-candidate-spreads"})
 #: needs.
 HEADLINE_INTERVAL_MINUTES = 60
 
+#: How often Capital's client positioning is recorded, in minutes. Not
+#: market-gated.
+#:
+#: The broker serves only the CURRENT share of its clients long and short --
+#: there is no history -- so it can only ever be tested by recording it
+#: forward. Started 2026-09-28 on the owner's decision, as a candidate
+#: source of DIRECTION, which every free technical reading on this universe
+#: has failed to give. Thirty minutes bounds a reading's age well inside the
+#: hours the account holds for, at about 200MB a year.
+CLIENT_SENTIMENT_INTERVAL_MINUTES = 30
+
 #: How often the lake and the signals are refreshed while a market is open.
 #:
 #: A daily pipeline on daily bars gave one decision per instrument per
@@ -234,6 +246,7 @@ JOBS: tuple[str, ...] = (
     "record-candidate-spreads",
     "ingest-minute",
     "record-headlines",
+    "record-client-sentiment",
     "monitoring-snapshot",
     "risk-snapshot",
     # Did the system do what it said it would, yesterday? Every fault in the
@@ -426,6 +439,16 @@ def jobs_due(
         (moment - headlines_last).total_seconds() >= HEADLINE_INTERVAL_MINUTES * 60
     ):
         due.append("record-headlines")
+
+    # Every thirty minutes, around the clock, for the same reason: positions
+    # change before the open, and the reading exists only at the moment it
+    # is taken.
+    sentiment_last = _utc(history.get("record-client-sentiment"))
+    if sentiment_last is None or (
+        (moment - sentiment_last).total_seconds()
+        >= CLIENT_SENTIMENT_INTERVAL_MINUTES * 60
+    ):
+        due.append("record-client-sentiment")
 
     # Each of these keeps its OWN clock, and the reason is the same one that
     # split `ingest-intraday` from `run-intraday` a day earlier -- arrived at

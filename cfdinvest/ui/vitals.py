@@ -73,6 +73,8 @@ SCHEDULES: tuple[tuple[str, str, str], ...] = (
     ("prune-runs", "daily", "Bound the artefact store"),
     ("ingest-minute", "daily",
      "Minute bars after the close, for everything ever selected"),
+    ("record-client-sentiment", "every 30 minutes",
+     "Record Capital's client positioning, which the broker keeps no history of"),
     ("record-headlines", "hourly",
      "Record headlines with the time first seen, because the feed keeps no history"),
     ("screen-universe", "daily", "Rank the pool and record the selection"),
