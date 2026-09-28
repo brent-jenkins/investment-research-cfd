@@ -492,6 +492,31 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### YESTERDAY'S WINNING TRADE DOES NOT WIN AGAIN, 2026-09-28
+
+The owner asked whether a trade that closes at the flatten as a winner is
+worth prioritising the next session -- same name, same side -- over
+alternatives. Measured in the account's own window, 10:00 New York to the
+last bar's open, New York clock. A SCREEN.
+
+    every candidate, 930 sessions, yesterday's winning side today
+      all name-days            n 92,555   -0.013%   t -0.95   same side 49.9%
+      market-neutral                      -0.007%   t -0.89   same side 50.0%
+      largest fifth of moves   n 18,511   -0.021%   t -0.75   same side 50.3%
+      top 5% of moves          n  4,631   -0.040%   t -0.95   same side 49.6%
+
+    the engine's own calls, six months, next day same name and side
+      yesterday's winners      n  4,478   +0.069%   t +0.95   H1 +0.077  H2 +0.019
+      yesterday's losers       n  4,478   +0.000%   t +0.04
+      all its next-day calls   n  8,968   +0.019%   t +0.47
+
+**A winning direction is a coin flip the next day**, however large the win.
+The engine's winners lead its other calls by about 0.05% a trade, inside
+the noise, shrinking across halves, and a third of one round trip's cost.
+It agrees with the per-name finding of 2026-09-27: there is no name on
+which this signal is reliably right, so a winner's name carries no
+information about tomorrow.
+
 ### "EXPERT IN A FEW STOCKS": PER-NAME SKILL DOES NOT PERSIST, 2026-09-27
 
 The owner's idea: rather than a wide book, become expert at predicting a
