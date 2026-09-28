@@ -132,6 +132,12 @@ These are standing instructions from the project owner, not preferences.
   | headlines, `record-headlines` | 2026-09-27 | 2026-12-28 | 2027-03-29 |
   | client sentiment, `record-client-sentiment` | 2026-09-28 | 2026-12-28 | 2027-03-29 |
 
+  **Minute bars (`capital_1m`) are a price series, not an experiment**, on
+  the owner's decision, 2026-09-28: kept in case they become useful,
+  because Capital serves only 180 days and a lost day is gone. **No
+  reminder is built for the dates below**, also the owner's decision --
+  whoever next reads this file after 2026-12-28 owes the futility look.
+
   The futility look reads only the pre-registered test's signed mean on the
   loudest fifth, gross of cost: at or below zero, the experiment stops
   there. Above zero it runs to the decision date, where the recorded
