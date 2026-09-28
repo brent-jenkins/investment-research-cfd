@@ -492,6 +492,35 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### A BIG MOVE DOES NOT QUIETEN A STOCK, AND EXCLUDING IT WOULD NOT HELP, 2026-09-28
+
+The owner asked the magnitude mirror of the last question: after a big move,
+is a stock less likely to move, and should it be excluded for a few
+sessions? "Big" is the top 5% of absolute moves across names that day, in
+the account's window, New York clock. A SCREEN.
+
+    each name's move as a multiple of its OWN trailing 60-session median
+                         d+0    d+1    d+2    d+3    d+5    d+10
+    after a big move    3.13x  1.04x  0.99x  0.97x  1.02x  0.97x
+    every name-day      0.99x  0.99x  0.99x  0.99x  0.99x  0.99x
+
+**The aftermath is ordinary by day two** -- a touch livelier on day one, 51%
+of next moves above the name's normal against 50%, and neither quiet nor
+persistently wild after that. Volatility clusters in most markets; here a
+big session is a one-off that does not change the name's character.
+
+    the engine's calls, full history, by a big move in the last N sessions
+      last 1   with +0.033% (n 2,174)   without +0.003%
+      last 3   with +0.023% (n 5,919)   without +0.001%
+      last 5   with +0.006% (n 8,824)   without +0.003%
+      every |t| below 0.7
+
+**Excluding them would remove calls that did slightly BETTER**, inside the
+noise but in the wrong direction for the rule. A big move carries no
+information about the following sessions -- not its direction
+(2026-09-28, the entry below) and not its size -- beyond marking a lively
+name, which the screen already selects on.
+
 ### YESTERDAY'S WINNING TRADE DOES NOT WIN AGAIN, 2026-09-28
 
 The owner asked whether a trade that closes at the flatten as a winner is
