@@ -516,10 +516,17 @@ big session is a one-off that does not change the name's character.
       every |t| below 0.7
 
 **Excluding them would remove calls that did slightly BETTER**, inside the
-noise but in the wrong direction for the rule. A big move carries no
-information about the following sessions -- not its direction
-(2026-09-28, the entry below) and not its size -- beyond marking a lively
-name, which the screen already selects on.
+noise but in the wrong direction for the rule.
+
+**CORRECTED the same evening, on the owner's reading: "carries no
+information about its size" overstated it.** The next session IS a little
+larger than the name's normal -- 1.04x against 0.99x -- and back to normal
+by the one after. So a big move says almost nothing about size (a move
+about 5% above the name's usual, for one session) and nothing about
+direction (the entry below). "Back to normal" means the name keeps moving
+by its USUAL amount, not that it moves less; neither a quiet spell nor a
+run of big moves follows. Nothing here supports excluding or favouring a
+name after a big move.
 
 ### YESTERDAY'S WINNING TRADE DOES NOT WIN AGAIN, 2026-09-28
 
