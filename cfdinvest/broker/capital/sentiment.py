@@ -13,7 +13,8 @@ The broker serves it free -- ``GET /clientsentiment?marketIds=a,b,c`` -- and
 serves only the CURRENT reading. There is no history to backfill, so the only
 way it can ever be tested is to record it forward, which is what the
 ``record-client-sentiment`` job does. Started on the owner's decision,
-2026-09-28.
+2026-09-28. An experiment with a decision date (2027-03-29, futility look
+2026-12-28), not a permanent series: see CLAUDE.md.
 
 The level is always long-heavy for shares -- 85-92% long on the day it was
 first read -- so whatever signal exists is a name's positioning against its

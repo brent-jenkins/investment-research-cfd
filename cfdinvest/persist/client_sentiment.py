@@ -4,6 +4,10 @@ Append-only, like every observation store here: a reading describes a
 moment that does not come back, and the broker keeps no history of it, so a
 row lost or rewritten is gone for good. Never pruned by any scheduled job.
 
+**An experiment, not a permanent series** (owner, 2026-09-28). Futility
+look 2026-12-28, decision 2027-03-29, against the test pre-registered in
+CLAUDE.md; on a null the job, this module and the data are removed.
+
 Each row is one market at one moment::
 
     {"at": ISO-8601 UTC, "ticker": ..., "long_pct": ..., "short_pct": ...}

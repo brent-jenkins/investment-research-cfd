@@ -100,19 +100,43 @@ These are standing instructions from the project owner, not preferences.
 - **Read-only except for the layer's own writes.** Each layer names exactly
   what it may write in its README.
 - **No config mutation.**
-- **Once a series is being collected, it is not stopped.** Owner's
-  instruction, 2026-08-30. The intraday fetch takes the configured
-  candidates *union everything already on disk*, so removing a name from
-  `universe.candidates` cannot silently stop its collection. A hole cannot
-  be backfilled once the vendor's retention window passes, and minute data
-  has the shortest retention of any resolution served.
+- **A price series is not stopped by accident; an experiment ends on its
+  date.** Owner's instruction, 2026-08-30, narrowed by the owner on
+  2026-09-28: "we can change a rule if it doesn't make sense... treat it as
+  an experiment -- we tried it, it didn't pan out, let's stop it, clear up
+  the data we don't need and move on."
 
-  **The one exception is a series that has genuinely ended** — delisted,
-  suspended, or the vendor stopping. Recorded in `metadata/delisted.json`
-  and skipped. Marking is deliberate rather than inferred: a holiday, an
-  outage and a delisting all look like "no new bars today" from here, and
-  guessing would stop collecting a live instrument, which is this rule's
-  own failure arrived at from the other side.
+  *Price series* -- the bars the engine and the lake are built from -- are
+  what the rule was for. The intraday fetch takes the configured candidates
+  *union everything already on disk*, so removing a name from
+  `universe.candidates` cannot silently stop its collection. A hole cannot
+  be backfilled once the vendor's retention window passes. The one
+  exception is a series that has genuinely ended -- delisted, suspended, or
+  the vendor stopping -- recorded deliberately in `metadata/delisted.json`,
+  because a holiday, an outage and a delisting all look like "no new bars
+  today" from here.
+
+  *Experimental series* -- collected to answer one question -- are not
+  kept for ever because they were once started. Each carries, written
+  down when it starts: the question, the pre-registered test, a decision
+  date, and what happens on each branch. On a null it is **stopped, its
+  code removed and its data deleted**, as the news branch was on
+  2026-08-31. A futility look may stop one early; nothing may be ADOPTED
+  before the decision date. What still holds is the reason the old rule
+  existed: stopping is a decision somebody takes, never a side effect -- a
+  job that silently stops (the minute ingest, 2026-09-27) is a fault
+  whichever kind of series it is.
+
+  | experiment | started | futility look | decision |
+  | --- | --- | --- | --- |
+  | headlines, `record-headlines` | 2026-09-27 | 2026-12-28 | 2027-03-29 |
+  | client sentiment, `record-client-sentiment` | 2026-09-28 | 2026-12-28 | 2027-03-29 |
+
+  The futility look reads only the pre-registered test's signed mean on the
+  loudest fifth, gross of cost: at or below zero, the experiment stops
+  there. Above zero it runs to the decision date, where the recorded
+  branches decide. Deliberately lopsided -- three months can end an
+  experiment and cannot start a strategy.
 - **One engine, and it is the production one.** Owner's instruction,
   2026-08-30. Backtesting, research, sweeps, the paper book and anything
   else that decides what a position should be goes through
@@ -542,8 +566,11 @@ reading was taken, the ticker, `long_pct`, `short_pct`. It runs in
 `cfdinvest-quotes`, the unit that already reads the broker, and it asks and
 never deals.
 
-**Once started it is not stopped**, under this file's own rule, and nothing
-prunes it. A market the broker does not answer for is written with nulls,
+~~Once started it is not stopped, under this file's own rule.~~
+**SUPERSEDED the same evening, on the owner's instruction**: this is an
+experiment, not a permanent series. Futility look 2026-12-28, decision
+2027-03-29; on a null the job, the code and the data are removed. See the
+hard constraint. Until then nothing prunes it. A market the broker does not answer for is written with nulls,
 never a number: 0% long is a confident claim that the crowd is all short,
 and an absence folded in as that would manufacture the extreme the reading
 is for. One refused identifier retries its batch a market at a time, so it
@@ -609,7 +636,8 @@ contrarian indicator. The level is always long-heavy, so any signal is a
 name's positioning against its own usual level, and the API serves only the
 current reading: like the headlines, it can only be tested by recording it
 forward. Proposed to the owner; not started, because starting a series is
-permanent under this project's rules.
+permanent under this project's rules. **SUPERSEDED 2026-09-28: it is not;
+an experimental series ends on its decision date.**
 
 ### A BIG MOVE DOES NOT QUIETEN A STOCK, AND EXCLUDING IT WOULD NOT HELP, 2026-09-28
 
@@ -747,7 +775,9 @@ changes, each mutation-checked (M1860-M1862):
   no later event can move -- `published` is a day-level date for 91% of
   older stories and is what leaked on 2026-09-27;
 * **never pruned** by the scheduled job -- it is now the forward record, and
-  observation stores are append-only.
+  observation stores are append-only. **QUALIFIED 2026-09-28**: never
+  pruned piecemeal, and deleted whole if the experiment fails -- futility
+  look 2026-12-28, decision 2027-03-29, per the hard constraint.
 
 It sits in `cfdinvest-daily`, the housekeeping unit, not beside the intraday
 ingest: a paced fetch of ~110 names must not delay the lake the dealer reads.
@@ -817,7 +847,8 @@ fetch time, are point-in-time. So the honest next step is a forward record,
 not a further backfill. Nothing here is adopted and nothing is collected
 yet: the news branch was deleted on the owner's decision on 2026-08-31, and
 restarting collection is also the owner's decision, which this project's
-rule makes permanent once taken.
+rule makes permanent once taken. **SUPERSEDED 2026-09-28: it does not;
+collection restarted as an experiment with a decision date.**
 
 ### PRE-MARKET MOVES PARTLY REVERSE AT THE OPEN -- REAL, AND TOO SMALL, 2026-09-27
 
@@ -1793,7 +1824,8 @@ would also settle `MIN_SESSION_MINUTES = 30.0`, which this file has carried as
 "provisional and unmeasured" since 2026-09-10 and which the livecheck
 docstring says is "measurable from the 5-minute lake -- not yet done". Once
 started it is not stopped, which is this project's own rule and the reason to
-start it deliberately rather than as a side effect.
+start it deliberately rather than as a side effect. **SUPERSEDED 2026-09-28:
+a series collected for one question ends when the question is answered.**
 
 **NOTHING IS CHANGED.** The proposal is not adopted, and neither is its
 opposite: the early-window cut is a 55-trip screen and this file's own rule

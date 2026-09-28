@@ -11,6 +11,10 @@ fifth, +0.18% a trade at t 1.7. So this is now a FORWARD record: every story
 carries ``first_seen``, the time this store first held it, and it is never
 pruned. See CLAUDE.md, 2026-09-27.
 
+**An experiment, not a permanent series** (owner, 2026-09-28). Futility
+look 2026-12-28, decision 2027-03-29; on a null the job, the fetcher, this
+store and its data are removed, as they were on 2026-08-31.
+
 ``advisor.sentiment`` fetches headlines, scores them, shows a person the
 result and throws them away. yfinance serves a rolling window of roughly ten
 stories covering the last three days and keeps no archive, so every headline
