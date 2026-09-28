@@ -492,6 +492,54 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### VOLUME PREDICTS HOW FAR, NOT WHICH WAY; CLIENT SENTIMENT IS AVAILABLE, 2026-09-28
+
+The owner asked whether volume is still captured and whether it says
+anything, with or without a big move. **Real exchange volume is collected**:
+the daily `1d` store carries shares traded (NVDA ~80-90M a day), from 2005,
+refreshed nightly. Capital's hourly `volume` is a count of price updates,
+414x off, and is not used here. Relative volume = a day's shares against the
+name's own 20-session median, known after the close, so it can only inform
+the NEXT session. Account's window, New York clock, 930 sessions. A SCREEN.
+
+    direction, next session signed by today's move
+      quiet <0.7x     continues 50.5%      busy 1.3-2x    50.0%
+      ordinary        49.8%                very busy >2x  49.2%
+      big moves only  48.2-53.2% in every band, no |t| above 0.95
+
+    size, next session as a multiple of the name's own normal
+                      all      big moves
+      quiet <0.7x    0.88x      0.97x
+      ordinary       0.97x      0.91x
+      busy 1.3-2x    1.11x      1.10x
+      very busy >2x  1.28x      1.32x
+
+    the engine's calls by the name's relative volume the session before
+      every band -0.021% to +0.022%, no |t| above 0.9
+
+**Volume forecasts magnitude, monotonically, and direction not at all** --
+the pattern this file records for every input since 2026-08-28. It also
+refines the entry below: the day after a big move averages 1.04x because a
+big move on heavy volume is followed by a livelier day (1.32x) and one on
+ordinary volume by a quieter one (0.91x).
+
+**What is left for direction.** Every free technical reading on this
+universe at hours -- trend, momentum, breakout, reversal, pre-market,
+after-hours, the market's morning, big moves, volume -- forecasts size and
+not side. Note the distinction the owner's question turned on: what the
+project predicts well is MAGNITUDE; the engine's `strength` is trend
+conviction, which was measured on 2026-09-26 not to predict outcomes.
+
+**Capital serves client sentiment, free, and nothing records it.**
+`GET /clientsentiment/{epic}` or `?marketIds=a,b,c` returns the share of
+Capital's clients long and short -- read on 2026-09-28: NVDA 90.2% long,
+TSLA 88.3%, AAPL 91.8%, MU 85.4%. Retail positioning is a documented
+contrarian indicator. The level is always long-heavy, so any signal is a
+name's positioning against its own usual level, and the API serves only the
+current reading: like the headlines, it can only be tested by recording it
+forward. Proposed to the owner; not started, because starting a series is
+permanent under this project's rules.
+
 ### A BIG MOVE DOES NOT QUIETEN A STOCK, AND EXCLUDING IT WOULD NOT HELP, 2026-09-28
 
 The owner asked the magnitude mirror of the last question: after a big move,
