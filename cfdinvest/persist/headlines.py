@@ -269,12 +269,33 @@ def usable_headlines(config=None, account: str | None = None,
     ``allow`` re-admits named reasons, so a later study can ask "does the
     listicle actually hurt?" rather than having that answered for it by a
     rule written today.
+
+    **The rules are applied again here, not only read back.** A flag stored
+    at collection is the verdict of the rules as they stood that hour, and
+    ``about_another`` was added on 2026-09-28 after 22,710 stories were
+    already held -- 153 of Bank of America's 330 "clean" ones were its
+    analysts rating, or its funds buying, somebody else. Rewriting the
+    archive to add the flag (``reclassify_headlines``) would race the hourly
+    append on the forward record, so the reader recomputes instead and keeps
+    the UNION with what was stored: a rule can only add an exclusion here,
+    never silently lift one. Names come from the cache and are never
+    resolved over the network from a reader.
     """
+    from cfdinvest.ingestion.news_rss import classify, company_names
+
     permitted = {str(reason) for reason in allow}
-    return [
-        row for row in load_headlines(config, account)
-        if not (set(row.get("noise") or ()) - permitted)
-    ]
+    names: dict[str, tuple[str, ...]] = {}
+    kept = []
+    for row in load_headlines(config, account):
+        ticker = str(row.get("ticker") or "")
+        if ticker not in names:
+            names[ticker] = company_names(ticker, config=config)
+        flags = set(row.get("noise") or ())
+        flags |= set(classify(str(row.get("title") or ""), ticker,
+                              names=names[ticker]))
+        if not (flags - permitted):
+            kept.append(row)
+    return kept
 
 
 def reclassify_headlines(config=None, account: str | None = None) -> dict:

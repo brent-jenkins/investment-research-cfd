@@ -9,6 +9,14 @@ Mutations checked for the restoration:
   M1861 ``first_seen`` not stamped, or moved by a later poll
   M1862 the scheduled job pruning the record again
 
+And for the ``about_another`` rule, 2026-09-28:
+
+  M1880 the firm-rating shape removed ("BofA cuts its target on UPS")
+  M1881 the venue shape removed ("raised to Hold at Wells Fargo")
+  M1882 the holder shape removed ("BofA Corp DE buys N shares of ...")
+  M1883 the anchor dropped, so a rating OF the firm is caught too
+  M1884 the reader trusting stored flags instead of re-applying the rules
+
 Sentiment is the one input in this project that has never been *tested*, as
 opposed to tested and found wanting. Price, volume, macro, earnings
 proximity and filing recency were given to a model together over twenty
@@ -27,6 +35,8 @@ sentiment could be tested.
 """
 
 from __future__ import annotations
+
+import pytest
 
 
 
@@ -357,20 +367,23 @@ def test_noise_is_filtered_at_the_read_side_not_at_collection(tmp_path, monkeypa
 
     path = tmp_path / "headlines" / "stories.jsonl"
     monkeypatch.setattr(store, "_path", lambda config=None, account=None: path)
+    # Every title names its instrument: the reader re-applies the rules, and
+    # a title that does not would be flagged incidental on top of whatever
+    # was stored -- which is right, and is not what this test is about.
     store.record_headlines([
-        {"ticker": "AAA", "title": "real news", "published": "2026-08-30", "noise": []},
-        {"ticker": "AAA", "title": "quote page", "published": "2026-08-30",
+        {"ticker": "AAA", "title": "AAA real news", "published": "2026-08-30", "noise": []},
+        {"ticker": "AAA", "title": "AAA quote page", "published": "2026-08-30",
          "noise": ["boilerplate"]},
-        {"ticker": "AAA", "title": "round-up", "published": "2026-08-30",
+        {"ticker": "AAA", "title": "AAA round-up", "published": "2026-08-30",
          "noise": ["listicle"]},
     ])
 
     assert len(store.load_headlines()) == 3, "collection discarded something"
-    assert [r["title"] for r in store.usable_headlines()] == ["real news"]
+    assert [r["title"] for r in store.usable_headlines()] == ["AAA real news"]
     # And a later study can re-admit a reason rather than having it decided
     # for them by a rule written today.
     titles = {r["title"] for r in store.usable_headlines(allow=("listicle",))}
-    assert titles == {"real news", "round-up"}
+    assert titles == {"AAA real news", "AAA round-up"}
 
 
 def test_reclassifying_fixes_flags_without_refetching(tmp_path, monkeypatch):
@@ -429,3 +442,84 @@ def test_the_query_searches_the_company_name_not_the_symbol():
     # No name known: the symbol is the only thing left, and is still better
     # than searching nothing.
     assert headline_query("XYZ") == "XYZ stock"
+
+
+# --------------------------------------------------------------------------- #
+# A firm acting on another stock is not news about the firm
+# --------------------------------------------------------------------------- #
+BAC = ("Bank of America",)
+WFC = ("Wells Fargo &",)
+
+
+@pytest.mark.parametrize("title, ticker, names", [
+    # rating someone else -- M1880
+    ("Bank of America Just Cut Its Price Target on UPS - Yahoo Finance", "BAC", BAC),
+    ("Bank of America drops bombshell verdict on Nike stock - thestreet.com", "BAC", BAC),
+    ("Wells Fargo & Company Initiates Coverage on Honeywell International (NASDAQ:HON)", "WFC", WFC),
+    # the venue of someone else's rating -- M1881
+    ('Honeywell International (NASDAQ:HON) Raised to "Hold" at Wells Fargo & Company', "WFC", WFC),
+    ("Stock Market Today, Sept. 25: Nike Downgraded by Bank of America, Shares Flat", "BAC", BAC),
+    # holding someone else -- M1882
+    ("Bank of America Corp DE Acquires 162,924 Shares of NetScout Systems, Inc. $NTCT", "BAC", BAC),
+    ("Metropolitan Bank Holding Corp. $MCB Shares Newly Bought by Bank of America Corp DE", "BAC", BAC),
+])
+def test_a_firm_acting_on_another_stock_is_flagged(title, ticker, names):
+    """Measured on the forward record, 2026-09-28: 153 of Bank of America's
+    330 stories that passed every other flag were its analysts rating, or
+    its funds trading, some other company. Scored as BAC sentiment, a Nike
+    downgrade would count against Bank of America."""
+    from cfdinvest.ingestion.news_rss import classify
+
+    assert "about_another" in classify(title, ticker, names=names)
+
+
+@pytest.mark.parametrize("title, ticker, names", [
+    # ratings OF the firm, the stories the rule must keep -- M1883
+    ("Goldman Sachs Group Stock 12-Month Price Target Raised to $1129.38", "GS", ("Goldman Sachs",)),
+    ("Bank of America Stock: Analyst Raises Price Target", "BAC", BAC),
+    ("Bank of America upgraded to buy, trading 20% below fair value", "BAC", BAC),
+    # the firm's own news
+    ("Bank of America plunges on CEO's sales, trading revenue guidance", "BAC", BAC),
+    ("Wells Fargo lifts full-year outlook", "WFC", WFC),
+    # a strategic stake is news about the buyer too
+    ("Nvidia Takes $5 Billion Stake in Intel", "NVDA", ("NVIDIA",)),
+    # found on the first run over the archive: "drops ... to Hold"
+    ("ServiceNow Drops 23% Year to Date: Time to Hold the Stock or Fold?", "NOW", ("ServiceNow",)),
+    # a broker named only as the publisher
+    ("Nike shares fall on weak China sales - Bank of America", "BAC", BAC),
+])
+def test_news_about_the_firm_itself_is_kept(title, ticker, names):
+    from cfdinvest.ingestion.news_rss import classify
+
+    assert "about_another" not in classify(title, ticker, names=names)
+
+
+def test_the_reader_applies_todays_rules_to_yesterdays_rows(tmp_path, monkeypatch):
+    """M1884: the forward record was collected before this rule existed.
+
+    Rewriting the archive to add a flag would race the hourly append, so
+    the reader re-applies the rules and keeps the union with what was
+    stored: a new rule can add an exclusion, and nothing can lift one.
+    """
+    from cfdinvest.ingestion import news_rss
+    from cfdinvest.persist import headlines as store
+
+    path = tmp_path / "headlines" / "stories.jsonl"
+    monkeypatch.setattr(store, "_path", lambda config=None, account=None: path)
+    monkeypatch.setattr(news_rss, "company_names",
+                        lambda t, config=None, resolve=False: BAC)
+    store.record_headlines([
+        # stored clean, before the rule existed
+        {"ticker": "BAC", "title": "Bank of America Just Cut Its Price Target on UPS",
+         "published": "2026-09-25", "noise": []},
+        {"ticker": "BAC", "title": "Bank of America plunges on fee guidance",
+         "published": "2026-09-25", "noise": []},
+        # stored flagged, and today's rules would not flag it: stays out
+        {"ticker": "BAC", "title": "Bank of America quote page",
+         "published": "2026-09-25", "noise": ["boilerplate"]},
+    ])
+
+    assert [r["title"] for r in store.usable_headlines()] == [
+        "Bank of America plunges on fee guidance"
+    ]
+    assert store.load_headlines()[0]["noise"] == [], "the record itself was rewritten"

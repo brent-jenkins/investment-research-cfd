@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -228,6 +229,100 @@ LISTICLE = (
 )
 
 
+#: Other names a firm's research desk goes by in a headline. Only the
+#: ``about_another`` rule reads these: "BofA Securities cuts Nike" is Bank
+#: of America acting as a broker, and nothing else here needs to know that.
+BROKER_ALIASES = {
+    "BAC": ("BofA", "Bank of America Securities", "Merrill Lynch"),
+    "JPM": ("JPMorgan", "J.P. Morgan", "JP Morgan"),
+    "GS": ("Goldman",),
+    "WFC": ("Wells Fargo",),
+    "C": ("Citi", "Citigroup"),
+    "MS": ("Morgan Stanley",),
+    "SCHW": ("Schwab",),
+}
+
+#: A broker changing its view: these may take "to Buy", "to Hold" and the
+#: like as well as a target or a rating.
+_RATING_VERB = (
+    r"(?:cuts?|slashes|trims?|lowers?|reduces?|raises?|lifts?|boosts?|hikes?"
+    r"|ups|upped|bumps?|upgrades?|downgrades?|initiates?|reiterates?"
+    r"|maintains?|adjusts?|sets?|starts?|resumes?|moves?)"
+)
+_RATING_OBJECT = (
+    r"(?:price target|target|rating|coverage|stance|recommendation"
+    r"|to [\"']?(?:strong[- ])?(?:buy|sell|hold|neutral|overweight|underweight"
+    r"|outperform|underperform|equal[- ]weight|market perform))"
+)
+#: A broker pronouncing. Kept apart from the rating verbs because "drops"
+#: with "to Hold" matched "ServiceNow Drops 23% Year to Date: Time to Hold"
+#: -- a story about ServiceNow's own price -- on the first run over the
+#: archive.
+_VERDICT_VERB = r"(?:drops|issues?|delivers?|makes?|gives?)"
+_VERDICT_OBJECT = r"(?:verdict|call|warning)"
+#: Not "outlook" or "forecast" in either: "Wells Fargo lifts outlook" is a
+#: company raising its OWN guidance, which is news about it.
+
+#: Words that may sit between the firm's name and its verb. Tight on
+#: purpose: "Bank of America Stock: Analyst Raises Price Target" is about
+#: BAC, and the colon and "Stock" are what keep it out.
+_FIRM_FILLER = (
+    r"(?:\s+(?:&\s*co(?:mpany|\.)?|inc\.?|corp\.?(?:\s+de)?|securities|research"
+    r"|global research|analysts?|strategists?|just|has|have|now|again"
+    r"|reportedly|quietly))*"
+)
+#: A fund's position in some other company, as institutional-holdings
+#: filings are reported: "Bank of America Corp DE Acquires 162,924 Shares
+#: of NetScout". Anchored on "shares of", "position in" or "investment in"
+#: so that an acquisition or a strategic stake -- news about the buyer too
+#: -- is not caught by "acquires" alone.
+_HOLDING_VERB = r"(?:acquires?|buys?|sells?|purchases?|trims?|cuts?|lowers?|raises?|boosts?|grows?|increases?|decreases?|reduces?|makes?|takes?|lifts?)"
+_HOLDING_OBJECT = r"(?:(?:new\s+)?shares (?:of|in)|position in|stake in [^-]*\$[A-Z]|holdings? in|(?:new\s+)?investment in)"
+
+
+def is_about_another(title: str, ticker: str, *, names=None) -> bool:
+    """True when the filed company appears as an ACTOR on some other stock.
+
+    "Bank of America Just Cut Its Price Target on UPS" names Bank of
+    America, so the incidental rule keeps it for BAC -- and it is news about
+    UPS. Scored as BAC sentiment, a downgrade of Nike counts against Bank of
+    America. The same holds for a holdings filing, "Bank of America Corp DE
+    Buys 371,826 Shares of Skeena Resources".
+
+    Three shapes, all anchored on the firm's own name so that a rating OF
+    the firm ("Goldman Sachs price target raised to $1,129") is never
+    caught:
+
+    * the firm rating -- "<firm> [just] cuts ... price target", "<firm>
+      initiates coverage", "<firm> drops bombshell verdict on ..."
+    * the firm as the venue of a rating -- "raised to Hold at <firm>",
+      "downgraded by <firm>"
+    * the firm as a holder -- "<firm> acquires N shares of ...", "... shares
+      bought by <firm>"
+    """
+    text = " ".join(str(title or "").split())
+    if not text:
+        return False
+    # The publisher trails after " - "; a firm named only there is the
+    # source of the page, not an actor in it.
+    if " - " in text:
+        text = text.rsplit(" - ", 1)[0]
+    aliases = [str(n).strip(" &") for n in (names or ()) if n]
+    aliases += list(BROKER_ALIASES.get(str(ticker), ()))
+    patterns = []
+    for alias in sorted({a for a in aliases if a}, key=len, reverse=True):
+        firm = rf"\b{re.escape(alias)}(?:\s*&)?"
+        patterns += [
+            rf"{firm}{_FIRM_FILLER}\s+{_RATING_VERB}\b.{{0,60}}?\b{_RATING_OBJECT}",
+            rf"{firm}{_FIRM_FILLER}\s+{_VERDICT_VERB}\b.{{0,40}}?\b{_VERDICT_OBJECT}\b",
+            rf"\b(?:upgraded|downgraded|raised|lowered|cut|initiated|reiterated"
+            rf"|rated|resumed)\b.{{0,40}}?\b(?:at|by)\s+(?:the\s+)?{firm}",
+            rf"{firm}{_FIRM_FILLER}\s+{_HOLDING_VERB}\b.{{0,30}}?\b{_HOLDING_OBJECT}",
+            rf"\bshares\b.{{0,60}}?\b(?:bought|acquired|sold|purchased)\s+by\s+(?:the\s+)?{firm}",
+        ]
+    return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
+
+
 def classify(title: str, ticker: str, *, names=None) -> tuple[str, ...]:
     """Why a headline might be noise. Empty means nothing was found.
 
@@ -258,6 +353,8 @@ def classify(title: str, ticker: str, *, names=None) -> tuple[str, ...]:
     aliases = [symbol] + [str(n).lower() for n in (names or ()) if n]
     if symbol and not any(alias and alias in lowered for alias in aliases):
         reasons.append("incidental")
+    elif is_about_another(title, ticker, names=names):
+        reasons.append("about_another")
     return tuple(reasons)
 
 

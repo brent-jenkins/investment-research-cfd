@@ -492,6 +492,45 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### A HEADLINE FILED UNDER A BANK IS OFTEN ABOUT SOMEBODY ELSE, 2026-09-28
+
+Found on the owner's first look at a day of the forward record, and fixed
+before the pre-registered headline test can ever be read. Scoring a story
+against the name it is filed under assumes it is ABOUT that name. For the
+banks it frequently is not: "Bank of America Just Cut Its Price Target on
+UPS", "Nike Downgraded by Bank of America", "Bank of America Corp DE Buys
+371,826 Shares of Skeena Resources". Each names BAC, so the `incidental`
+flag keeps it, and each would score Nike's or UPS's news as BAC sentiment.
+
+**`about_another`**, a new flag in `news_rss.classify`: the filed firm
+appears as an ACTOR on another stock -- rating it, being the venue of its
+rating, or holding it in a fund. Anchored on the firm's own name, so a
+rating OF the firm ("Goldman Sachs price target raised") is kept. Measured
+over the 22,710 stories held:
+
+    newly flagged    193 of 20,548 that passed every other flag
+      BAC            153 of 330   -- mostly holdings filings, not ratings
+      WFC             30 of 171
+      JPM             10 of 248
+      any other name   0
+
+**CORRECTED, same evening: I told the owner BAC's stories were "mostly
+other companies' ratings from Bank of America analysts", and first measured
+159 of 330 by "names another candidate".** That count was inflated by
+crude matching -- "Price Target" matches Target (TGT) -- and the true
+mechanism is mainly the holdings filings. The rule's first version caught
+only 15 for BAC and one false positive ("ServiceNow Drops 23%... Time to
+Hold"), both found by reading its hits on the archive rather than its tests.
+
+**The reader applies the rules; the record is not rewritten.**
+`usable_headlines` re-runs `classify` on every row and keeps the UNION with
+the flags stored at collection, so a new rule reaches stories collected
+before it and nothing can lift an exclusion. `reclassify_headlines` was not
+used: rewriting the archive would race the hourly append on the forward
+record. **The pre-registered headline test below reads through
+`usable_headlines`**, or it reads the mis-filings. Five mutations checked
+(M1880-M1884), all caught.
+
 ### CLIENT SENTIMENT IS RECORDED FROM TODAY, 2026-09-28
 
 On the owner's decision, the proposal in the entry below is built.
