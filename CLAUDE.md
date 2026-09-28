@@ -517,6 +517,26 @@ It agrees with the per-name finding of 2026-09-27: there is no name on
 which this signal is reliably right, so a winner's name carries no
 information about tomorrow.
 
+**BIG WINS ONLY, and the next five days rather than one**, on the owner's
+follow-up. Every candidate's top 20%, 5% and 1% of moves: the same side won
+47-51% on each of days 1-5, no |t| above 1.8. The engine's own calls over
+the FULL history, 50,599 calls in 800 sessions:
+
+    top tenth of wins (>1.79%)   d+1 +0.107% t +2.0 but wins 47%;  d+2..5 noise
+    top fifth of wins (>1.26%)   d+1 -0.007%;                      d+2..5 noise
+    small wins, losers, all      every day within |t| 1.1
+
+    top tenth, next day   H1 +0.149  H2 +0.065  w/o best 2 days +0.084
+                          2023 +0.394  2024 +0.097  2025 -0.040  2026 +0.125
+
+**Not a pattern.** The one t of 2 is a tail on a minority of winning
+trades, not the side repeating; the top fifth that contains it is flat, so
+the next band down loses; 2025 is negative; it sits below one round trip's
+~0.13% once its two best days go; and one t of 2 in about twenty-five cells
+is what chance produces. A six-month screen had read the same cell at
++0.180% (t 1.2): the full history is six times the sample and roughly halves
+it.
+
 ### "EXPERT IN A FEW STOCKS": PER-NAME SKILL DOES NOT PERSIST, 2026-09-27
 
 The owner's idea: rather than a wide book, become expert at predicting a
