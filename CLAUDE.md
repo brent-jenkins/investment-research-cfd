@@ -523,6 +523,56 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### COMPANY FILINGS READ BY CLAUDE: A BACKTEST, PRE-REGISTERED, 2026-09-30
+
+The owner's question after news trading was switched on: what else would
+help. The answer given was EDGAR, because it is the one text source with an
+honest history -- every 8-K timestamped to the second by the SEC on
+acceptance -- so the question the live news trial is asking can be answered
+from history in days instead of months. Written down before any filing text
+was fetched.
+
+**The question.** Does Claude's reading of a company's own 8-K, filed
+before the account can deal, call the move from 10:00 New York to the last
+bar's open that day? The same window, and the same question, as the live
+news trades.
+
+**The sample.** 8-Ks accepted by EDGAR from **2025-08-01** to 2026-09-29
+for every screen candidate. Not earlier, **because of hindsight**: Claude
+Haiku 4.5's training data runs to about mid-2025, and a model that has read
+what happened after a 2024 filing can let that colour its reading. Every
+filing in the window post-dates it. Text is the press release (EX-99.1)
+where there is one, else the 8-K's own document, first 6,000 characters.
+Labelled by `claude-haiku-4-5` with the headline schema's `event` and
+`impact`.
+
+**The primary test.** Name-days with at least one qualifying filing --
+event not in {price_move, commentary, other}, impact not neutral -- accepted
+in the 24 hours before 10:00 New York. Net sign per name-day. Signed
+10:00-to-last-bar-open return, net of the measured spread. Per-day means,
+t across days:
+
+    net positive, t >= 2, both halves positive   -> real: read filings live
+    gross positive, net negative                 -> real and not tradeable
+    near zero                                    -> reading the event does not
+                                                    call the day; the live news
+                                                    trial is expected to fail
+                                                    too, and moves to the veto
+                                                    early
+
+**Two conditional questions, each its own pass mark (t >= 2, both halves),
+fixed now and no others to be added after the results:**
+
+    1. priced in   filings whose side the move from the previous close to
+                   10:00 had NOT already gone half a typical day's move, against
+                   those where it had. Hypothesis: the not-yet-priced do better.
+    2. with trend  filings agreeing with the engine's direction on the decision
+                   bar, against those disagreeing. Hypothesis: agreeing do better.
+
+**Then through the engine**, before anything is adopted: the account-model
+harness over the same window with the filing labels as `news_events`,
+against the same run without them.
+
 ### THE ACCOUNT TRADES ON THE NEWS FROM 2026-10-01, UNMEASURED, 2026-09-30
 
 On the owner's decision, the same evening the labels were built: "we're
