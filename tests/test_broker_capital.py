@@ -600,3 +600,47 @@ def test_the_opening_balance_is_not_treated_as_a_secret():
     assert "5000" in shown
     for secret in ("SECRET-KEY", "me@example.com", "SECRET-PASS"):
         assert secret not in shown
+
+
+def test_a_zero_balance_is_unread_not_a_number():
+    """Capital answered some fresh sessions with balance 0.0, 2026-09-28.
+
+    The same account read 4,745.45 on the next session. Taken as a value it
+    crashed the dealing pass after the departure heal had already run, so a
+    zero arriving with an empty position list on a held book would have
+    recorded every position closed. Reported absent, the pass stops first.
+    """
+    payload = _account_payload()
+    payload["accounts"][0]["balance"].update(balance=0, available=0, deposit=0, profitLoss=0)
+    session = capital.CapitalSession(
+        host="https://x", cst="a", security_token="b",
+        account_id="328418483926475806",
+    )
+    account = capital.fetch_account(session, _config(), opener=lambda *a, **k: (payload, {}))
+
+    assert not account.ok, "a zero balance was accepted as a reading"
+    assert account.balance is None, "absence was recorded as zero"
+
+
+def test_the_dealing_pass_stops_before_the_book_on_a_zero_balance():
+    """The order is the property: nothing may read or heal the book first."""
+    import ast
+    import inspect
+
+    from cfdinvest.schedule import app
+
+    source = inspect.getsource(app._command_trade_capital)
+    body = ast.parse(source.lstrip()).body[0].body
+    lines = {}
+    for node in ast.walk(ast.Module(body=body, type_ignores=[])):
+        if isinstance(node, ast.Call):
+            name = ast.unparse(node.func)
+            lines.setdefault(name, node.lineno)
+    assert lines["capital.fetch_account"] < lines["dealing_module.list_positions"]
+    assert lines["capital.fetch_account"] < lines["order_store.record_departure"]
+    guard = next(
+        n for n in ast.walk(ast.Module(body=body, type_ignores=[]))
+        if isinstance(n, ast.If) and "account.ok" in ast.unparse(n.test)
+    )
+    assert guard.lineno < lines["dealing_module.list_positions"]
+    assert any(isinstance(s, ast.Return) for s in guard.body), "the guard does not stop the pass"

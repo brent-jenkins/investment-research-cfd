@@ -450,6 +450,22 @@ def fetch_account(
         chosen = next((a for a in accounts if a.get("preferred")), accounts[0])
 
     balance = (chosen.get("balance") or {})
+    # A reported balance of exactly zero is treated as UNREAD, not as a
+    # number. From 2026-09-28 Capital began answering some fresh sessions
+    # with balance 0.0 for the one funded demo account -- 23 readings in two
+    # days, one session in six when probed -- while the next session read
+    # 4,745.45. Taken as a value it crashed the pass in
+    # `RiskLimits.for_balance` 46 times, and it did so AFTER the departure
+    # heal, so a zero answer arriving with an empty position list on a held
+    # book would have written every position closed in the record. Reported
+    # absent, the pass stops before it reads the book. Nothing is lost by
+    # it: no position can be sized on a balance of zero either way.
+    if _number(balance.get("balance")) == 0.0:
+        return CapitalAccount(
+            account_id=str(chosen.get("accountId") or ""),
+            currency=str(chosen.get("currency") or ""),
+            error="the broker reported a balance of 0; treated as unread",
+        )
     return CapitalAccount(
         account_id=str(chosen.get("accountId") or ""),
         currency=str(chosen.get("currency") or ""),
