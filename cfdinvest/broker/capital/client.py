@@ -412,6 +412,11 @@ def open_session(
     return session
 
 
+#: The error a zero balance is reported with, named so a caller can tell
+#: "Capital answered zero" (worth asking again) from every other failure.
+ZERO_BALANCE = "the broker reported a balance of 0; treated as unread"
+
+
 def fetch_account(
     session: CapitalSession,
     config: CapitalConfig | None = None,
@@ -464,7 +469,7 @@ def fetch_account(
         return CapitalAccount(
             account_id=str(chosen.get("accountId") or ""),
             currency=str(chosen.get("currency") or ""),
-            error="the broker reported a balance of 0; treated as unread",
+            error=ZERO_BALANCE,
         )
     return CapitalAccount(
         account_id=str(chosen.get("accountId") or ""),

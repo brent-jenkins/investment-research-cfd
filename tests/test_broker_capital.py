@@ -636,11 +636,68 @@ def test_the_dealing_pass_stops_before_the_book_on_a_zero_balance():
         if isinstance(node, ast.Call):
             name = ast.unparse(node.func)
             lines.setdefault(name, node.lineno)
-    assert lines["capital.fetch_account"] < lines["dealing_module.list_positions"]
-    assert lines["capital.fetch_account"] < lines["order_store.record_departure"]
+    assert lines["_read_account"] < lines["dealing_module.list_positions"]
+    assert lines["_read_account"] < lines["order_store.record_departure"]
     guard = next(
         n for n in ast.walk(ast.Module(body=body, type_ignores=[]))
         if isinstance(n, ast.If) and "account.ok" in ast.unparse(n.test)
     )
     assert guard.lineno < lines["dealing_module.list_positions"]
     assert any(isinstance(s, ast.Return) for s in guard.body), "the guard does not stop the pass"
+
+
+class _Accounts:
+    """A fake Capital that answers zero a set number of times, then reads."""
+
+    ZERO_BALANCE = capital.ZERO_BALANCE
+
+    def __init__(self, zeros, error=None):
+        self.zeros, self.error, self.sessions, self.reads = zeros, error, 0, 0
+
+    def open_session(self, broker):
+        self.sessions += 1
+        return capital.CapitalSession(host="h", cst=f"s{self.sessions}", security_token="t")
+
+    def fetch_account(self, session, broker):
+        self.reads += 1
+        if self.error:
+            return capital.CapitalAccount(error=self.error)
+        if self.reads <= self.zeros:
+            return capital.CapitalAccount(error=capital.ZERO_BALANCE)
+        return capital.CapitalAccount(balance=4678.34, available=4678.34, currency="GBP")
+
+
+def test_a_zero_balance_is_asked_again_on_a_fresh_session():
+    """M1892: 2026-09-30, every pass 13:41-15:17 read zero and stood aside."""
+    from cfdinvest.schedule import app
+
+    fake = _Accounts(zeros=2)
+    first = fake.open_session(None)
+    session, account = app._read_account(fake, None, first, sleep=lambda s: None)
+    assert account.ok and account.balance == pytest.approx(4678.34)
+    assert session is not first, "the pass would carry on with the session that read zero"
+    assert fake.reads == 3
+
+
+def test_a_zero_that_persists_is_still_a_zero():
+    """M1893: retrying must end, and end on absence rather than a number."""
+    from cfdinvest.schedule import app
+
+    fake = _Accounts(zeros=99)
+    waited = []
+    _, account = app._read_account(fake, None, fake.open_session(None), sleep=waited.append)
+    assert not account.ok and account.balance is None
+    # The bound is the pass itself: dealing runs every five minutes, and a
+    # retry loop that ate a meaningful share of that would delay the closes
+    # it exists to protect. Asserted as a property, not as the constant.
+    assert sum(waited) <= 30, f"retrying waited {sum(waited)}s inside a 5-minute pass"
+    assert fake.reads <= 6
+
+
+def test_only_a_zero_balance_is_retried():
+    """M1894: an HTTP error or a missing account is answered at once."""
+    from cfdinvest.schedule import app
+
+    fake = _Accounts(zeros=0, error="HTTP 401")
+    _, account = app._read_account(fake, None, fake.open_session(None), sleep=lambda s: None)
+    assert account.error == "HTTP 401" and fake.reads == 1

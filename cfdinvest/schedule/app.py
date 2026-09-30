@@ -26,6 +26,7 @@ import argparse
 import dataclasses
 import logging
 import sys
+import time
 from dataclasses import replace
 
 import pandas as pd
@@ -1843,6 +1844,43 @@ def _command_deal(args, app_config, smtp, transport) -> int:
     return _command_trade_capital(args, app_config, smtp, transport)
 
 
+#: How many times a zero balance is asked again, on a fresh session, and
+#: how long to wait between. Measured 2026-09-30: Capital answered some
+#: sessions with 0.0 for the funded demo account -- every dealing pass from
+#: 13:41 to 15:17 -- while a separate login seconds apart read 4,678.34. The
+#: pass stood aside correctly and the account went undealt for an hour and
+#: a half. Three fresh sessions add at most fifteen seconds to a pass that
+#: runs every five minutes.
+ZERO_BALANCE_RETRIES = 3
+ZERO_BALANCE_PAUSE_SECONDS = 5.0
+
+
+def _read_account(capital, broker, session, *, sleep=None):
+    """The account, asking again on a fresh session if it reads zero.
+
+    Only a zero balance is retried. Every other failure is returned at once,
+    and a zero that persists is returned as the zero it is -- the caller then
+    stands aside, which is the safe direction. Returns the session the good
+    reading came from, because the rest of the pass must use that one.
+    """
+    wait = sleep if sleep is not None else time.sleep
+    account = capital.fetch_account(session, broker)
+    for attempt in range(ZERO_BALANCE_RETRIES):
+        if account.ok or account.error != capital.ZERO_BALANCE:
+            break
+        logger.info(
+            "Capital: balance read as 0; asking again on a fresh session "
+            "(%d of %d)", attempt + 1, ZERO_BALANCE_RETRIES,
+        )
+        wait(ZERO_BALANCE_PAUSE_SECONDS)
+        fresh = capital.open_session(broker)
+        if not fresh.ok:
+            break
+        session = fresh
+        account = capital.fetch_account(session, broker)
+    return session, account
+
+
 def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     """One pass of the demo account: decide, then place what survives.
 
@@ -1909,7 +1947,7 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         logger.warning("Capital: could not authenticate: %s", session.error)
         return EXIT_OK
 
-    account = capital.fetch_account(session, settings.broker)
+    session, account = _read_account(capital, settings.broker, session)
     if not account.ok:
         logger.warning("Capital: no balance (%s); nothing can be sized", account.error)
         return EXIT_OK
@@ -3142,6 +3180,8 @@ def run_daemon_job(name, args, app_config, smtp=None, transport=None) -> None:
         _command_record_client_sentiment(args, app_config)
     elif name == "record-headlines":
         _command_record_headlines(args, app_config)
+    elif name == "label-headlines":
+        _command_label_headlines(args, app_config)
     elif name == "screen-universe":
         # Records what the rule says and nothing else. It cannot change the
         # traded universe -- the CLI it calls has no path that writes the
@@ -3302,6 +3342,49 @@ def _command_record_headlines(args, app_config) -> int:
         "Headlines: %d new of %d fetched across %d instruments; archive now "
         "%d stories over %d days",
         written, len(rows), len(wanted), have["stories"], have["days"],
+    )
+    return EXIT_OK
+
+
+def _command_label_headlines(args, app_config) -> int:
+    """Have a language model label what each new headline reports.
+
+    Reads the usable stories -- the noise rules re-applied -- first seen
+    since the forward record began, asks about the ones not yet labelled
+    under the current prompt, and appends what comes back. Without a key it
+    labels nothing and says so once at debug level: an unconfigured machine
+    is the normal state, not a fault. See ``ingestion.headline_labels``.
+    """
+    from cfdinvest.ingestion import headline_labels as labeller
+    from cfdinvest.ingestion.news_rss import company_names
+    from cfdinvest.persist import headline_labels as store
+    from cfdinvest.persist import headlines
+
+    client = labeller.make_client()
+    if client is None:
+        logger.debug("No Anthropic key; headlines not labelled")
+        return EXIT_OK
+
+    account = getattr(args, "account", None)
+    done = store.labelled_keys(labeller.PROMPT_VERSION, app_config, account)
+    todo = labeller.pending(headlines.usable_headlines(app_config, account), done)
+    if not todo:
+        return EXIT_OK
+    names = {}
+    for ticker in {str(s.get("ticker") or "") for s in todo}:
+        found = company_names(ticker, config=app_config)
+        if found:
+            names[ticker] = found[0]
+    rows, usage = labeller.label_stories(
+        todo, client, names=names, now=pd.Timestamp.now(tz="UTC").isoformat()
+    )
+    written = store.record_labels(rows, app_config, account)
+    logger.info(
+        "Headline labels: %d written; %d of %d distinct titles answered in %d "
+        "call(s), %d in / %d out tokens, about $%.4f; %d stories still pending",
+        written, usage["answered"], usage["asked"], usage["calls"],
+        usage["input"], usage["output"], usage["cost_usd"],
+        max(0, len(todo) - written),
     )
     return EXIT_OK
 
