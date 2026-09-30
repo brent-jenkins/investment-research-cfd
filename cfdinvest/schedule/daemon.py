@@ -37,6 +37,7 @@ __all__ = [
     "MINUTE_INGEST_AT_UTC",
     "HEADLINE_INTERVAL_MINUTES",
     "CLIENT_SENTIMENT_INTERVAL_MINUTES",
+    "LABEL_INTERVAL_MINUTES",
     "JOBS",
     "EXTERNAL_JOBS",
     "jobs_due",
@@ -186,6 +187,14 @@ HEADLINE_INTERVAL_MINUTES = 60
 #: hours the account holds for, at about 200MB a year.
 CLIENT_SENTIMENT_INTERVAL_MINUTES = 30
 
+#: How often new headlines are sent to a language model to be labelled, in
+#: minutes. Not market-gated, and on its own clock rather than
+#: `record-headlines`' so that a failed or slow labelling run can never delay
+#: the recording it depends on. Hourly because the labels are only read by a
+#: test on a fixed date; nothing needs them sooner. An experiment: see
+#: `ingestion.headline_labels`.
+LABEL_INTERVAL_MINUTES = 60
+
 #: How often the lake and the signals are refreshed while a market is open.
 #:
 #: A daily pipeline on daily bars gave one decision per instrument per
@@ -246,6 +255,8 @@ JOBS: tuple[str, ...] = (
     "record-candidate-spreads",
     "ingest-minute",
     "record-headlines",
+    # After the recording, so a run labels what the same tick just stored.
+    "label-headlines",
     "record-client-sentiment",
     "monitoring-snapshot",
     "risk-snapshot",
@@ -439,6 +450,12 @@ def jobs_due(
         (moment - headlines_last).total_seconds() >= HEADLINE_INTERVAL_MINUTES * 60
     ):
         due.append("record-headlines")
+
+    labels_last = _utc(history.get("label-headlines"))
+    if labels_last is None or (
+        (moment - labels_last).total_seconds() >= LABEL_INTERVAL_MINUTES * 60
+    ):
+        due.append("label-headlines")
 
     # Every thirty minutes, around the clock, for the same reason: positions
     # change before the open, and the reading exists only at the moment it

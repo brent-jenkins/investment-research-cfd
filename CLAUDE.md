@@ -131,6 +131,7 @@ These are standing instructions from the project owner, not preferences.
   | --- | --- | --- | --- |
   | headlines, `record-headlines` | 2026-09-27 | 2026-12-28 | 2027-03-29 |
   | client sentiment, `record-client-sentiment` | 2026-09-28 | 2026-12-28 | 2027-03-29 |
+  | headline events, `label-headlines` | 2026-09-30 | 2026-12-28 | 2027-03-29 |
 
   **Minute bars (`capital_1m`) are a price series, not an experiment**, on
   the owner's decision, 2026-09-28: kept in case they become useful,
@@ -521,6 +522,55 @@ uses the shared root, exactly as before it existed. See
 `cfdinvest-monitor.service` checks health every thirty minutes out of
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
+
+### HEADLINES LABELLED BY EVENT, PRE-REGISTERED BEFORE ANY LABEL EXISTS, 2026-09-30
+
+On the owner's decision: "if we can't predict direction yet... we have
+little left to lose". A model predicting price direction from the inputs
+this project already holds was NOT built -- one was fitted over 20 months
+and 320,948 rows and scored -0.009 against a permutation floor of +0.001,
+and a flexible fit on inputs that carry no direction is the fastest route
+to a convincing wrong number. What was built instead is an instrument: a
+language model READING each stored headline, where the word-list scorer
+cannot tell "Why is Intel up 33%?" (a move already made) from "Intel cuts
+guidance" (news).
+
+**`label-headlines`**, hourly in `cfdinvest-daily`, not market-gated. Claude
+Haiku 4.5 (`claude-haiku-4-5`) reads the TITLE ONLY of every usable story
+first seen on or after 2026-09-27 and returns, as schema-constrained JSON:
+
+    about    company | other | both      is the story about the filed name
+    event    rating_up | rating_down | guidance_up | guidance_down |
+             earnings_beat | earnings_miss | deal | legal_regulatory |
+             product | management | price_move | commentary | other
+    impact   good | neutral | bad        what the EVENT means for the filed
+                                         company -- not the headline's tone
+
+Appended to `headlines/labels.jsonl` with the model id, the prompt version
+and the time labelled; the stories themselves are untouched. **No
+hindsight is available to it**: every story labelled was first seen after
+the model's training data ends, and it sees only the title.
+
+**The test, fixed now.** Stories first seen in the 24 hours before 10:00
+New York, `about == company`, `event` not in {price_move, commentary,
+other}, **and published no more than three days before they were first
+seen** -- AMENDED the same evening, before any label had been read: the
+first forty labelled on the box included an April earnings beat and an
+Airbnb Q2 beat "first seen" in September, resurfaced by the feed, and an old
+event is not news for the session it reappears in. Stories whose date
+cannot be read are not labelled. Per name per session, the sign of (good - bad) events. On the
+loudest fifth by predicted volatility, signed by that sign, against 10:00
+to the last bar's open, net of the measured spread. Same branches as the
+headline test:
+
+    net positive, t >= 2, both halves positive   -> a real direction source
+    gross positive, net negative                 -> real and not tradeable
+    near zero                                    -> reading the news better
+                                                    does not call the day
+
+Futility look 2026-12-28 on the signed mean, gross: at or below zero it
+stops, and the job, its code and its labels are removed. Decision
+2027-03-29. The labels decide nothing about trades before then.
 
 ### A HEADLINE FILED UNDER A BANK IS OFTEN ABOUT SOMEBODY ELSE, 2026-09-28
 

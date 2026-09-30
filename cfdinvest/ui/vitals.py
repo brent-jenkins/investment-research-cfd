@@ -77,6 +77,8 @@ SCHEDULES: tuple[tuple[str, str, str], ...] = (
      "Record Capital's client positioning, which the broker keeps no history of"),
     ("record-headlines", "hourly",
      "Record headlines with the time first seen, because the feed keeps no history"),
+    ("label-headlines", "hourly",
+     "Have a language model label what each new headline reports (an experiment)"),
     ("screen-universe", "daily", "Rank the pool and record the selection"),
 )
 

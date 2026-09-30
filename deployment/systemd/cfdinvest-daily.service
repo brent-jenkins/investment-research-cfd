@@ -47,7 +47,7 @@ WorkingDirectory=/opt/cfdinvest
 EnvironmentFile=/etc/cfdinvest/env
 
 ExecStart=/opt/cfdinvest/.venv/bin/cfdinvest-schedule daemon --max-ticks 1 \
-    --only ingest-daily,record-candidate-spreads,ingest-minute,record-headlines,monitoring-snapshot,risk-snapshot,verify-day,prune-runs,screen-universe
+    --only ingest-daily,record-candidate-spreads,ingest-minute,record-headlines,label-headlines,monitoring-snapshot,risk-snapshot,verify-day,prune-runs,screen-universe
 
 TimeoutStartSec=1800
 

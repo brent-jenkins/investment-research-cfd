@@ -30,6 +30,10 @@ dependencies = [
     "pyarrow==25.0.1",
     "requests==2.34.2",
     "yfinance==1.6.0",
+    # The headline-event experiment (CLAUDE.md, 2026-09-30). Imported only by
+    # `ingestion.headline_labels`, and only when a key is present; removed
+    # with that module if the experiment ends on a null.
+    "anthropic==1.9.0",
 ]
 
 [project.scripts]
