@@ -523,6 +523,48 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE FILING TEST CAME IN: THE "NEAR ZERO" BRANCH, 2026-09-30
+
+Read the same evening, against the registration below, unchanged.
+1,361 8-Ks fetched for the 100 candidates from 2025-08-01, press releases
+found by the SEC's EX-99.1 type (about half), labelled by Haiku 4.5 for
+$2.11. 613 carried a side; **87% were good**, because press releases are
+written to be. 587 name-days in 207 sessions:
+
+                                 mean/trade    t      H1       H2
+    gross                         -0.038%   -0.44   +0.045%  -0.120%
+    net of measured spread        -0.194%   -2.27   -0.118%  -0.268%
+
+    not pre-registered, market-neutral gross   -0.029%  t -0.36
+    (the market's own 10:00-to-close move averaged +0.01% on those days)
+
+**Reading a company's own filing does not call the rest of its day.**
+Gross is a coin flip in both halves; net loses exactly the spread. Neither
+market drift nor the long bias hides anything.
+
+**The conditional cuts, each against its registered pass mark:**
+
+    not yet priced by 10:00    net -0.252%  t -2.26   (priced: -0.172%, t -1.38)
+        -> NOT supported. The not-yet-priced did worse, not better.
+    agreeing with the trend    net -0.431%  t -2.75   H1 -0.144  H2 -0.712
+    against the trend          net +0.040%  t +0.24
+        -> REFUTED, in the opposite direction. When the filing agreed with
+           the engine's trend the day went AGAINST both, in both halves.
+
+The last line is the only signal in the table and it points the wrong way
+for the hypothesis. It fits the pre-market reversal of 2026-09-27: an
+extended move with news behind it is partly undone. **It is a lead, not a
+result**: the direction was registered the other way, and it is one cut of
+several. It would need its own registration and a fresh sample.
+
+**The engine comparison was not run.** It was registered as the step
+before ADOPTION, and nothing is being adopted.
+
+**Consequence, as registered: the live news trial is expected to fail**,
+since headlines are mostly later, weaker retellings of the same events and
+the filing itself does not call the day. The registration says the trial
+moves to the veto early. That is the owner's decision.
+
 ### COMPANY FILINGS READ BY CLAUDE: A BACKTEST, PRE-REGISTERED, 2026-09-30
 
 The owner's question after news trading was switched on: what else would
