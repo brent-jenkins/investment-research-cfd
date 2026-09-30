@@ -523,6 +523,50 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### CAN CLAUDE CALL THE SIDE OF A LOUD NAME? PRE-REGISTERED, 2026-09-30
+
+The owner's framing, which is the project's whole open question in one
+line: "we're trying to determine direction on trades we know will have
+large movements." Picking the movers works; the side does not. So the test
+is not "approve or reject the engine's trades" but: **given the loudest
+names, and everything knowable at 10:00 New York, can Claude Sonnet 5 say
+which way they go?** Written down before any review was requested.
+
+**The window is 2026-07-01 to 2026-09-29, because of hindsight.** The
+Models API gives Sonnet 5's release date as 2026-06-29; nothing after it can
+be in its training data. About 63 sessions -- one regime, and each half of
+the split is about six weeks, which is thin and is stated here so it cannot
+be discovered afterwards.
+
+**The sample.** Each session, the loudest fifth of the 100 candidates by
+trailing 20-session realised volatility of hourly returns up to the
+previous close. 300 name-days drawn from those at random, seed 20260930,
+before any is reviewed.
+
+**What Sonnet sees**, all of it knowable at 10:00 New York and nothing
+later: the name, company and sector; hourly bars for the previous ten
+sessions and today's pre-market bars to 10:00; thirty daily closes and
+volumes; the engine's reading on its decision bar (direction, confidence,
+the three trend components, the regime); the equal-weighted candidates'
+move from the previous close to 10:00 and over five days; and any 8-K
+filings labelled in the previous three days. **No headlines**: they have no
+clean history before 2026-09-27. It must answer long or short, with a
+confidence from 0.5 to 1.0 and a one-line reason. Adaptive thinking, the
+model's default effort.
+
+**The primary test.** Sonnet's side, signed, from 10:00 to the last bar's
+open, net of the measured spread. Per-session means, t across sessions:
+
+    net positive, t >= 2, both halves positive   -> Claude can call the side
+    gross positive, net negative                 -> real and not tradeable
+    near zero                                    -> it cannot, from this data
+
+**Two secondary readings, fixed now:** the hit rate, and whether its
+more-confident half beats its less-confident half (t >= 2). And one
+control, because the engine's own side is in what it sees: the engine's
+direction alone on the same 300 name-days. A result that only matches the
+engine has added nothing.
+
 ### NEWS TRADING SWITCHED TO VETO BEFORE ITS FIRST TRADE, 2026-09-30
 
 On the owner's decision, the same evening the filing test came in: the
