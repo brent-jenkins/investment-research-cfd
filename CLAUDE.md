@@ -523,6 +523,50 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE ACCOUNT TRADES ON THE NEWS FROM 2026-10-01, UNMEASURED, 2026-09-30
+
+On the owner's decision, the same evening the labels were built: "we're
+looking for good trades -- how it balances between Claude and the engine
+isn't that important, it's the end result that matters." The veto form
+(refuse engine opens the news contradicts) is the stated fallback.
+
+**`strategy.news_trading = true`.** Where labelled stories about a name --
+about the company itself, a real event, first seen in the 24 hours before
+10:00 New York or during the session, no later than a bar's END -- net good
+or bad, the name trades that way on that bar at confidence 0.80, sized by
+the engine's volatility-target size. It overrides the trend signal,
+including one pointing the other way, and is exempt from the breakout gate
+(which asks whether a TREND confirmed) but from nothing else: the screen,
+the opening and closing windows, the flatten and every cap still bind.
+
+**In the engine, not the dealer.** `signals.news` is applied after
+`generate_signals` in `run_from_analysis` and in the last look, both fed by
+`persist.headline_labels.news_events`, so the run the dealer reads and the
+check before an open cannot disagree. `BacktestConfig.news_events` defaults
+None, so no research figure moves. Seven mutations checked (M1910-M1916).
+M1913 survived the first test and the first test was wrong: the breakout
+gate only bites where a signal starts from FLAT, and the fixture's engine
+was already short, so a flip read as a continuing signal. A trendless
+fixture now proves the exemption. A heredoc also turned a `\n` into a real
+newline and the file failed to collect -- every mutation "caught" against a
+file that did not load, recorded because it is green for the wrong reason.
+
+**Smoke-tested on the box, read-only, on real data.** ABT, which the engine
+held short at 0.377 on the 15:00 bar: with a synthetic good-news story
+injected, the dealer's run read long at 0.800 (reason `news`), the engine's
+book held it, and the last look at the live quote read long 0.80 and
+approved. Neither half is inert.
+
+**Nothing behind it is measured, and a week will not measure it.** At three
+to five trades a day a forward result separates from noise in about 47
+weeks (2026-09-01). The pre-registered event test reads the MARKET, not the
+account, so trading on the labels does not spoil it, and it still decides:
+futility 2026-12-28, decision 2027-03-29. **On a null, news trading is
+switched off and removed along with the labels.**
+
+**The forward record restarts** at the first news-enabled session, on the
+balance at the 2026-09-30 close, as it did on each configuration change.
+
 ### HEADLINES LABELLED BY EVENT, PRE-REGISTERED BEFORE ANY LABEL EXISTS, 2026-09-30
 
 On the owner's decision: "if we can't predict direction yet... we have

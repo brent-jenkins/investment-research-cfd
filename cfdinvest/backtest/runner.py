@@ -73,6 +73,13 @@ class BacktestConfig:
     #: be mistaken for a filtered one.
     use_regimes: bool = True
 
+    #: Labelled company news, as ``signals.news.events_from_labels`` returns
+    #: it. ``None`` -- the default, and every research run's -- means no
+    #: news-driven trades, so no recorded figure moves because this exists.
+    #: Set only on the run the dealer reads, when ``strategy.news_trading``
+    #: is on (owner's decision, 2026-09-30).
+    news_events: Any = None
+
 
 @dataclass(frozen=True, slots=True)
 class PipelineResult:
@@ -106,6 +113,17 @@ def run_from_analysis(
         else None
     )
     signals = generate_signals(analysis_frame, regimes, settings.signal)
+    if settings.news_events is not None:
+        from cfdinvest.signals.news import apply_news, news_sign_panel
+
+        # News-driven bars written over the trend's, in the one signal step
+        # every consumer shares. See `signals.news`.
+        signals = apply_news(
+            signals,
+            news_sign_panel(settings.news_events, signals.direction.index,
+                            signals.direction.columns),
+            min_size=settings.signal.min_size,
+        )
 
     # A breakout is required before a move is entered, where a trend is
     # running. Built here rather than in the execution config because it
@@ -133,6 +151,12 @@ def run_from_analysis(
             **({"regimes": gate_labels} if gate_labels else {}),
         )
         if mask is not None:
+            # A news trade is not a trend trade, so the breakout question
+            # does not apply to it. Relaxed HERE, on the breakout mask only,
+            # so the screen's membership composed below still binds.
+            from cfdinvest.signals.news import exempt_news_from_gate
+
+            mask = exempt_news_from_gate(mask, signals)
             # Combined, never replaced. ``entry_gate`` is a public
             # ExecutionConfig field and the breakout is only one of the
             # things that may shut it -- a universe screen is another. This

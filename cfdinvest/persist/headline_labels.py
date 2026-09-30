@@ -92,6 +92,19 @@ def load_labels(config=None, account: str | None = None) -> list[dict]:
     return rows
 
 
+def news_events(config=None, account: str | None = None):
+    """The labelled news that carries a side, for the engine's signal step.
+
+    The one loader both the run the dealer reads and the last look before
+    an open use, so the two cannot disagree about which news exists. Reads
+    the current prompt version's labels only.
+    """
+    from cfdinvest.ingestion.headline_labels import PROMPT_VERSION
+    from cfdinvest.signals.news import events_from_labels
+
+    return events_from_labels(load_labels(config, account), prompt_version=PROMPT_VERSION)
+
+
 def labelled_keys(
     prompt_version: str, config=None, account: str | None = None
 ) -> set[str]:

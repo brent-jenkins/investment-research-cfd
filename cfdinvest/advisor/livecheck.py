@@ -423,6 +423,19 @@ def reevaluate(
 
         regimes = classify_regimes(analysis, backtest.regime)
         signals = generate_signals(analysis, regimes, signal_config)
+        if getattr(strategy, "news_trading", False):
+            # The same news the run the dealer reads was given, through the
+            # same loader and the same step -- otherwise every news trade
+            # would be refused here as "no longer a signal".
+            from cfdinvest.persist.headline_labels import news_events
+            from cfdinvest.signals.news import apply_news, news_sign_panel
+
+            signals = apply_news(
+                signals,
+                news_sign_panel(news_events(settings), signals.direction.index,
+                                signals.direction.columns),
+                min_size=signal_config.min_size,
+            )
 
         direction, confidence = signals.direction, signals.confidence
         if direction is None or direction.empty:

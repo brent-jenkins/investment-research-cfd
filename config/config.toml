@@ -906,6 +906,20 @@ close_delay_minutes = 90
 # visible in the open count and reversible by setting this back to false.
 last_look = true
 
+# News-driven trades, on the owner's decision of 2026-09-30: "we're looking
+# for good trades -- how it balances between Claude and the engine isn't
+# that important, it's the end result that matters." Where labelled stories
+# about a company, first seen in the 24 hours before 10:00 New York or during
+# the session, net good or bad, the name trades that way for the session.
+# See `signals.news` and `ingestion.headline_labels`.
+#
+# NOTHING BEHIND IT IS MEASURED. The pre-registered test reads the market,
+# not the account, so trading on the labels does not spoil it; its dates are
+# unchanged (futility look 2026-12-28, decision 2027-03-29). The fallback if
+# this does not help is a veto -- refuse engine opens the news contradicts --
+# rather than off.
+news_trading = true
+
 # **UNSET on 2026-09-10.** Its justification named two conditions and day
 # trading has falsified both.
 #
