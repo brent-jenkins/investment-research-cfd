@@ -45,8 +45,12 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "NEWS_CONFIDENCE", "EXCLUDED_EVENTS", "events_from_labels",
-    "news_sign_panel", "apply_news", "exempt_news_from_gate",
+    "news_sign_panel", "apply_news", "exempt_news_from_gate", "veto_gate", "MODES",
 ]
+
+#: How labelled news may act on the book. ``trade`` opens positions on it;
+#: ``veto`` only refuses trend opens it contradicts; ``off`` ignores it.
+MODES = ("off", "trade", "veto")
 
 #: Confidence given to a news-driven signal. Above the 0.75 entry gate so it
 #: opens, and above the decayed-trim threshold (which is the gate) so a held
@@ -173,6 +177,20 @@ def apply_news(signals, sign: pd.DataFrame, *, min_size: float):
         signals, direction=direction, size=size, confidence=confidence, reason=reason,
         diagnostics={**signals.diagnostics, "news_sign": side},
     )
+
+
+def veto_gate(sign: pd.DataFrame, direction: pd.DataFrame) -> pd.DataFrame:
+    """An entry gate that refuses a trend OPEN the fresh news contradicts.
+
+    The veto form, switched to by the owner on 2026-09-30 after the filing
+    backtest found a company's own 8-K did not call the rest of its day. It
+    can only stop a trade, never start one: news agreeing with the engine,
+    or no news, leaves the engine alone, and a position already held is
+    never closed by it -- the engine applies entry gates to opens only.
+    """
+    sign = sign.reindex(index=direction.index, columns=direction.columns).fillna(0)
+    against = ((sign > 0) & (direction == "short")) | ((sign < 0) & (direction == "long"))
+    return ~against
 
 
 def exempt_news_from_gate(mask, signals):

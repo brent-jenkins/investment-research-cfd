@@ -913,12 +913,15 @@ last_look = true
 # the session, net good or bad, the name trades that way for the session.
 # See `signals.news` and `ingestion.headline_labels`.
 #
-# NOTHING BEHIND IT IS MEASURED. The pre-registered test reads the market,
-# not the account, so trading on the labels does not spoil it; its dates are
-# unchanged (futility look 2026-12-28, decision 2027-03-29). The fallback if
-# this does not help is a veto -- refuse engine opens the news contradicts --
-# rather than off.
-news_trading = true
+# SWITCHED TO VETO the same evening, before a single news trade was placed.
+# The filing backtest (CLAUDE.md, 2026-09-30) found a company's own 8-K did
+# not call the rest of its day -- -0.04% a trade gross, -0.19% net -- and
+# headlines are mostly later retellings of the same events. In veto mode the
+# news only REFUSES a trend open it contradicts; it never opens a trade and
+# never closes one. Expect little: it fires rarely, and a book that loses
+# about the spread per trade loses less whenever it trades less, which is
+# not evidence the news is being read well. `off` ignores the news entirely.
+news_mode = "veto"
 
 # **UNSET on 2026-09-10.** Its justification named two conditions and day
 # trading has falsified both.

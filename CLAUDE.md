@@ -523,6 +523,38 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### NEWS TRADING SWITCHED TO VETO BEFORE ITS FIRST TRADE, 2026-09-30
+
+On the owner's decision, the same evening the filing test came in: the
+deploy that would have switched news-driven trading on switches the VETO
+on instead. `strategy.news_trading` is replaced by **`strategy.news_mode`**
+-- `off`, `trade` or `veto` -- default `off`, `veto` in `config.toml`. An
+unknown mode is refused by the engine and logged by the live run rather
+than read as one of the others.
+
+**The veto only refuses a trend OPEN that fresh news contradicts.** It is
+composed into the engine's entry gate, which acts on opens and never on a
+held position, so it can stop a trade and can never start or close one. No
+news-driven trade is ever placed, and the last look is untouched: a vetoed
+open is never intended, so there is nothing to re-check.
+
+**Smoke-tested on the box, read-only, on today's data.** The engine opened
+HD short at 15:00. With good news injected at 12:00 the vetoed run held
+nothing in HD all day; no other name changed side, opened or closed; the
+only other change was the rest of the book scaled up into the room HD
+left, because the book sat at its 3.5x gross ceiling. Four mutations
+checked (M1917-M1919, M1916 for the mode), against a suite first asserted
+to pass unmutated -- after a heredoc broke the file twice today and made
+every mutation look caught.
+
+**What to expect, stated before it runs.** The owner's own prediction was
+"the same results but inverted", and it is close to right: the veto fires
+only where news contradicts an engine open, which is rare, and there the
+filing data leans slightly its way (the engine's own side lost about 0.35%
+a trade, at t about 1). Most of any improvement will be the book trading
+less -- it loses about the spread a trade, so any rule that removes trades
+loses less -- and that is not evidence the news is being read well.
+
 ### THE FILING TEST CAME IN: THE "NEAR ZERO" BRANCH, 2026-09-30
 
 Read the same evening, against the registration below, unchanged.
@@ -621,6 +653,9 @@ On the owner's decision, the same evening the labels were built: "we're
 looking for good trades -- how it balances between Claude and the engine
 isn't that important, it's the end result that matters." The veto form
 (refuse engine opens the news contradicts) is the stated fallback.
+
+**SUPERSEDED THE SAME EVENING, before a single news trade was placed: the
+account runs the veto, not this.** See the entry above.
 
 **`strategy.news_trading = true`.** Where labelled stories about a name --
 about the company itself, a real event, first seen in the 24 hours before

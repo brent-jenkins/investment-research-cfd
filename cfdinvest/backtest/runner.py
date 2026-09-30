@@ -79,6 +79,11 @@ class BacktestConfig:
     #: Set only on the run the dealer reads, when ``strategy.news_trading``
     #: is on (owner's decision, 2026-09-30).
     news_events: Any = None
+    #: What the news does when given: ``trade`` writes news-driven bars over
+    #: the trend's; ``veto`` only refuses trend opens it contradicts. See
+    #: ``signals.news.MODES``. An unknown mode is refused rather than
+    #: quietly read as one of the others.
+    news_mode: str = "trade"
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,17 +118,25 @@ def run_from_analysis(
         else None
     )
     signals = generate_signals(analysis_frame, regimes, settings.signal)
+    news_veto = None
     if settings.news_events is not None:
-        from cfdinvest.signals.news import apply_news, news_sign_panel
+        from cfdinvest.signals.news import MODES, apply_news, news_sign_panel, veto_gate
 
-        # News-driven bars written over the trend's, in the one signal step
-        # every consumer shares. See `signals.news`.
-        signals = apply_news(
-            signals,
-            news_sign_panel(settings.news_events, signals.direction.index,
-                            signals.direction.columns),
-            min_size=settings.signal.min_size,
-        )
+        if settings.news_mode not in MODES:
+            raise ValueError(
+                f"news_mode {settings.news_mode!r} is not one of {MODES}; an unknown "
+                "mode would silently run as some other rule"
+            )
+        sign = news_sign_panel(settings.news_events, signals.direction.index,
+                               signals.direction.columns)
+        if settings.news_mode == "trade":
+            # News-driven bars written over the trend's, in the one signal
+            # step every consumer shares. See `signals.news`.
+            signals = apply_news(signals, sign, min_size=settings.signal.min_size)
+        elif settings.news_mode == "veto":
+            # Composed into the entry gate below, after the breakout mask,
+            # so it refuses opens and never touches a held position.
+            news_veto = veto_gate(sign, signals.direction)
 
     # A breakout is required before a move is entered, where a trend is
     # running. Built here rather than in the execution config because it
@@ -181,6 +194,14 @@ def run_from_analysis(
                 "Breakout gate configured but no mask could be built; "
                 "entries are ungated this run"
             )
+
+    if news_veto is not None:
+        execution_settings = dataclasses.replace(
+            execution_settings,
+            entry_gate=compose_entry_gates(
+                getattr(execution_settings, "entry_gate", None), news_veto
+            ),
+        )
 
     execution = run_backtest(signals, analysis_frame, execution_settings)
 

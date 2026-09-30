@@ -542,11 +542,12 @@ class StrategyConfig:
     #: with the live check on, the backtest modelled a system one filter
     #: short of the one that dealt. With it off they agree.
     last_look: bool = True
-    #: Trade on labelled company news: where fresh stories about a name net
-    #: good or bad, it trades that way for the session. See `signals.news`.
-    #: Off by default -- a trading rule is switched on deliberately -- and on
-    #: in `config.toml` by the owner's decision of 2026-09-30.
-    news_trading: bool = False
+    #: How labelled company news acts on the book: ``off``, ``trade`` (open
+    #: positions on it) or ``veto`` (refuse trend opens it contradicts). See
+    #: `signals.news`. Off by default -- a trading rule is switched on
+    #: deliberately. ``veto`` in `config.toml` by the owner's decision of
+    #: 2026-09-30, after the filing backtest found no edge in trading on it.
+    news_mode: str = "off"
     #: Notional per unit of signal size, as a multiple of equity.
     exposure_per_unit_size: float = 1.0
     #: Days either side of a reporting date to hold no position. ``0`` off.

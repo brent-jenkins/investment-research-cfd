@@ -14,6 +14,9 @@ Mutations checked:
   M1914 the exemption leaking past the breakout mask to the screen
   M1915 research runs changed by the rule's existence
   M1916 the live run not given the events when news trading is on
+  M1917 the veto not refusing a trend open the news contradicts
+  M1918 the veto opening a trade of its own
+  M1919 an unknown news mode run as one of the others
 """
 from __future__ import annotations
 
@@ -188,10 +191,70 @@ def test_the_live_run_carries_the_news_when_switched_on(monkeypatch):
     events = news.events_from_labels([_event(DAY)], prompt_version="v")
     monkeypatch.setattr(headline_labels, "news_events", lambda config=None, account=None: events)
 
-    on = AppConfig()
-    on = dataclasses.replace(on, strategy=dataclasses.replace(on.strategy, news_trading=True))
-    off = dataclasses.replace(on, strategy=dataclasses.replace(on.strategy, news_trading=False))
+    base = AppConfig()
+    mode = lambda m: dataclasses.replace(base, strategy=dataclasses.replace(base.strategy, news_mode=m))
     backtest = BacktestConfig(end=DAY, start=DAY - pd.Timedelta(days=200))
 
-    assert app.for_live_intent(backtest, on).news_events is events
-    assert app.for_live_intent(backtest, off).news_events is None
+    for wanted in ("trade", "veto"):
+        live = app.for_live_intent(backtest, mode(wanted))
+        assert live.news_events is events and live.news_mode == wanted
+    assert app.for_live_intent(backtest, mode("off")).news_events is None
+    assert app.for_live_intent(backtest, mode("vetto")).news_events is None, "a misspelt mode acted"
+
+
+# --------------------------------------------------------------------------- #
+# Veto mode: the news may only refuse a trend open it contradicts
+# --------------------------------------------------------------------------- #
+def _run_mode(analysis, events, mode):
+    from cfdinvest.schedule.app import FLATTEN_AT_SESSION_END
+
+    config = BacktestConfig(
+        use_regimes=False,
+        # Flattened each evening, as the account is, so the engine OPENS
+        # afresh every session -- a veto acts on opens, not on holdings.
+        # And the session's opening bar refused, as live and the research
+        # harness refuse it: otherwise the first open fills on the previous
+        # evening's signal, before the news existed.
+        execution=ExecutionConfig(breakout_lookback=12, overnight_profit_take=FLATTEN_AT_SESSION_END,
+                                  open_delay_minutes=1),
+        news_events=None if events is None else news.events_from_labels(events, prompt_version="v"),
+        news_mode=mode,
+    )
+    return run_from_analysis(analysis, config).execution.positions["AAA"].fillna(0.0)
+
+
+def test_the_veto_refuses_a_short_the_good_news_contradicts():
+    """M1917: the falling name the engine shorts every day is left alone on
+    the day good news arrives, and shorted again the day after."""
+    day = slice(DAY + pd.Timedelta(hours=13), DAY + pd.Timedelta(hours=19))
+    next_day = slice(DAY + pd.Timedelta(days=1, hours=15), DAY + pd.Timedelta(days=1, hours=18))
+    plain = _run_mode(_falling(), None, "veto")
+    vetoed = _run_mode(_falling(), [_event(DAY + pd.Timedelta(hours=12))], "veto")
+
+    assert (plain.loc[day] < 0).any(), "precondition: the engine shorts on the news day"
+    assert (vetoed.loc[day] == 0).all(), f"the veto let a contradicted short open:\n{vetoed.loc[day]}"
+    assert (vetoed.loc[next_day] < 0).any(), "the veto outlived its news"
+
+
+def test_agreeing_news_does_not_stop_the_engine():
+    day = slice(DAY + pd.Timedelta(hours=13), DAY + pd.Timedelta(hours=19))
+    plain = _run_mode(_falling(), None, "veto")
+    agreed = _run_mode(_falling(), [_event(DAY + pd.Timedelta(hours=12), impact="bad",
+                                           event="guidance_down")], "veto")
+    pd.testing.assert_series_equal(plain.loc[day], agreed.loc[day])
+
+
+def test_the_veto_never_opens_a_trade():
+    """M1918: on a name the engine never trades, good news in veto mode
+    leaves it flat -- where trade mode would buy it."""
+    events = [_event(DAY + pd.Timedelta(hours=12))]
+    assert (_run_mode(_trendless(), events, "veto") == 0).all()
+    assert (_run_mode(_trendless(), events, "trade") > 0).any(), "the control did not trade"
+
+
+def test_an_unknown_mode_is_refused():
+    """M1919."""
+    import pytest
+
+    with pytest.raises(ValueError):
+        _run_mode(_falling(), [_event(DAY)], "vetto")

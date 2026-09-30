@@ -423,10 +423,12 @@ def reevaluate(
 
         regimes = classify_regimes(analysis, backtest.regime)
         signals = generate_signals(analysis, regimes, signal_config)
-        if getattr(strategy, "news_trading", False):
+        if getattr(strategy, "news_mode", "off") == "trade":
             # The same news the run the dealer reads was given, through the
             # same loader and the same step -- otherwise every news trade
-            # would be refused here as "no longer a signal".
+            # would be refused here as "no longer a signal". Not in veto
+            # mode: a veto only removes opens, so the engine never intends a
+            # vetoed one and there is nothing here to re-check.
             from cfdinvest.persist.headline_labels import news_events
             from cfdinvest.signals.news import apply_news, news_sign_panel
 

@@ -1414,15 +1414,21 @@ def for_live_intent(backtest, app_config):
     # News-driven trades, when switched on. Read here because this is the
     # run the dealer reads; the last look loads the same events through the
     # same loader. An unreadable store yields no events, never a guess.
-    news = backtest.news_events
-    if news is None and getattr(getattr(app_config, "strategy", None), "news_trading", False):
+    news, mode = backtest.news_events, backtest.news_mode
+    wanted = str(getattr(getattr(app_config, "strategy", None), "news_mode", "off") or "off")
+    if news is None and wanted in ("trade", "veto"):
         from cfdinvest.persist.headline_labels import news_events
 
-        news = news_events(app_config)
+        news, mode = news_events(app_config), wanted
+    elif news is None and wanted != "off":
+        # Refused loudly and treated as off: a misspelt mode must not trade
+        # on the news, and must not pass unnoticed either.
+        logger.error("strategy.news_mode %r is not off, trade or veto; news ignored", wanted)
 
     return dataclasses.replace(
         backtest,
         news_events=news,
+        news_mode=mode,
         end=trimmed if trimmed is not None else backtest.end,
         start=windowed if windowed is not None else backtest.start,
         # The window and this flag ship together and neither is safe alone.
