@@ -523,6 +523,44 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### IT CANNOT: SONNET 5 CALLS THE SIDE OF A LOUD NAME AT 50.3%, 2026-09-30
+
+Read the same evening, against the registration below, unchanged. 300
+loud name-days, 62 sessions, 2026-07-01 to 2026-09-29, one request each,
+$4.38 in all:
+
+                                  mean/trade    t      H1       H2
+    Sonnet's side, gross          -0.010%    -0.08   -0.001%  -0.019%
+    Sonnet's side, net            -0.135%    -1.11   -0.126%  -0.145%
+    hit rate 50.3%    long 35% of calls
+
+    more confident (262)   net -0.188%  t -1.23
+    less confident  (38)   net +0.038%  t +0.14
+    engine alone (control, 158 name-days)   net -0.273%  t -1.72
+    Sonnet agreed with the engine on 77% of those
+
+**The "near zero" branch: given everything knowable at 10:00, Claude Sonnet
+5 cannot say which way a loud name goes by the last bar.** Gross is zero to
+two decimal places in both halves and the hit rate is a coin's. Its
+confidence does not sort outcomes -- the more confident calls did slightly
+worse -- and the split came out 262 against 38 because most answers sat on
+the same value and ties went to "more confident"; neither reading supports
+it. It mostly followed the engine's side, and lost a little less than the
+engine alone, inside the noise.
+
+**What it adds to the record.** The fourth independent route to one answer
+in two days: the engine's inputs (2026-09-26), headline sentiment on a
+leaking backfill (2026-09-27), Claude reading company filings (the filing
+test), and now Claude reading the whole picture. Every direction reading
+available from free data, whether by rule or by a language model, sits at
+a coin flip over these hours on these names. Its reasons read well --
+fading pre-market spikes, following strong trends -- which is the warning
+this test was designed around: a persuasive rationale is not a forecast.
+
+**Limits, stated.** One regime of about three months, as registered, and
+no headlines (none have a clean history). The price, engine, market and
+filing inputs are all in; the result is about those.
+
 ### CAN CLAUDE CALL THE SIDE OF A LOUD NAME? PRE-REGISTERED, 2026-09-30
 
 The owner's framing, which is the project's whole open question in one
