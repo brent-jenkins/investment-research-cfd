@@ -124,6 +124,10 @@ class SignalConfig:
     #: vetoed index longs for most of a twenty-year bull market, and a rule
     #: that cannot be switched off cannot be measured without it.
     market_filters: bool = True
+    #: ``False`` forbids every short: a long-or-flat book, which is what
+    #: owning the instrument rather than a CFD on it allows. Added
+    #: 2026-10-01 for the spot-crypto arm. ``True`` is every recorded run.
+    allow_short: bool = True
     #: Carry the previous bar's stance across the first bar of each session,
     #: so nothing is opened or signal-closed at the open.
     #:
@@ -367,6 +371,17 @@ def generate_signals(
 
     # -- filters ------------------------------------------------------------
     outcome = _build_filters(analysis_frame, regime_frame, settings, index, columns)
+    if not settings.allow_short:
+        # Composed like any other filter, so it can only forbid: owning a
+        # coin on an exchange has no short side. Independent of
+        # `market_filters`, which it must survive being switched off.
+        outcome = filters_module.combine_outcomes(outcome, filters_module.FilterOutcome(
+            allow_long=pd.DataFrame(True, index=index, columns=columns),
+            allow_short=pd.DataFrame(False, index=index, columns=columns),
+            long_multiplier=pd.DataFrame(1.0, index=index, columns=columns),
+            short_multiplier=pd.DataFrame(1.0, index=index, columns=columns),
+            flags={"shorts_not_allowed": pd.DataFrame(True, index=index, columns=columns)},
+        ))
 
     raw = combined_module.raw_direction(strength, settings.entry_threshold)
     applicable_multiplier = outcome.multiplier_for(raw)

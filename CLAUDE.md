@@ -523,6 +523,45 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE CRYPTO TREND IS THE WINNERS, NOT THE RULE, 2026-10-01
+
+Both checks below, read the same night, unchanged.
+
+**Check 1 FAILS.** Eleven of the twelve 2018 coins had history (MIOTA
+none). Equal-weighted, 2018-01 to 2026-08, at Capital's own spreads --
+50bp on most, 100bp on TRX and DASH, 500bp on NEO and XMR:
+
+    book        CAGR +1.2%  maxDD -19.9%  net +0.41bp/day t +0.53 (H1 +1.32, H2 -0.48)
+                gross +1.50bp t +1.92 (H1 +1.77, H2 +0.98)   years up 4 of 9
+    per coin    net t above 2: ADA alone (+2.33); TRX +1.19; every other
+                coin between -1.18 and +0.53
+
+Before costs the rule shows a small, consistent lean (gross t 1.9, both
+halves positive), and Capital's alt-coin spreads take nearly all of it.
+After them it is nothing. **So the BTC/ETH figure is a property of the two
+coins that boomed, not of the rule** -- on coins picked before anyone knew
+which would survive, most of which then fell 80-99%, trend following made
+about 1% a year.
+
+**Check 2 PASSES: the engine is not the artefact.** An independent
+calculation of the same three votes from the closes agrees with the
+engine's side on 99.9% (BTC) and 100% (ETH) of held days, with net returns
+of the same sign (BTC +11.4bp/day at t 2.67 on a unit position, the engine
++7.3bp at its volatility-target size). The share-CFD backtests failed this
+way; this one does not.
+
+**Spot, long or flat (side arm, decides nothing):** BTC and ETH, no
+financing, 0.25% a side: +24.0% a year, maxDD -34.3%, t +4.05 -- but H2
+(2021-2026) t +1.19, and flat in 2018 (0.0%). The same shape as the CFD
+version: strong while the two coins boomed, not significant since.
+
+**Where this leaves crypto.** Every version is strong in 2015-2020 and
+insignificant in 2021-2026, and the rule does not carry to coins chosen
+without hindsight. Nothing here supports trading it.
+
+`SignalConfig.allow_short` (default True) added for the spot arm,
+M1972-M1973 checked. `research/crypto_checks.py` holds both checks.
+
 ### IS THE CRYPTO TREND REAL? TWO CHECKS, PRE-REGISTERED, 2026-10-01
 
 The owner asked how certain the crypto result is. Concentration, already

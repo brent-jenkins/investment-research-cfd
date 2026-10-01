@@ -51,6 +51,33 @@ def test_the_overlays_veto_by_default():
     assert vetoed, "the default no longer applies the overlays"
 
 
+def test_allow_short_false_leaves_no_short_and_keeps_the_longs():
+    """M1972, M1973: through real signal generation, on a market that falls
+    then rises, a long-only book holds no short -- with the overlays OFF,
+    which the spot arm needs -- and still takes its longs."""
+    import numpy as np
+
+    from cfdinvest.preprocessing import PreprocessConfig, build_analysis_frame
+    from cfdinvest.signals import generate_signals
+    from cfdinvest.schema import TICKER, TIMESTAMP
+
+    calendar = pd.bdate_range("2019-01-02", periods=500, tz="UTC", name=TIMESTAMP)
+    path = np.r_[np.full(250, -0.004), np.full(250, 0.004)]
+    close = 100 * np.exp(np.cumsum(path + np.random.default_rng(3).normal(0, 0.003, 500)))
+    market = pd.DataFrame({"open": close, "high": close * 1.004, "low": close * 0.996,
+                           "close": close, "volume": 1e6, TICKER: "AAA"},
+                          index=calendar).set_index(TICKER, append=True)
+    analysis = build_analysis_frame(market, None, interval="1d",
+                                    config=PreprocessConfig(correlation_window=63))
+    both = dataclasses.replace(SignalConfig(), market_filters=False)
+    signals_both = generate_signals(analysis, None, both)
+    signals_long = generate_signals(analysis, None, dataclasses.replace(both, allow_short=False))
+
+    assert (signals_both.direction["AAA"] == "short").any(), "the fixture never goes short"
+    assert not (signals_long.direction["AAA"] == "short").any(), "a long-only book went short"
+    assert (signals_long.direction["AAA"] == "long").any(), "a long-only book lost its longs"
+
+
 def test_switching_them_off_permits_and_shrinks_nothing():
     """M1970."""
     outcome = _outcome(market_filters=False)
