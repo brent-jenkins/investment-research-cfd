@@ -523,6 +523,34 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### SMALLER NAMES ON CAPITAL: WHAT A SPREAD READING MUST SHOW, 2026-10-01
+
+The lead: Lopez-Lira & Tang find a language model's read of news calls
+next-day returns, more strongly the smaller the company. Our 100
+candidates are almost all above $50bn. Capital lists 617 US share CFDs;
+by yfinance market cap on 2026-09-30, 123 are under $2bn and 156 are
+$2-10bn, all at 20% margin with shorting allowed. **Their spreads are not
+yet known**: the read on 2026-09-30 was taken at 21:12 UTC, after the
+close, when even our own names showed 37bp against about 7bp in session.
+
+**Fixed before the in-session read (one-off, 2026-10-01 15:00 UTC,
+read-only, written to /tmp on the box):**
+
+    bands      under $300m  excluded whatever the spread
+               $300m-$2bn   small
+               $2bn-$10bn   mid
+    measure    median round-trip spread, (offer-bid)/mid, per band,
+               TRADEABLE names only
+    pass mark  median under 15bp -> that band is worth a pre-registered
+               news test; at or above 30bp -> the lead is closed for that
+               band at Capital's prices; between -> reported, no build
+
+Today's caps are fine for a cost reading. **A backtest may not use them**
+-- banding by today's size picks names by how they turned out. Any test
+bands each name by its size ON THE DAY, from shares outstanding in its
+EDGAR filings (dated by filing) times the lake's price. Built only if a
+band passes; no market-cap series is recorded meanwhile.
+
 ### IT CANNOT: SONNET 5 CALLS THE SIDE OF A LOUD NAME AT 50.3%, 2026-09-30
 
 Read the same evening, against the registration below, unchanged. 300
