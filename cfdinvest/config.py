@@ -548,6 +548,13 @@ class StrategyConfig:
     #: deliberately. ``veto`` in `config.toml` by the owner's decision of
     #: 2026-09-30, after the filing backtest found no edge in trading on it.
     news_mode: str = "off"
+    #: Refuse every open and every resize that grows a position, while
+    #: closes, shrinking resizes and the flatten still run. Off by default;
+    #: ``config.toml`` sets it on by the owner's decision of 2026-10-01 --
+    #: the strategy is measured to lose and the demo balance cannot be
+    #: reset, so it is treated as money that runs out. Turning it off is
+    #: the deliberate act of putting a strategy back on the account.
+    opens_paused: bool = False
     #: Notional per unit of signal size, as a multiple of equity.
     exposure_per_unit_size: float = 1.0
     #: Days either side of a reporting date to hold no position. ``0`` off.

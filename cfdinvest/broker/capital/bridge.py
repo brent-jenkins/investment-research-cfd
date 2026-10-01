@@ -247,6 +247,7 @@ def plan_orders(
     closing_soon: Mapping[str, bool] | None = None,
     session_ending: Mapping[str, bool] | None = None,
     flatten_before_close: bool = False,
+    opens_paused: bool = False,
 ) -> BridgeReport:
     """Decide what to place. Pure: it reads and returns, and places nothing.
 
@@ -616,6 +617,34 @@ def plan_orders(
             price=price, notional=abs(target) * price * float(fx_rate or 1.0),
             deal_id=str(position.get("deal_id") or ""),
         ))
+
+    # **Paused: nothing may add risk, everything may remove it.** Owner's
+    # decision, 2026-10-01: the strategy is measured to lose, and the demo
+    # balance cannot be reset, so it is treated as money that runs out.
+    #
+    # Applied AFTER the loop rather than at the top, so every intent is still
+    # formed and the last look still reads -- the record keeps saying what
+    # the engine would have done, which is the only evidence a paused account
+    # can still produce. An open is refused, and so is a resize that GROWS a
+    # position; a close, a shrinking resize and the flatten pass untouched,
+    # because a book that may not reduce is the failure the reconciliation
+    # halt taught on 2026-09-10. A reversal is already a close alone.
+    if opens_paused:
+        intents = [
+            Intent(
+                ticker=i.ticker, epic=i.epic, direction=i.direction,
+                held_units=i.held_units, target_units=i.held_units,
+                action="refused", reason="opening is paused", price=i.price,
+                entered_bars_ago=i.entered_bars_ago,
+                engine_confidence=i.engine_confidence,
+                live_confidence=i.live_confidence,
+                confidence_bar=i.confidence_bar,
+            )
+            if i.action == "open"
+            or (i.action == "resize" and abs(i.target_units) > abs(i.held_units))
+            else i
+            for i in intents
+        ]
 
     # Only so many new positions per pass, highest conviction first.
     #

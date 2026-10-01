@@ -2347,6 +2347,8 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         flatten_before_close=bool(
             getattr(app_config.strategy, "flatten_before_close", False)
         ),
+        # Read here, handed to the bridge, decided there -- one owner.
+        opens_paused=bool(getattr(app_config.strategy, "opens_paused", False)),
     )
 
     # **Do not act on yesterday's closing state.**

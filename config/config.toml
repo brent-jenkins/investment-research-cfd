@@ -923,6 +923,16 @@ last_look = true
 # not evidence the news is being read well. `off` ignores the news entirely.
 news_mode = "veto"
 
+# PAUSED, on the owner's decision of 2026-10-01. Nothing new is opened and
+# no position is grown; closes, shrinking resizes and the flatten still run,
+# and the engine and the last look still record what they would have done.
+# Ten sessions to 2026-09-30 closed -20.37 GBP on 68 trades, and every
+# direction reading tested sits at a coin flip against a spread it cannot
+# cover. The demo balance cannot be reset, so it is treated as money that
+# runs out. Set false only to put a strategy that has passed a
+# pre-registered test back on the account.
+opens_paused = true
+
 # **UNSET on 2026-09-10.** Its justification named two conditions and day
 # trading has falsified both.
 #

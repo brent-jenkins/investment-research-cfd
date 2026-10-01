@@ -523,6 +523,35 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE ACCOUNT IS PAUSED: NOTHING OPENS, EVERYTHING CAN CLOSE, 2026-10-01
+
+On the owner's decision, after a -107 GBP session on top of ten sessions
+that closed -20.37 on 68 trades: "we know this is a losing strategy, so no
+point continuing with it." And the reason it is a stop rather than a
+shrug: **the demo balance cannot be reset**, so once it is gone so is the
+venue this research runs on. It is treated as money that runs out.
+
+**`strategy.opens_paused = true`.** `plan_orders` refuses every open and
+every resize that GROWS a position, as `opening is paused`. Closes,
+shrinking resizes and the flatten pass untouched -- a pause that could
+stop a close would be the 2026-09-10 halt that blocked its own remedy.
+Applied after the loop, so the engine and the last look still form and
+record every intent: the record goes on saying what the strategy would
+have done, which is the only evidence a paused account can produce. Data
+collection (headlines, labels, client sentiment, minute bars) is
+untouched. Five mutations checked (M1940-M1945).
+
+**A reversed book was asked about first and does worse.** Priced from the
+account's own 118 completed trips, each still paying its spread: actual
+-31.77 USD, reversed -848.31. Before spread the engine's side was +408 --
+slightly right, not wrong -- and a reversal pays the spread too, so it
+turns a small gain into a loss and adds the bill. The day that prompted
+it (1 Oct, six shorts and one long opened at 14:19 into a rising market)
+would have won reversed, by about 41 GBP: one market bet, not seven calls.
+
+**Unpaused only by putting a strategy that has passed a pre-registered
+test on the account.** Nothing measured qualifies today.
+
 ### SMALLER NAMES ON CAPITAL: WHAT A SPREAD READING MUST SHOW, 2026-10-01
 
 The lead: Lopez-Lira & Tang find a language model's read of news calls

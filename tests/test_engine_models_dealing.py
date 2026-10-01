@@ -113,6 +113,11 @@ NOT_WIRED = {
 #: that moving a gate in here to silence the test is a visible act rather
 #: than a one-word edit.
 NOT_A_GATE = {
+    "opens_paused": (
+        "an operational stop, not a strategy rule: it says whether the "
+        "account may take risk at all, and a backtest of a paused account "
+        "is an empty book. Nothing about which trades win depends on it."
+    ),
     "signals": "the engine's own intended positions, which is the input",
     "markets": "broker market detail: epics, bid and offer",
     "positions": "what the account currently holds, read from the broker",
