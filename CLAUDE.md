@@ -523,6 +523,49 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### TREND FOLLOWING FAILS ON 21 MARKETS; CRYPTO IS THE EXCEPTION, 2026-10-01
+
+Read the same evening, against the registration below, unchanged. Each
+market held on 50-70% of days (crypto 20-40%), against 0-9% in the invalid
+run, so this time the rule is the rule.
+
+    book (equal-weighted)  CAGR    maxDD   net/day   t      H1 t    H2 t   gross t   years up
+    PRIMARY, 21 markets   -1.4%   -42.2%  -0.52bp  -1.51  -0.15   -2.26   +1.12     5 of 22
+      indices             -2.5%   -55.5%  -0.89bp  -1.51  -0.38   -1.92   +0.67     4 of 22
+      commodities         +0.2%   -46.9%  +0.21bp  +0.28  +0.73   -0.39   +1.69    11 of 22
+      currencies          -1.5%   -29.4%  -0.56bp  -1.97  -0.56   -2.65   -0.26     4 of 22
+    crypto, BTC + ETH     +21.3%  -41.2%  +5.89bp  +3.48  +3.41   +1.13   +4.15     9 of 12
+
+    primary gross by half   2005-2015 +0.82bp t +1.52    2016-2026 -0.05bp t -0.12
+    primary net by year     2008 +12.9%  2009 +8.3%  -- and negative in 17 of the
+                            other 20
+
+**The "near zero" branch.** Gross is positive at t 1.1 and not
+significant, and its whole contribution is 2005-2015 -- largely 2008-09,
+the crisis years trend following is known for. Since 2016 it earns nothing
+gross. Net loses about 2.3% a year to spread and overnight financing (an
+index long at Capital costs ~8% a year to carry), so **this engine's trend
+following on indices, commodities and currencies has no edge net of
+Capital's costs over the last decade.** No single market reaches net t 2
+positive; the best are crude and Brent (+1.1, +0.9).
+
+**Crypto is the exception, and it is secondary, so it decides nothing.**
+Read with what it is set against:
+
+                     trend CAGR   trend maxDD   buy-and-hold CAGR   b&h maxDD
+    BTC 2015-2026      +26.8%       -42.9%           +60.7%          -83.4%
+    ETH 2017-2026       +9.9%       -48.5%           +26.3%          -94.0%
+
+It earns less than holding and roughly halves the drawdown -- the textbook
+trend-following trade-off, in an asset that rose about 250-fold. Its
+second half (2021-2026) is t 1.13, not significant; BTC and ETH are the two
+cryptocurrencies that survived and boomed, chosen in 2026; and crypto CFDs
+are, as understood here, barred to UK retail accounts. Any further step on
+it needs its own registration on data this run has not seen.
+
+`SignalConfig.market_filters` (default True; M1970-M1971 checked) is the
+one engine change, and moves no recorded figure.
+
 ### TREND FOLLOWING, RUN AS TREND FOLLOWING: PRE-REGISTERED, 2026-10-01
 
 The corrected test, on the owner's go-ahead, fixing the three causes below

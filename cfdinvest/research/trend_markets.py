@@ -117,12 +117,20 @@ def book_returns(result) -> pd.DataFrame:
     return frame.dropna()
 
 
-def summarise(result, split=SPLIT) -> dict:
+def summarise(result, split=SPLIT, *, frame: pd.DataFrame | None = None) -> dict:
+    """The registered statistics, from one run or from a combined book."""
     from cfdinvest.research.harness import arm_metrics
 
-    frame = book_returns(result)
-    out = {k: (str(v) if isinstance(v, pd.Timestamp) else v)
-           for k, v in (arm_metrics(result) or {}).items()}
+    if frame is None:
+        frame = book_returns(result)
+        out = {k: (str(v) if isinstance(v, pd.Timestamp) else v)
+               for k, v in (arm_metrics(result) or {}).items()}
+    else:
+        growth = (1 + frame["net"]).prod()
+        years = max((frame.index[-1] - frame.index[0]).days / 365.25, 1e-9)
+        curve = (1 + frame["net"]).cumprod()
+        out = {"cagr": float(growth ** (1 / years) - 1),
+               "maxdd": float((curve / curve.cummax() - 1).min())}
 
     def stats(series):
         n = len(series)
@@ -138,10 +146,44 @@ def summarise(result, split=SPLIT) -> dict:
     yearly = (1 + frame["net"]).groupby(frame.index.year).prod() - 1
     out["net_by_year_pct"] = {int(y): round(100 * float(v), 1) for y, v in yearly.items()}
     out["years_positive"] = f"{int((yearly > 0).sum())} of {len(yearly)}"
-    trades = getattr(result.execution, "trades", None)
+    trades = getattr(getattr(result, "execution", None), "trades", None)
     if trades is not None and not trades.empty and "units" in trades:
         out["long_share_of_entries"] = round(float((trades["units"] > 0).mean()), 3)
     return out
+
+
+#: The corrected rule, pre-registered 2026-10-01 after the first run was
+#: found to measure a signal that was flat 93% of the time: no overlays, each
+#: component reduced to the side it votes (a 0.1% momentum scale makes any
+#: move read as its sign), and a side held whenever their mean is non-zero.
+#: The signal layer's own `entry_threshold` of 0.3 cannot bind: a non-zero
+#: mean of three sides is at least 1/3.
+CLASSIC_SIGNAL = {"market_filters": False, "momentum_full_scale": 0.001}
+CLASSIC_EXECUTION = {"entry_confidence": 0.0, "exit_confidence": 0.0}
+
+
+def classic_config(app_config, ticker, *, start, end, spreads, financing):
+    # Both thresholds at once: the engine refuses an exit above the entry,
+    # so setting the entry to zero alone would raise.
+    cfg = trend_config(app_config, [ticker], start=start, end=end,
+                       spreads=spreads, financing=financing)
+    thresholds = dataclasses.replace(cfg.execution.thresholds, **CLASSIC_EXECUTION)
+    return dataclasses.replace(
+        cfg,
+        signal=dataclasses.replace(cfg.signal, **CLASSIC_SIGNAL),
+        execution=dataclasses.replace(cfg.execution, thresholds=thresholds),
+    )
+
+
+def combine(frames: dict) -> pd.DataFrame:
+    """Equal-weighted book: each day, the mean over markets with a return.
+
+    A market not trading that day (its own holiday, or before its history
+    starts) is left out of that day's mean rather than counted as flat.
+    """
+    net = pd.DataFrame({k: f["net"] for k, f in frames.items()})
+    gross = pd.DataFrame({k: f["gross"] for k, f in frames.items()})
+    return pd.DataFrame({"net": net.mean(axis=1), "gross": gross.mean(axis=1)}).dropna()
 
 
 def scratch_root(lake, root: Path, tickers) -> Path:
@@ -194,6 +236,8 @@ def main(argv=None) -> int:
     parser.add_argument("--terms", required=True)
     parser.add_argument("--root", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--classic", action="store_true",
+                        help="the corrected, pre-registered rule, one market per run")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
 
@@ -209,6 +253,29 @@ def main(argv=None) -> int:
         held = (result.execution.positions.fillna(0) != 0).mean()
         logger.info("held share of days, by market: %s", held.round(2).to_dict())
         return result
+
+    if args.classic:
+        frames, held = {}, {}
+        for ticker in PRIMARY + CRYPTO:
+            start = CRYPTO_START if ticker in CRYPTO else START
+            cfg = classic_config(config, ticker, start=start, end=END,
+                                 spreads=spreads, financing=financing)
+            result = run_pipeline(DataRepository(config), cfg)
+            frames[ticker] = book_returns(result)
+            held[ticker] = round(float((result.execution.positions[ticker].fillna(0) != 0).mean()), 3)
+            frames[ticker].to_csv(Path(args.out).with_suffix(f".{ticker}.csv"))
+        logger.info("held share of days: %s", held)
+        results = {"held_share_of_days": held,
+                   "primary": summarise(None, frame=combine({t: frames[t] for t in PRIMARY}))}
+        for name, group in (("indices", INDICES), ("commodities", COMMODITIES),
+                            ("currencies", CURRENCIES)):
+            results[name] = summarise(None, frame=combine({t: frames[t] for t in group}))
+        results["crypto"] = summarise(None, frame=combine({t: frames[t] for t in CRYPTO}),
+                                      split="2021-01-01")
+        results["per_market"] = {t: summarise(None, frame=f) for t, f in frames.items()}
+        Path(args.out).write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
+        print(json.dumps({k: v for k, v in results.items() if k != "per_market"}, indent=2, default=str))
+        return 0
 
     results = {"primary": summarise(run(PRIMARY))}
     results["gate_0.35"] = summarise(run(PRIMARY, entry_confidence=0.35))

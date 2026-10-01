@@ -118,6 +118,12 @@ class SignalConfig:
     #: regime is instead, keeping the engine's own ranking rather than
     #: discarding it at a boundary.
     regime_mode: str = "gate"
+    #: The regime, correlation and macro overlays, together. ``True`` is what
+    #: every recorded run used. ``False`` bypasses all three -- the textbook
+    #: trend rule has none -- added 2026-10-01 because on daily bars they
+    #: vetoed index longs for most of a twenty-year bull market, and a rule
+    #: that cannot be switched off cannot be measured without it.
+    market_filters: bool = True
     #: Carry the previous bar's stance across the first bar of each session,
     #: so nothing is opened or signal-closed at the open.
     #:
@@ -568,6 +574,9 @@ def _base_size(analysis_frame, settings, index, columns) -> pd.DataFrame:
 
 def _build_filters(analysis_frame, regime_frame, settings, index, columns):
     """Compose the regime, correlation and macro filters."""
+    if not settings.market_filters:
+        logger.debug("Market filters switched off; signals will be unfiltered")
+        return filters_module.permissive_outcome(index, columns)
     if regime_frame is None or len(regime_frame.index) == 0:
         logger.debug("No regime frame; signals will be unfiltered")
         return filters_module.permissive_outcome(index, columns)
