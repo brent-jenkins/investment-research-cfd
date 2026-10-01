@@ -523,6 +523,54 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### TREND FOLLOWING ON INDICES, COMMODITIES, CURRENCIES AND CRYPTO: PRE-REGISTERED, 2026-10-01
+
+The owner's decision, after six routes to direction on US large caps at
+hours all came back at a coin flip: change the market and the horizon.
+Time-series trend following across asset classes over weeks to months is
+the best-documented direction effect in finance, the engine is a
+multi-asset trend follower, and Capital deals all of these. Written down
+before any run.
+
+    markets    the lake's daily store, 2005-01 to 2026-08-26: indices
+               ^GSPC ^NDX ^DJI ^FTSE ^GDAXI ^FCHI ^STOXX50E ^N225;
+               commodities GC=F CL=F BZ=F HG=F PL=F; currencies EURUSD
+               GBPUSD USDJPY AUDUSD NZDUSD USDCAD USDCHF EURGBP
+    crypto     BTC-USD and ETH-USD daily, in a RUN OF THEIR OWN -- a
+               seven-day calendar joined to weekday markets breaks every
+               rolling window, the mixed-session failure recorded before
+    engine     execution.run_backtest, the shipped signal and sizing on
+               daily bars (20/100 crossover, 55-day breakout, 21-day
+               momentum, the 0.75 gate, the leverage and concentration
+               caps), execution_lag 1. Removed because they are day-
+               trading rules: the session flatten, the time stop, the
+               opening and closing windows, the screen
+    costs      each market's Capital spread as read at the run, and its
+               Capital overnight long and short rates, per instrument
+
+    PRIMARY: the 21 non-crypto markets. Daily return of the book, t >= 2
+    over the span, positive in both halves (2005-2015, 2016-2026), after
+    spread and financing
+        pass                         -> a direction source at last: build
+                                        it as its own account configuration,
+                                        demo first, the owner's decision
+        gross positive, net negative -> real, and Capital's carry eats it
+        near zero                    -> this engine's trend following on
+                                        these markets has no edge here
+
+    secondary  entry gate 0.35; each asset class alone; the long and
+               short sides apart; crypto alone (2015 on). Reported, and
+               they decide nothing. Crypto CFDs are, as understood here,
+               barred to UK retail accounts, so a crypto result is a
+               demo result
+
+**Biases stated in advance.** Index series carry no dividends where a CFD
+long is credited them: pessimistic for longs by roughly 1.5-2% a year.
+Continuous futures splice contract rolls into the price, roughly what a
+futures-based CFD pays. Spreads read in the evening are wider than in
+session: pessimistic. Twenty-one years is several regimes, which is the
+point of the horizon change.
+
 ### IT CANNOT: THE LAST HOUR'S MINUTES DO NOT CALL THE NEXT ONE TO FOUR, 2026-10-01
 
 Read the same evening, against the registration below, unchanged. 119
