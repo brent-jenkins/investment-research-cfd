@@ -580,6 +580,23 @@ bands each name by its size ON THE DAY, from shares outstanding in its
 EDGAR filings (dated by filing) times the lake's price. Built only if a
 band passes; no market-cap series is recorded meanwhile.
 
+**THE READING, 2026-10-01 15:00 UTC: BOTH BANDS FAIL.** Median round trip,
+TRADEABLE names, against the pass marks above:
+
+    band             n   median    p25    p75   names under 15bp
+    under $300m     21   144.7bp  101.3  181.3    0   (excluded anyway)
+    $300m-$2bn     102    65.8bp   50.3   94.2    0   -> closed
+    $2bn-$10bn     156    50.5bp   39.3   61.1    0   -> closed
+    $10bn-$50bn    125    36.4bp
+    over $50bn     159    25.7bp
+    our candidates  78    25.3bp
+
+**The small-cap news lead is closed at Capital's prices.** One caveat,
+stated rather than used: our own candidates read 25.3bp, well above the
+~7-20bp recorded on earlier days, so spreads were wide across the board
+at that moment. Halving every band would still leave small caps above
+30bp and mid caps in the no-build middle, so no branch changes.
+
 ### IT CANNOT: SONNET 5 CALLS THE SIDE OF A LOUD NAME AT 50.3%, 2026-09-30
 
 Read the same evening, against the registration below, unchanged. 300
