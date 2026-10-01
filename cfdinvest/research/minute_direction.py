@@ -173,6 +173,7 @@ def calls(panel: pd.DataFrame, horizon: str, *, window: int, model: str = "logis
         part["move"], part["mkt_move"] = test[target].to_numpy(), test[f"mkt_{target}"].to_numpy()
         part["cost"] = test[f"cost_{horizon}"].to_numpy()
         part["side"] = np.where(p > 0.5, 1, -1)
+        part["p"] = p
         out.append(part)
     return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
 

@@ -553,6 +553,18 @@ widening, position against the hour's mean -- carries no direction for
 the next one to four**, on Capital's minute bars over one regime of about
 six months.
 
+**Blocking the wrong calls, a SCREEN the same evening** on the owner's
+question, post hoc and so adoptable on nothing. Conviction (distance of
+the model's probability from 0.5) does not sort: the most confident fifth
+hit 50.4% / 46.7% / 46.8% at 1h / 2h / close, no better than the least.
+A second model, refitted each session on the first's previous 20 sessions
+of out-of-sample calls, separated nothing at 1h (kept 50.8%, blocked
+50.4%) or 2h (52.0% against 50.7%). **At the close it did**: kept 50.3%
+and +0.102% gross, blocked 46.9% and -0.074%, its top third 51.8% and
++0.001% net (t -0.41) -- breakeven at best, one horizon of three, and the
+only sessions that could test it fresh are ones not yet traded. A lead for
+a forward registration, not a result.
+
 `research/minute_direction.py`, three mutations checked (M1960-M1962):
 the decision minute read as the last close, a lookback reaching forward
 across a missing minute, and a window ending at the decision.
