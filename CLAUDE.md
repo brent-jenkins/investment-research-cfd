@@ -523,6 +523,39 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### IS THE CRYPTO TREND REAL? TWO CHECKS, PRE-REGISTERED, 2026-10-01
+
+The owner asked how certain the crypto result is. Concentration, already
+read: without its best 3 years t falls to 1.95, without its best 50 days
+(1.2%) it is -3.1% a year. So it rests on a few runs, in two coins chosen
+in 2026 for having boomed. Two checks, written before either is run. They
+are about hindsight and about the engine; neither can adopt anything.
+
+**1. Coins chosen without hindsight.** The largest by market value at the
+start of 2018, before anyone knew which would survive, excluding BTC and
+ETH: XRP BCH ADA LTC XEM XLM MIOTA TRX DASH NEO EOS XMR -- every one with
+yfinance daily history, 2018-01-01 to 2026-08-26 (a start on a crash,
+which is the point). The same classic rule, one coin per run, equal-
+weighted. Cost: Capital's quote where it lists the coin, otherwise three
+times BTC's spread and BTC's overnight rates.
+
+    net positive at t >= 2 and both halves positive -> trend works in crypto
+                                                       beyond the winners
+    otherwise                                       -> the BTC/ETH result is
+                                                       the winners, not the
+                                                       rule
+
+**2. The engine against a calculation it did not make.** The same three
+votes computed directly from BTC's and ETH's closes, a unit position on
+their sign from the next day, spread on each change, financing per night.
+It passes if its side agrees with the engine's on at least 90% of held
+days and its net return has the same sign; if not, the engine result is
+treated as an artefact until explained.
+
+**Side arm, deciding nothing: spot, long or flat.** The same rule taking
+only the long side, with no overnight financing and a 0.25% fee each way,
+on BTC and ETH -- what owning the coin on an exchange would have done.
+
 ### TREND FOLLOWING FAILS ON 21 MARKETS; CRYPTO IS THE EXCEPTION, 2026-10-01
 
 Read the same evening, against the registration below, unchanged. Each
