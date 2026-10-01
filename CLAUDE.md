@@ -523,6 +523,58 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### A MODEL RETRAINED DAILY ON THE LAST TWO WEEKS: PRE-REGISTERED, 2026-10-01
+
+The owner's pushback, and it is right that this has not been tested: the
+book needs a side for hours, not a forecast for months, so a model can be
+retrained every day on only the most recent sessions and follow whatever
+is working NOW. The one direction model fitted here (20 months, 320,948
+rows, -0.009 against a permutation floor of +0.001) was a single fit over
+the whole span. Written down before any model was trained.
+
+**The bar is the spread, not 50%.** A call right with probability p on a
+name moving m earns about (2p - 1) x m less the round trip. Loud names
+move about 1.5% from 10:00 to the close against 0.13-0.25% of cost, so
+the hit rate needed is about 54-58%. 900 sessions x 20 loud names is
+about 18,000 out-of-sample calls, a standard error near 0.4pp: such a
+rate would show.
+
+**The test, `research.rolling_direction`:**
+
+    days       every session in the lake, 2023 to 2026-09-29
+    predicted  each day's loudest fifth of the 100 candidates by trailing
+               20-session realised volatility to the previous close (the
+               same definition as the Sonnet test)
+    target     sign of the move from the 10:00 New York bar's open to the
+               last bar's open
+    features   only what is complete by 10:00: the name's pre-market and
+               overnight move, its last hour, its 1/5/10-session returns,
+               position in its 10-session range, previous session's
+               shape and last hour, yesterday's relative volume, its
+               volatility, and the equal-weighted market's pre-market and
+               1/5-session moves, and the name's moves net of the market
+    training   ALL candidates over the previous W completed sessions only,
+               refitted every day
+    primary    W = 10, L2 logistic regression; side = the predicted sign
+    secondary  W = 5 and 20; gradient boosting at W = 10; training on loud
+               names only. Reported, and they decide nothing
+    controls   the same model on labels shuffled within each training
+               window; the five-session momentum sign alone
+
+    net positive, t >= 2 across sessions, both halves positive, AND the
+    market-neutral gross positive     -> a real direction source: build it
+                                         into the engine and measure it
+                                         through the harness
+    gross positive, net negative      -> real and not tradeable
+    near zero                         -> a model retrained on the last
+                                         fortnight cannot call the side
+                                         from these inputs
+
+Market-neutral is required because the candidates were chosen in 2026, so
+a model that learns "long" scores the survivors' drift; the equal-weighted
+market's own 10:00-to-close move is taken off for that reading. Net is
+against each bar's measured spread_bp, as in every recent test.
+
 ### THE ACCOUNT IS PAUSED: NOTHING OPENS, EVERYTHING CAN CLOSE, 2026-10-01
 
 On the owner's decision, after a -107 GBP session on top of ten sessions
