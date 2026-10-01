@@ -523,6 +523,54 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE LAST HOUR IN MINUTES, AGAINST THE NEXT ONE TO FOUR: PRE-REGISTERED, 2026-10-01
+
+The owner's next question: with the last hour of live data from Capital,
+can a model call direction over the next 1-4 hours? Every hourly test so
+far read a bar's OUTCOME -- the last hour's return, the day so far -- and
+none reached t = 1. What has never been read is the SHAPE inside the hour,
+which only minute bars carry: acceleration, tick-activity surges, spread
+widening, price against the hour's activity-weighted mean. That is the
+closest thing to order flow in Capital's data. Written down before any
+model was trained.
+
+**The bar rises as the horizon shrinks**, because the spread does not. At
+a ~0.13% round trip: about 63% right at one hour, 59% at two, 54-55% to
+the close.
+
+    data       capital_1m, the 66 names held, 2026-03-16 to 2026-09-30,
+               ~140 sessions; bid, ask, spread and tick count per minute
+    decisions  11:00, 12:00, 13:00 and 14:00 New York, each session
+    predicted  each day's loudest fifth of the 66 by trailing 20-session
+               volatility of minute returns to the previous close
+    horizons   1 hour, 2 hours (not from 14:00), and to the 15:00 bar --
+               the open of the minute at each end, a model per horizon
+    features   only minutes stamped BEFORE the decision: returns over 5,
+               15 and 60 minutes and the day so far, the overnight gap,
+               acceleration, position in the 60-minute range, distance from
+               the 60-minute tick-weighted mean, tick activity against its
+               own last 15 minutes and against the name's usual for that
+               hour, spread now against the day's, realised volatility
+               over the hour and the day, the equal-weighted market's
+               60-minute and day moves and the name's net of them, the hour
+    training   all 66 names, all four decision times, previous W completed
+               sessions only, refitted every session; W = 10, logistic
+    secondary  W = 20; gradient boosting. Reported, decide nothing
+    controls   shuffled labels; the sign of the last 60 minutes alone
+    cost       each end's own quoted spread_bp, per call
+
+    any horizon: net positive at t >= 2.4 across sessions (three horizons,
+    so the bar is raised for the multiple looks), both halves positive,
+    AND market-neutral gross positive -> a real direction source at that
+    horizon: build it into the engine and measure it through the harness
+    gross positive, net negative         -> real and not tradeable
+    near zero                            -> the last hour's minutes do not
+                                            call the next one to four
+
+**About 110 sessions after warm-up is one regime**, and is stated here so
+it cannot be discovered afterwards. Each half is about two and a half
+months.
+
 ### IT CANNOT: A MODEL RETRAINED DAILY CALLS LOUD NAMES AT 49.5%, 2026-10-01
 
 Read the same afternoon, against the registration below, unchanged.
