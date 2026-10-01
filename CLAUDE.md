@@ -523,6 +523,40 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### IT CANNOT: A MODEL RETRAINED DAILY CALLS LOUD NAMES AT 49.5%, 2026-10-01
+
+Read the same afternoon, against the registration below, unchanged.
+17,378 out-of-sample calls on 871 sessions, 2023-03 to 2026-09-29, the
+model refitted every session on the previous ten:
+
+    arm                       hit     gross     t     net      t    neutral   t
+    PRIMARY  W=10 logistic   49.5%  -0.018%  -0.59  -0.180%  -5.90  -0.018  -0.87
+    W=5                      49.1%  -0.021%  -0.65  -0.183%  -5.59  -0.023  -1.06
+    W=20                     49.8%  -0.002%  -0.05  -0.164%  -5.10  -0.008  -0.39
+    loud-only training       50.5%  +0.015%  +0.43  -0.148%  -4.39  +0.010  +0.46
+    gradient boosting        49.3%  -0.021%  -0.72  -0.183%  -6.20  -0.011  -0.56
+    CONTROL shuffled labels  50.3%  +0.008%  +0.25  -0.154%  -4.79  +0.006  +0.29
+    CONTROL 5-day momentum   50.1%  -0.014%  -0.51  -0.176%  -6.27  -0.010  -0.53
+
+    median round trip 0.125%; primary net by year 2023 -0.24  2024 -0.18
+    2025 -0.25  2026 -0.01 (% a call)
+
+**The "near zero" branch.** The primary is a coin flip in both halves and
+scores slightly BELOW the same model trained on shuffled labels; no arm,
+window or model clears a single t of 1 gross. With a standard error near
+0.4pp on the hit rate, a 54% model would have stood out by ten standard
+errors and none is within one of 50%. **Whatever pattern is working this
+fortnight does not carry into the next session's direction**, from any of
+these inputs -- the fifth independent route to the same answer, after the
+engine's inputs, headline sentiment, Claude on filings and Claude on the
+whole picture. Not a statement about ML; a statement about what hourly
+mid-prices and daily volume contain about the next five hours.
+
+`research/rolling_direction.py`, four mutations checked (M1950-M1953):
+the bar in progress at 10:00, today's own volatility, today in its own
+training window, and an inert fit. scikit-learn was installed to /tmp on
+the box for the boosting arm and is not a project dependency.
+
 ### A MODEL RETRAINED DAILY ON THE LAST TWO WEEKS: PRE-REGISTERED, 2026-10-01
 
 The owner's pushback, and it is right that this has not been tested: the
