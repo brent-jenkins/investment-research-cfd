@@ -523,6 +523,36 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### TREND FOLLOWING, RUN AS TREND FOLLOWING: PRE-REGISTERED, 2026-10-01
+
+The corrected test, on the owner's go-ahead, fixing the three causes below
+and nothing chosen from a result. Written before the run.
+
+    calendar    each market in a RUN OF ITS OWN, on its own calendar, so no
+                other country's holiday can blank a window; the book is the
+                EQUAL-WEIGHTED mean of the markets' daily net returns
+    overlays    off: `SignalConfig.market_filters = False` (new, default
+                True) bypasses the regime, correlation and macro overlays
+                together -- the textbook rule has none
+    signal      the three components each reduced to the side it votes:
+                20/100 crossover (already a side), 55-day breakout, and
+                21-day momentum with `momentum_full_scale = 0.001`, so any
+                move reads as its sign. A side whenever their mean is not
+                zero -- `entry_confidence = exit_confidence = 0`
+    unchanged   execution_lag 1, volatility-target and conviction sizing,
+                the leverage and concentration caps, Capital's spread and
+                overnight rates per market, no flatten, no time stop
+
+    PRIMARY: the 21-market book, daily net return, t >= 2 over 2005-2026
+    and positive in both halves (2005-2015, 2016-2026). Same branches as
+    the registration below. Secondary, deciding nothing: each asset class's
+    equal-weighted book, and crypto's (BTC, ETH, 2015 on).
+
+**Seen before this was written**, and stated so it is weighed: the
+invalid run's 0.35-gate arm (gross t +0.45) and its per-class arms (gross t
++0.03 to +0.86). None was on this rule; the settings above come from the
+textbook form, not from those numbers.
+
 ### THE TREND TEST MEASURED A SIGNAL THAT WAS OFF 93% OF THE TIME, 2026-10-01
 
 Run the same evening as registered below, and **its null is NOT evidence
