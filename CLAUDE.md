@@ -523,6 +523,40 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### IT CANNOT: THE LAST HOUR'S MINUTES DO NOT CALL THE NEXT ONE TO FOUR, 2026-10-01
+
+Read the same evening, against the registration below, unchanged. 119
+sessions held, 89 scored after the warm-up, 66 names, decisions at
+11:00-14:00 New York on each day's loudest fifth:
+
+    horizon  calls  |move|   arm               hit     gross    t      net     t
+    1h       4,628  0.57%    PRIMARY          49.6%  -0.015  -0.77  -0.149  -7.44
+                             shuffled labels  49.4%  -0.008  -0.36
+                             last-hour sign   49.2%  +0.012  +0.63
+    2h       3,471  0.81%    PRIMARY          49.8%  +0.007  +0.21  -0.126  -3.59
+                             W = 20           50.9%  +0.057  +1.64  -0.076  -2.20
+                             shuffled labels  49.4%  -0.022  -0.55
+    close    4,628  0.81%    PRIMARY          47.9%  -0.030  -0.73  -0.159  -3.80
+                             shuffled labels  49.7%  -0.020  -0.42
+
+    (% a call; median round trip 0.11-0.12%; gradient boosting 48.2-50.4%
+    hit, no gross t above +0.08 on any horizon)
+
+**The "near zero" branch, at every horizon.** The primary model is a coin
+flip at one hour, two hours and the close, and no better than the same
+model fitted to shuffled labels. The best reading anywhere -- W = 20 at two
+hours, +0.057% gross at t 1.64, both halves positive -- is a secondary arm
+that decides nothing, is half the round trip, and is one of fifteen
+arm-horizon readings, which is what chance produces at the top of fifteen.
+**The shape inside the last hour -- acceleration, tick surges, spread
+widening, position against the hour's mean -- carries no direction for
+the next one to four**, on Capital's minute bars over one regime of about
+six months.
+
+`research/minute_direction.py`, three mutations checked (M1960-M1962):
+the decision minute read as the last close, a lookback reaching forward
+across a missing minute, and a window ending at the decision.
+
 ### THE LAST HOUR IN MINUTES, AGAINST THE NEXT ONE TO FOUR: PRE-REGISTERED, 2026-10-01
 
 The owner's next question: with the last hour of live data from Capital,
