@@ -523,6 +523,40 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE TREND TEST MEASURED A SIGNAL THAT WAS OFF 93% OF THE TIME, 2026-10-01
+
+Run the same evening as registered below, and **its null is NOT evidence
+about trend following**, because the shipped signal on daily bars is not a
+trend follower. Recorded first so the numbers cannot travel without that.
+
+    as registered   primary   net -1.40bp/day t -1.59, gross -0.47bp t -0.53
+                    gate 0.35 net t -1.50, gross t +0.45
+                    indices / commodities / currencies / crypto alone:
+                    every gross t between +0.03 and +0.86
+    held            0-9% of days per market at the 0.75 gate; S&P 500
+                    signal FLAT on 93% of days, median confidence 0.000
+
+**Three causes, each measured on the S&P 500 inside the index run:**
+
+1. *The 20/100 crossover never computed.* Eight indices from five
+   countries share one panel, the index is the union of their calendars,
+   and each series is NaN on the others' holidays -- so almost every
+   100-day window holds a NaN and the component is absent throughout.
+   The mixed-session failure again, at daily scale. Strength fell back on
+   breakout and momentum alone.
+2. *The regime overlay vetoed longs.* `combined_regime` read risk_off 56%
+   of the span and `contraction_blocks_equity_long` refused equity longs on
+   top: `blocked_long|...|contraction_blocks_equity_long @risk_off` is among
+   the commonest reasons on the S&P 500, in a twenty-year bull market.
+3. *The gate and the momentum scale are hourly numbers.* Momentum saturates
+   at a 10% move over 21 BARS -- three sessions on the hourly grid it was
+   set for, a month here -- and 0.75 sits above what breakout-free
+   strength can reach.
+
+**What it measured, stated plainly:** an engine built and tuned for hourly
+US shares, pointed at daily bars on other markets, refuses to hold them.
+Whether trend following earns on these markets is **unanswered**.
+
 ### TREND FOLLOWING ON INDICES, COMMODITIES, CURRENCIES AND CRYPTO: PRE-REGISTERED, 2026-10-01
 
 The owner's decision, after six routes to direction on US large caps at
