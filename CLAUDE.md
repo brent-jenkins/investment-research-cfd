@@ -956,6 +956,18 @@ turns a small gain into a loss and adds the bill. The day that prompted
 it (1 Oct, six shorts and one long opened at 14:19 into a rising market)
 would have won reversed, by about 41 GBP: one market bet, not seven calls.
 
+**RETRACTED 2026-10-02: "-31.77", "-848.31", "+408" and "slightly right".**
+Those were read through `completed_trips` while it mis-paired SPGI (see
+the entry on trip pairing): a leg opened 2026-09-10 was paired with a
+2026-09-29 close for a phantom +176.43, and the trips around it shifted
+with it. Re-read with the pairing fixed, the same 118 trips: actual
+-260.46, reversed -637.05, gross before spread **+188.30**; with
+2026-10-01's eight added, gross is **-30.25** -- a coin flip, not slightly
+right. Reversing still loses every cut (-460.19 against -520.70 as traded,
+whole record), so the conclusion stands and the reason for it is now the
+right one: the book loses the spread, on a side that is right about half
+the time.
+
 **Unpaused only by putting a strategy that has passed a pre-registered
 test on the account.** Nothing measured qualifies today.
 

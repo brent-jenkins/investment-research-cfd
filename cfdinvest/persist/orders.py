@@ -422,10 +422,25 @@ def completed_trips(config=None, account: str | None = None) -> list[dict]:
         if not epic:
             continue
         action = str(row.get("action") or "")
+        deal = str(row.get("deal_id") or "")
+        queue = waiting.setdefault(epic, [])
         if action == "open":
-            waiting.setdefault(epic, []).append(row)
-        elif action == "close" and waiting.get(epic):
-            opened = waiting[epic].pop(0)
+            # A second open row naming a deal already waiting is a
+            # CORRECTION of that position, not a new one. On 2026-09-10 the
+            # record was repaired by re-writing two SPGI legs with their side
+            # fixed; appended, they paired with later, unrelated closes and
+            # put a phantom +176 on 2026-09-29.
+            same = next((i for i, o in enumerate(queue)
+                         if deal and str(o.get("deal_id") or "") == deal), None)
+            if same is None:
+                queue.append(row)
+            else:
+                queue[same] = row
+        elif action == "close" and queue:
+            # The open this close names, where it names one; else FIFO.
+            same = next((i for i, o in enumerate(queue)
+                         if deal and str(o.get("deal_id") or "") == deal), 0)
+            opened = queue.pop(same)
             try:
                 units = float(opened.get("units") or 0.0)
                 entry = float(opened.get("level") or 0.0)
