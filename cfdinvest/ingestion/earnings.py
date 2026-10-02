@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "EARNINGS_DIR",
+    "can_have_earnings",
     "fetch_earnings_dates",
     "store_earnings_dates",
     "load_earnings_dates",
@@ -52,6 +53,23 @@ __all__ = [
 EARNINGS_DIR = "earnings"
 
 SCHEMA_VERSION = 1
+
+
+#: Vendor symbol shapes that cannot have earnings: an index (``^GSPC``), a
+#: future (``GC=F``), a currency pair (``EURUSD=X``) or a coin
+#: (``BTC-USD``). Asked anyway, yfinance prints "No earnings dates found,
+#: symbol may be delisted" for each -- twenty lines of false alarm on every
+#: daily ingest from 2026-10-02, when the daily store began topping up
+#: every series it holds. A line that says "delisted" about a live series
+#: is the kind that trains a reader to skip the real one.
+_NO_EARNINGS_PREFIXES = ("^",)
+_NO_EARNINGS_SUFFIXES = ("=F", "=X", "-USD")
+
+
+def can_have_earnings(symbol: str) -> bool:
+    """False for an index, future, currency pair or coin. Pure."""
+    symbol = str(symbol).strip().upper()
+    return bool(symbol) and not symbol.startswith(_NO_EARNINGS_PREFIXES)         and not symbol.endswith(_NO_EARNINGS_SUFFIXES)
 
 
 def fetch_earnings_dates(tickers: Iterable[str], *, limit: int = 40) -> dict[str, list[str]]:
@@ -75,7 +93,7 @@ def fetch_earnings_dates(tickers: Iterable[str], *, limit: int = 40) -> dict[str
     found: dict[str, list[str]] = {}
     for ticker in tickers:
         symbol = str(ticker).strip()
-        if not symbol:
+        if not can_have_earnings(symbol):
             continue
         try:
             frame = yfinance.Ticker(symbol).earnings_dates
