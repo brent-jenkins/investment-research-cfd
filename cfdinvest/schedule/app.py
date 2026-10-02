@@ -485,18 +485,24 @@ def _screen_candidates(config) -> list[str]:
     return names
 
 
-def _already_ingested(config) -> list[str]:
-    """Instruments the decision feed already holds bars for.
+def _already_ingested(config, interval=None, *, include_pairs: bool = False) -> list[str]:
+    """Instruments a store already holds bars for.
 
     Read from the lake rather than from configuration, because the point is
     to survive a configuration change. Never raises: an unreadable directory
     means the configured candidates alone, which is the old behaviour.
+
+    ``interval`` defaults to the decision feed. The daily store asks with
+    its own interval and with the currency pairs included: on 2026-10-01 its
+    indices, commodities and three of its pairs were found to have stopped
+    on 2026-08-26, because nothing listed them once they left the universe
+    -- the rule above applied to one store and not the other.
     """
     from pathlib import Path
 
     try:
         root = Path(getattr(getattr(config, "paths", None), "data_root", "data"))
-        interval = getattr(getattr(config, "market", None), "interval", None)
+        interval = interval or getattr(getattr(config, "market", None), "interval", None)
         if not interval:
             return []
         folder = root / "raw" / "market" / str(interval)
@@ -505,7 +511,8 @@ def _already_ingested(config) -> list[str]:
         dead = _delisted(config)
         return sorted(
             path.stem for path in folder.glob("*.parquet")
-            if path.stem and "=X" not in path.stem and path.stem not in dead
+            if path.stem and (include_pairs or "=X" not in path.stem)
+            and path.stem not in dead
         )
     except Exception as error:  # noqa: BLE001 - collection is best-effort
         logger.warning("Could not list what is already ingested: %s", error)
@@ -663,6 +670,11 @@ def _with_screen_pool(tickers, app_config) -> list[str]:
     for candidate in getattr(app_config.universe, "candidates", ()) or ():
         if candidate not in wanted:
             wanted.append(str(candidate))
+    # And every series the daily store already holds, so none stops because
+    # it left a list. See `_already_ingested`.
+    for held in _already_ingested(app_config, _SCREENING_INTERVAL, include_pairs=True):
+        if held not in wanted:
+            wanted.append(held)
     return wanted
 
 
