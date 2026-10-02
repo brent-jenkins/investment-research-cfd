@@ -26,6 +26,9 @@ Mutations checked, each reintroduced as a bug and confirmed to fail:
   M472 a fresh install reported critical rather than as a first run
   M473 the staleness compared against the wrong end, so age never grows
   M474 the check firing when the market is shut
+  M1995 a pass that could not read the account reported as a stalled dealer
+  M1996 a stale or superseded block taken to explain a new stall
+  M1997 the dealer's note and the monitor's reader disagreeing on its kind
 """
 
 from __future__ import annotations
@@ -140,4 +143,54 @@ def test_the_remedy_names_the_cause_that_hid_for_45_minutes():
     remedy = " ".join(issue.remedy.split())
 
     assert "active" in remedy, remedy
-    assert "memory" in remedy.lower() and "cgroup" in remedy.lower()
+    # It named the cgroup memory limit until 2026-10-02. The box has had no
+    # MemoryHigh since 2026-09-12 (deploy.sh refuses one) and dealing is its
+    # own oneshot unit, so the advice now names where a stopped pass shows.
+    assert "cfdinvest-dealer" in remedy, remedy
+
+
+def test_a_pass_that_could_not_read_the_account_is_named_as_such():
+    """M1995: on 2026-09-30 Capital returned a zero balance and every pass
+    stopped before its usage row. The alert said "not examined" and blamed
+    memory; the dealer was running the whole time."""
+    issue = only(check_dealing_liveness(
+        "2026-09-09 13:35:00+00:00", True, now=NOW,
+        last_blocked=("2026-09-09 14:20:00+00:00", "the balance could not be read: zero"),
+    ))
+    text = " ".join((issue.message + " " + issue.remedy).split())
+    assert "dealer is running" in text and "the balance could not be read" in text, text
+    assert "memory" not in text.lower()
+    assert issue.severity == "critical"
+
+
+def test_an_old_block_does_not_explain_a_new_stall():
+    """M1996: a blocked pass from before the last good pass, or older than
+    the staleness window (45 minutes; 13:36 is 46 before 14:22), says
+    nothing about why nothing has run since."""
+    for blocked_at in ("2026-09-09 13:00:00+00:00", "2026-09-09 13:36:00+00:00"):
+        issue = only(check_dealing_liveness(
+            "2026-09-09 13:35:00+00:00", True, now=NOW,
+            last_blocked=(blocked_at, "the balance could not be read: zero"),
+        ))
+        assert "dealer is running" not in issue.message, blocked_at
+
+
+def test_the_dealer_writes_what_the_monitor_reads(tmp_path, monkeypatch):
+    """M1997: the note and its reader agree on kind and fields, and the
+    dealing pass calls it on both unreadable branches (checked on
+    uncommented lines -- the dealer has no dry run)."""
+    import inspect
+
+    from cfdinvest.monitoring import collect
+    from cfdinvest.persist import margin as margin_store
+    from cfdinvest.schedule import app
+
+    path = tmp_path / "margin.jsonl"
+    monkeypatch.setattr(margin_store, "_path", lambda config=None, account=None: path)
+    app._record_blocked(None, None, "the balance could not be read: zero")
+    at, reason = collect._last_blocked(None)
+    assert reason == "the balance could not be read: zero" and at
+
+    live = [line.split("#", 1)[0] for line in inspect.getsource(app._command_trade_capital).splitlines()]
+    calls = [line for line in live if "_record_blocked(" in line]
+    assert any("balance" in line for line in calls) and any("positions" in line for line in calls), calls

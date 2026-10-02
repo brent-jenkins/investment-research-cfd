@@ -217,7 +217,8 @@ def collect_issues(
                        lambda: core.check_dealing_liveness(
                            _last_dealing_at(config, account),
                            _market_open(config, account, moment),
-                           limits, now=moment))
+                           limits, now=moment,
+                           last_blocked=_last_blocked(config, account)))
 
     return issues, machine
 
@@ -242,6 +243,25 @@ def _last_dealing_at(config, account=None):
         ]
         return rows[-1]["at"] if rows else None
     except Exception:  # noqa: BLE001 - absence is not an outage
+        return None
+
+
+def _last_blocked(config, account=None):
+    """The newest pass that ran and could not read the account, or ``None``.
+
+    ``(at, reason)`` from the ``blocked`` rows the dealer writes when the
+    balance or positions are unreadable. ``None`` on any failure, which the
+    check reads as "no such pass" -- the older, less specific alert.
+    """
+    try:
+        from cfdinvest.persist import margin as margin_store
+
+        rows = [
+            row for row in margin_store.load_margin(config, account)
+            if str(row.get("kind") or "") == "blocked" and row.get("at")
+        ]
+        return (rows[-1]["at"], str(rows[-1].get("reason") or "")) if rows else None
+    except Exception:  # noqa: BLE001
         return None
 
 

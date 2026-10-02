@@ -1909,6 +1909,26 @@ def _read_account(capital, broker, session, *, sleep=None):
     return session, account
 
 
+def _record_blocked(app_config, account_name, reason: str) -> None:
+    """Leave a trace of a dealing pass that ran and could not see the account.
+
+    The liveness check reads the usage row every complete pass writes, so a
+    pass that stops at an unreadable balance looked exactly like a dealer
+    that never ran -- and the alert blamed a memory limit the box no longer
+    has (the "not examined for 94 minutes" mail of 2026-09-30, which was
+    Capital reporting a zero balance). This row lets the check name the
+    real cause. Never raises: losing the note must not stop a pass.
+    """
+    try:
+        from cfdinvest.persist import margin as margin_store
+
+        margin_store.record_margin([{
+            "at": str(pd.Timestamp.now(tz="UTC")), "kind": "blocked", "reason": reason,
+        }], app_config, account_name)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not record the blocked pass: %s", error)
+
+
 def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     """One pass of the demo account: decide, then place what survives.
 
@@ -1978,6 +1998,7 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     session, account = _read_account(capital, settings.broker, session)
     if not account.ok:
         logger.warning("Capital: no balance (%s); nothing can be sized", account.error)
+        _record_blocked(app_config, account_name, f"the balance could not be read: {account.error}")
         return EXIT_OK
 
     held, held_error = dealing_module.list_positions(session, settings)
@@ -1985,6 +2006,7 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         # An unreadable book is not an empty one, and only one of those
         # means it is safe to open more.
         logger.warning("Capital: positions unreadable (%s); not trading", held_error)
+        _record_blocked(app_config, account_name, f"the positions could not be read: {held_error}")
         return EXIT_OK
 
     # Legs summed rather than collapsed. A dict comprehension keyed by epic

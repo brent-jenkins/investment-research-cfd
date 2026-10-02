@@ -1336,8 +1336,15 @@ def check_dealing_liveness(
     thresholds: MonitoringThresholds | None = None,
     *,
     now: pd.Timestamp | None = None,
+    last_blocked: tuple[Any, str] | None = None,
 ) -> list[MonitoringIssue]:
     """Is the account actually being looked at, or merely supervised?
+
+    ``last_blocked`` is the newest ``(at, reason)`` of a pass that RAN and
+    could not read the account. When one is newer than the last complete
+    pass and recent, the dealer is running and the broker is the problem,
+    and the alert says so -- added 2026-10-02, after a zero balance from
+    Capital was reported as a stalled daemon and blamed on memory.
 
     Every other check here asks whether a component is *present*. This one
     asks whether it is *working*, and the distinction is the whole reason it
@@ -1407,6 +1414,40 @@ def check_dealing_liveness(
     if age <= limits.dealing_stale_minutes:
         return []
 
+    details = {
+        "last_dealing_at": str(stamp),
+        "age_minutes": round(age, 1),
+        "threshold_minutes": limits.dealing_stale_minutes,
+    }
+    blocked_at = _utc(last_blocked[0]) if last_blocked else None
+    if (
+        blocked_at is not None and blocked_at > stamp
+        and (moment - blocked_at).total_seconds() / 60.0 <= limits.dealing_stale_minutes
+    ):
+        reason = last_blocked[1]
+        return [
+            MonitoringIssue(
+                type="dealing",
+                severity="critical",
+                message=(
+                    f"The market is open and the dealer is running, but it has "
+                    f"not been able to read the account for {age:.0f} minutes: "
+                    f"{reason}."
+                ),
+                timestamp=moment,
+                details={**details, "last_blocked_at": str(blocked_at), "reason": reason},
+                remedy=(
+                    "The box is working; the broker is not answering usefully. "
+                    "A zero balance is Capital's usual reply on a fresh "
+                    "session while the book is flat, and each pass already "
+                    "retries it three times. If it persists, check Capital's "
+                    "API status and that the credentials in "
+                    "/etc/cfdinvest/env still resolve. Nothing can be opened "
+                    "or closed until it clears."
+                ),
+            )
+        ]
+
     return [
         MonitoringIssue(
             type="dealing",
@@ -1416,19 +1457,15 @@ def check_dealing_liveness(
                 f"for {age:.0f} minutes."
             ),
             timestamp=moment,
-            details={
-                "last_dealing_at": str(stamp),
-                "age_minutes": round(age, 1),
-                "threshold_minutes": limits.dealing_stale_minutes,
-            },
+            details=details,
             remedy=(
-                "Dealing passes run every 15 minutes while a market is open, "
-                "so this is at least three missed. The service being "
-                "`active` does not settle it -- a daemon throttled by its "
-                "cgroup memory limit stays alive and stops working, which is "
-                "what happened on 2026-09-09. Check "
-                "`systemctl show cfdinvest -p MemoryCurrent` against "
-                "MemoryHigh, and `memory.events` for a rising `high` count."
+                "No dealing pass has run, or none has finished, and a unit "
+                "reading `active` does not settle it -- that is how the "
+                "2026-09-09 stall hid. The dealer is its own oneshot "
+                "service on a five-minute timer: check "
+                "`systemctl status cfdinvest-dealer.timer` and "
+                "`journalctl -u cfdinvest-dealer -n 50` for the last pass "
+                "and how it ended."
             ),
         )
     ]
