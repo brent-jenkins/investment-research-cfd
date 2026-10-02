@@ -265,6 +265,19 @@ def _compose(
     return message
 
 
+def _strength_named(frame: pd.DataFrame) -> pd.DataFrame:
+    """The signal table with ``confidence`` shown under the name it earns.
+
+    The engine's ``confidence`` is trend strength x component agreement, in
+    [0, 1]; it was measured on 2026-09-26 not to sort outcomes, so a reader
+    taking 0.80 as "80% likely to be right" is misled. The field keeps its
+    name everywhere it is computed; only what a person reads changes.
+    """
+    if isinstance(frame, pd.DataFrame) and "confidence" in frame.columns:
+        return frame.rename(columns={"confidence": "trend_strength"})
+    return frame
+
+
 def _format_table(frame: pd.DataFrame, columns: Sequence[str] | None = None) -> str:
     """Render a small frame as fixed-width text, or say it is empty."""
     if frame is None or frame.empty:
@@ -446,8 +459,8 @@ def build_daily_summary(summary: Any, config: SmtpConfig | None = None) -> Email
         "Active signals on the latest bar",
         "--------------------------------",
         _format_table(
-            getattr(summary, "latest_signals", pd.DataFrame()),
-            ("direction", "size", "confidence", "reason"),
+            _strength_named(getattr(summary, "latest_signals", pd.DataFrame())),
+            ("direction", "size", "trend_strength", "reason"),
         ),
         "",
         "Trades executed on the latest bar",

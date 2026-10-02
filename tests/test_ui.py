@@ -1256,7 +1256,10 @@ def test_money_columns_are_detected_from_their_names():
     assert components._format_for("realized_pnl") == "money"
     assert components._format_for("fill_price") == "price"
     assert components._format_for("fx_rate") == "rate"
-    assert components._format_for("confidence") == "percent"
+    # A 0-1 trend-strength score, shown as a number since 2026-10-02:
+    # "80%" read as "80% likely to be right", and it is not that.
+    assert components._format_for("confidence") == "rate"
+    assert components._label("confidence") == "Trend strength"
     assert components._format_for("total_return") == "percent"
 
 

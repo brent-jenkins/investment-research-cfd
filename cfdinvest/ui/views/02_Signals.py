@@ -113,15 +113,15 @@ if latest.empty:
     headline = "**Nothing is signalling.** The model wants no position on this bar."
 elif clearing:
     headline = (
-        f"**{clearing} of {len(latest)} signals clear the {bar:.0%} entry bar** "
+        f"**{clearing} of {len(latest)} signals clear the {bar:.2f} entry bar** "
         f"and would be taken. {longs} long, {shorts} short."
     )
 else:
     best = confidences.max() if len(confidences) else float("nan")
     headline = (
-        f"**Nothing clears the {bar:.0%} entry bar.** {len(latest)} instruments "
+        f"**Nothing clears the {bar:.2f} entry bar.** {len(latest)} instruments "
         f"are signalling — {longs} long, {shorts} short — but the strongest is "
-        f"{best:.0%}, so nothing would be taken."
+        f"{best:.2f}, so nothing would be taken."
     )
 components.render_note(st, headline)
 
@@ -148,7 +148,7 @@ else:
         openable = None
 
     header = st.columns([1.1, 0.9, 1.5, 0.7, 3.2])
-    for cell, label in zip(header, ("", "", "Confidence", "Size", "Why")):
+    for cell, label in zip(header, ("", "", "Trend strength", "Size", "Why")):
         cell.caption(f"**{label}**" if label else "")
 
     for _, row in ordered.iterrows():
@@ -173,14 +173,14 @@ else:
             # threshold they are holding in their head.
             if not takeable:
                 colour = theme.colour_for("critical", mode)
-                mark = f" ✕ below {bar:.0%}"
+                mark = f" ✕ below {bar:.2f}"
             else:
                 colour = theme.colour_for("ok", mode)
                 mark = " ✓✓" if confidence >= suggest_bar else " ✓"
             width = min(max(float(confidence), 0.0), 1.0) * 100
             conf.markdown(
                 f'<div style="font:600 13px/1.4 inherit;color:{colour};">'
-                f'{confidence:.0%}{mark}</div>'
+                f'{confidence:.2f}{mark}</div>'
                 f'<div style="background:rgba(128,128,128,0.22);border-radius:3px;'
                 f'height:6px;width:100%;margin-top:2px;">'
                 f'<div style="background:{colour};width:{width:.1f}%;height:6px;'

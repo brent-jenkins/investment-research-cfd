@@ -957,11 +957,13 @@ def render_kv(st, rows: Mapping[str, Any]) -> None:
 # Tables
 # --------------------------------------------------------------------------- #
 #: Column-name fragments and the format each implies.
-_FRACTION = ("fraction", "_pct", "return", "drawdown", "share", "confidence")
+# "confidence" left out on purpose since 2026-10-02: it is a trend-strength
+# score in [0, 1], not a probability, and "80%" reads as "80% likely".
+_FRACTION = ("fraction", "_pct", "return", "drawdown", "share")
 _MONEY = ("pnl", "cost", "equity", "notional", "financing", "spread", "slippage",
           "fee", "value", "exposure", "balance")
 _PRICE = ("price", "level", "fill", "close", "open", "high", "low", "distance")
-_RATE = ("rate", "leverage", "size", "units")
+_RATE = ("rate", "leverage", "size", "units", "confidence")
 
 
 def _format_for(name: str) -> str | None:
@@ -1020,6 +1022,11 @@ def column_config_for(st, frame: pd.DataFrame) -> dict:
 #: Column names whose expansion is not simply "underscores to spaces".
 #: Abbreviations get spelled out here rather than in seven pages.
 _LABELS: dict[str, str] = {
+    # A trend-strength score, not a probability of being right -- see
+    # `_FRACTION`. The field keeps its name; what a reader sees does not.
+    "confidence": "Trend strength",
+    "engine_confidence": "Trend strength (engine)",
+    "live_confidence": "Trend strength (live)",
     "asset": "Instrument",
     "ticker": "Instrument",
     "pnl": "Profit & loss",

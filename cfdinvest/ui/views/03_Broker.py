@@ -255,7 +255,7 @@ st.subheader("Refused before opening")
 st.caption(
     "Before an order is placed the signal is recomputed against the broker's "
     "live quote, and the open is refused if the direction no longer matches "
-    "or confidence no longer clears the entry bar. It is the most "
+    "or its trend strength no longer clears the entry bar. It is the most "
     "consequential filter in the dealing path and it ran for a week with "
     "nothing reporting it — a pass that refuses everything and places nothing "
     "sends no mail, so a gate blocking a fifth of candidate opens was "
