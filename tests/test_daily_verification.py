@@ -142,7 +142,7 @@ def test_a_broken_last_look_is_not_a_strict_one(monkeypatch) -> None:
         LAST_LOOK_REASONS = ()
 
         @staticmethod
-        def refusal_summary(_config, _account):
+        def refusal_summary(_config, _account, **_window):
             # A LOW refusal rate, deliberately. With a high one the rate
             # branch reports PROBLEM anyway and the test passes whether or
             # not the broken-check branch exists -- which is how this test

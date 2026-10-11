@@ -630,11 +630,13 @@ def plan_orders(
     # because a book that may not reduce is the failure the reconciliation
     # halt taught on 2026-09-10. A reversal is already a close alone.
     if opens_paused:
+        from cfdinvest.persist.orders import PAUSED_REASON
+
         intents = [
             Intent(
                 ticker=i.ticker, epic=i.epic, direction=i.direction,
                 held_units=i.held_units, target_units=i.held_units,
-                action="refused", reason="opening is paused", price=i.price,
+                action="refused", reason=PAUSED_REASON, price=i.price,
                 entered_bars_ago=i.entered_bars_ago,
                 engine_confidence=i.engine_confidence,
                 live_confidence=i.live_confidence,

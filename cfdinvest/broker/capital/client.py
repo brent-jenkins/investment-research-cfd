@@ -607,6 +607,10 @@ def fetch_market(
     )
 
 
+#: Capital refuses a /markets request naming more than this many epics.
+MAX_EPICS_PER_REQUEST = 50
+
+
 def fetch_market_details(
     epics: Sequence[str],
     session: CapitalSession,
@@ -639,28 +643,38 @@ def fetch_market_details(
         ]
 
     read = opener or _read
-    query = urllib.parse.urlencode({"epics": ",".join(wanted)})
-    try:
-        document, _ = read(
-            f"{session.host}/markets?{query}",
-            headers=session.headers(settings.api_key),
-        )
-    except urllib.error.HTTPError as error:
-        return [
-            CapitalMarket(epic=e, ticker=e, error=f"HTTP {error.code}")
-            for e in wanted
-        ]
-    except Exception as error:  # noqa: BLE001
-        return [
-            CapitalMarket(epic=e, ticker=e, error=f"{type(error).__name__}: {error}")
-            for e in wanted
-        ]
-
     found: dict[str, CapitalMarket] = {}
-    for entry in (document or {}).get("marketDetails") or []:
-        market = _market_from_details(entry, now=now)
-        if market.epic:
-            found[market.epic] = market
+    failed: dict[str, str] = {}
+    # In batches of MAX_EPICS_PER_REQUEST. Capital answers HTTP 400 to the
+    # whole request above fifty epics, measured 2026-10-11: on 2026-10-09
+    # the dealing list was the 50 traded names plus one held outside them,
+    # every market came back unpriced, every open was refused "no price" --
+    # and a position held that day could not have been CLOSED either.
+    for start in range(0, len(wanted), MAX_EPICS_PER_REQUEST):
+        batch = wanted[start:start + MAX_EPICS_PER_REQUEST]
+        query = urllib.parse.urlencode({"epics": ",".join(batch)})
+        try:
+            document, _ = read(
+                f"{session.host}/markets?{query}",
+                headers=session.headers(settings.api_key),
+            )
+        except urllib.error.HTTPError as error:
+            failed.update({e: f"HTTP {error.code}" for e in batch})
+            continue
+        except Exception as error:  # noqa: BLE001
+            failed.update({e: f"{type(error).__name__}: {error}" for e in batch})
+            continue
+        for entry in (document or {}).get("marketDetails") or []:
+            market = _market_from_details(entry, now=now)
+            if market.epic:
+                found[market.epic] = market
+    if failed:
+        # Logged: a market that cannot be priced cannot be closed, and the
+        # 2026-10-09 failure said so nowhere but in a refusal reason.
+        logger.warning("Capital: %d of %d markets could not be read: %s",
+                       len(failed), len(wanted), sorted(set(failed.values())))
+    for epic, why in failed.items():
+        found.setdefault(epic, CapitalMarket(epic=epic, ticker=epic, error=why))
 
     # Every epic asked about comes back, in order, carrying its reason if it
     # is missing. An instrument the broker did not return is a finding.

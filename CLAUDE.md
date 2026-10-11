@@ -523,6 +523,53 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE DAILY MAIL'S "PROBLEM" WAS THE PAUSE; FRIDAY'S WAS REAL AND UNSEEN, 2026-10-11
+
+The owner forwarded three daily verifications (10-08, 10-09, 10-10), each
+reading "PROBLEM: refusal rate 100.0% against 20.7%... 20 of 20". Read
+against the order store, the alarm was three faults in the check and it
+missed the one real fault of the week.
+
+**1. Under the pause the rate was 100% by construction.** `refusal_summary`
+counts opened plus last-look-refused names. Since 2026-10-01 nothing
+opens: a name the last look APPROVES is refused by the pause, and was
+counted as neither. A pause refusal of a fresh open is now counted as the
+gate clearing it (`orders.PAUSED_REASON`, one owner, written by the
+bridge).
+
+**2. The mail read seven days, not its own day.** So Saturday's mail
+repeated the week, and three mails carried one figure. `_check_refusals`
+now reads the day it names. Doing so exposed a third fault:
+`refusal_summary`'s window was a START compared as TEXT -- the store writes
+"2026-10-08 19:42", the cutoff read "2026-10-08T00:00", a space sorts
+before "T", so a one-day window dropped every row of its own day. Now a
+window with both ends, compared as times. The quoted "20.7%" -- a 0.35-gate
+figure this file forbids against the 0.75 gate -- is gone from the message.
+
+    re-run on the real record   10-06 ok 0/2   10-07 ok 0/7   10-08 PROBLEM 9/9
+                                10-09 ok, nothing considered
+
+**3. Friday 2026-10-09: every market unpriced, all day, silently.** 681
+refusals, every one "no price". The dealing list was the 50 traded names
+plus DIS, and **Capital answers HTTP 400 to `/markets?epics=` naming more
+than 50** (measured: 50 priced, 51 none). `fetch_market_details` put the
+error in each market's field and logged nothing. Harmless only because the
+account is paused and flat: **a position held that day could not have been
+closed.** Now batched at `MAX_EPICS_PER_REQUEST = 50`, a failed batch no
+longer takes the others with it, and failures are logged. M2020-M2021.
+
+**Thursday 2026-10-08 is real and UNEXPLAINED.** 84 fresh (age 0) refusals,
+"no longer a signal": the engine opened nine names long at ~0.84 and the
+live re-check read exactly 0.000 on every one, every pass. Wednesday's
+fresh decisions agreed to two decimals (COP 0.774 against 0.768), and
+Monday's too. All nine were longs, which fits the live recompute's
+market-level regime flipping to one that blocks longs -- a hypothesis, not
+a measurement: `livequotes` keeps only `latest.json`, so the day cannot be
+replayed. It cost nothing while paused. **If it recurs, it must be caught
+live**, before anything is unpaused.
+
+Mutations M2010-M2014 for the summary and the mail.
+
 ### THE CRYPTO TREND IS THE WINNERS, NOT THE RULE, 2026-10-01
 
 Both checks below, read the same night, unchanged.

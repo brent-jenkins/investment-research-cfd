@@ -234,11 +234,22 @@ def _check_account_matches_record(config, account) -> Finding:
     )
 
 
-def _check_refusals(config, account) -> Finding:
-    """What did the last look block, and is the rate sane?"""
+def _check_refusals(config, account, day=None) -> Finding:
+    """What did the last look block on ``day``, and is the rate sane?
+
+    Scoped to the day being verified. It read the trailing seven days until
+    2026-10-11, so a Saturday's mail repeated the week's refusals under a
+    "no session" heading and three mails in a row carried one figure.
+    """
+    import pandas as pd
+
     from cfdinvest.persist import orders
 
-    summary = orders.refusal_summary(config, account)
+    if day is None:
+        summary = orders.refusal_summary(config, account)
+    else:
+        end = pd.Timestamp(day).tz_localize("UTC") + pd.Timedelta(days=1)
+        summary = orders.refusal_summary(config, account, days=1, now=end)
     if not summary or not summary.get("checked"):
         return Finding("last look", UNCHECKED, "no refusal record to read")
 
@@ -264,11 +275,14 @@ def _check_refusals(config, account) -> Finding:
                        "'not re-checked' dominates -- the check is failing to "
                        f"form an opinion, not refusing trades. {detail}")
 
-    # 20.7% measured in the account's first week, 18.7% modelled.
+    # No baseline is quoted. The 20.7% this used to cite was measured on the
+    # 0.35 gate, and CLAUDE.md forbids comparing it with the 0.75 gate. What
+    # remains is the shape: a check refusing nearly everything it sees is
+    # the 2026-09-10 failure, whatever the gate.
     if rate > 60.0:
         return Finding("last look", PROBLEM,
-                       f"refusal rate {rate:.1f}% against 20.7% measured in "
-                       f"the first week. {detail}")
+                       f"refusal rate {rate:.1f}% -- the check is refusing "
+                       f"nearly everything it sees. {detail}")
     return Finding("last look", OK, detail)
 
 
@@ -349,7 +363,7 @@ def verify_day(config=None, account: str | None = None, day=None) -> DayReport:
         _safe("engine intent", lambda: _check_intent(config, account)),
         _safe("dealing passes",
               lambda: _check_dealing_happened(config, account, stamp, trading)),
-        _safe("last look", lambda: _check_refusals(config, account)),
+        _safe("last look", lambda: _check_refusals(config, account, stamp)),
         _safe("record vs account",
               lambda: _check_account_matches_record(config, account)),
         _safe("flat at the close",

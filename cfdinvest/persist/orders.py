@@ -613,6 +613,10 @@ def open_orders(config=None, account: str | None = None) -> dict[str, dict[str, 
 #: treats it as a refusal because unchecked is not approved. A run where it
 #: dominates is a broken check, not a selective one, and the two must be
 #: distinguishable on sight.
+#: The reason `plan_orders` gives an open refused only because opening is
+#: paused. One owner: the bridge writes it, `refusal_summary` reads it.
+PAUSED_REASON = "opening is paused"
+
 LAST_LOOK_REASONS = frozenset({
     "no longer a signal",
     "no longer clears the bar",
@@ -690,17 +694,31 @@ def refusal_summary(
     if not rows:
         return summary
 
-    cutoff = None
+    # A window with BOTH ends, compared as times. Until 2026-10-11 it was a
+    # start alone, compared as TEXT: the store writes "2026-10-08 19:42" and
+    # the cutoff read "2026-10-08T00:00", and a space sorts before a "T", so
+    # a one-day window dropped every row of its own day.
+    import pandas as pd
+
+    cutoff = until = None
     if days and days > 0:
         try:
-            import pandas as pd
-
-            end = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
-            if end.tz is None:
-                end = end.tz_localize("UTC")
-            cutoff = (end - pd.Timedelta(days=int(days))).isoformat()
+            until = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
+            if until.tz is None:
+                until = until.tz_localize("UTC")
+            cutoff = until - pd.Timedelta(days=int(days))
         except Exception:  # noqa: BLE001 - a bad clock must not blank the panel
-            cutoff = None
+            cutoff = until = None
+
+    def _inside(stamp: str) -> bool:
+        if cutoff is None or not stamp:
+            return True
+        try:
+            when = pd.Timestamp(stamp)
+            when = when.tz_localize("UTC") if when.tz is None else when
+        except Exception:  # noqa: BLE001 - an unreadable stamp is kept, not hidden
+            return True
+        return cutoff <= when < until
 
     opened: set[tuple[str, str]] = set()
     refused: dict[tuple[str, str], set[str]] = {}
@@ -710,7 +728,7 @@ def refusal_summary(
         if str(row.get("kind") or "") != "plan":
             continue
         stamp = str(row.get("at") or "")
-        if cutoff and stamp and stamp < cutoff:
+        if not _inside(stamp):
             continue
         ticker = str(row.get("ticker") or "")
         if not ticker:
@@ -730,6 +748,14 @@ def refusal_summary(
                     pass
         elif action == "refused":
             why = str(row.get("reason") or "")
+            # Refused by the PAUSE after the last look APPROVED it, from
+            # 2026-10-01: `plan_orders` applies the pause after the loop,
+            # so a fresh open reaching it has already cleared the gate.
+            # Counting it as neither opened nor refused made the rate 100%
+            # by construction, and the daily mail cried PROBLEM for it.
+            if why == PAUSED_REASON and not float(row.get("held_units") or 0.0):
+                opened.add(key)
+                continue
             if why in LAST_LOOK_REASONS:
                 refused.setdefault(key, set()).add(why)
                 # Absent is its own answer. Rows written before the age was
