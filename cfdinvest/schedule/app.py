@@ -2331,13 +2331,17 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         if str(row.get("ticker") or "") not in positions
         and session_open.get(str(row.get("ticker") or ""), False)
     ]
+    # A quote for EVERY priced market, not only the candidates: the check
+    # reads the engine's whole universe, and market-level regimes computed
+    # over a panel half of which lacks a current bar are not the engine's.
     prices = {
-        t: (markets[t].bid + markets[t].offer) / 2
-        for t in candidates
-        if t in markets and markets[t].ok
+        t: (m.bid + m.offer) / 2
+        for t, m in markets.items()
+        if m.ok and m.bid and m.offer
     }
     rechecked = (
-        livecheck.reevaluate(candidates, prices, config=app_config, at=now)
+        livecheck.reevaluate(candidates, prices, config=app_config, at=now,
+                             account=account_name)
         if candidates else {}
     )
 

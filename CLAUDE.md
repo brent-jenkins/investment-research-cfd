@@ -581,7 +581,23 @@ gave a confident answer about the wrong bar. Both retracted.
 **This is "one engine" broken inside the safety check, and it is the fix
 owed before anything is unpaused**: the last look should take the engine's
 own live configuration and universe and differ only by the provisional bar.
-Not built here.
+
+**FIXED 2026-10-11.** `livecheck.engine_check_config` is `_backtest_config`
+then `for_live_intent` -- the two calls that configure the run the dealer
+reads -- changed in exactly three fields: no `end` (it reads the bar in
+progress), `hold_across_session_open` off, `breakout_band_lag` 2. The panel
+is the traded universe, and the dealer now passes a quote for every priced
+market rather than the candidates alone. Replayed on the box:
+
+    2026-10-08 14:15   engine   old check   new check
+    COP                0.841    flat 0.000  long 0.805
+    MPC                0.887    flat 0.000  long 0.899
+    XOM                0.766    flat 0.000  long 0.758
+    (all six agree; 2026-10-07 unchanged, within 0.01 of the engine)
+
+3.9s and 340MB a check. `tests/test_last_look_uses_the_engine.py` asserts
+the configuration equals the engine's but for the three stated fields;
+M2040-M2043 (regime, window, universe, an unstated signal difference).
 
 **Snapshots from 2026-10-11.** `persist.last_look` keeps one row whenever a
 FRESH entry is refused at least 0.25 below the engine (chases excluded): the

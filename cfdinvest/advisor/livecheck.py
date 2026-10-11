@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "MIN_SESSION_MINUTES",
+    "engine_check_config",
     "reevaluate",
     "ProvisionalRepository",
 ]
@@ -336,32 +337,87 @@ def _too_early(tickers, moment, settings) -> set[str]:
     }
 
 
+def engine_check_config(settings, *, account=None):
+    """The engine's own LIVE configuration, changed only where a provisional
+    bar requires it. Pure apart from reading the traded universe.
+
+    **Until 2026-10-11 the last look built its own**, and it drifted: its
+    panel was the handful of candidates rather than the traded universe, and
+    it lacked `for_live_intent`'s macro dating and six-month window. On
+    2026-10-08 six energy-heavy candidates read as a correlation BREAKDOWN
+    where the engine's fifty read diversified, a labour cut applied that the
+    engine's run did not, and nine fresh longs at 0.84 read exactly flat all
+    day. A safety check computing a different strategy from the engine is
+    the "one engine" failure inside the check meant to enforce it.
+
+    So this takes `_backtest_config` and `for_live_intent` -- the same two
+    calls that configure the run the dealer reads -- and changes exactly:
+
+    * ``end``: none. The engine stops at the newest COMPLETED bar; this
+      exists to read the bar in progress.
+    * ``signal.hold_across_session_open``: off, see the module docstring.
+    * ``signal.breakout_band_lag``: 2, for the extra bar (2026-09-24).
+    """
+    import dataclasses
+
+    from cfdinvest.schedule import app as app_module
+
+    class _Args:
+        interval = start = end = universe = tickers = None
+
+    args = _Args()
+    args.account = account
+    live = app_module.for_live_intent(app_module._backtest_config(args, settings), settings)  # noqa: SLF001
+    return dataclasses.replace(
+        live,
+        end=None,
+        signal=dataclasses.replace(
+            live.signal,
+            hold_across_session_open=False,
+            # THE ONE CALLER THAT SETS THIS, and the reason is the extra bar.
+            #
+            # This panel carries a provisional bar for the hour in progress,
+            # so its last row is one bar PAST the bar the engine decided on.
+            # At the engine's lag of 1 the breakout band then includes the
+            # decision bar's own high -- and for a name that just broke out
+            # that high IS the band top, so the component reads zero even on
+            # an unchanged price. Measured 2026-09-24; at lag 2 the band is
+            # the SAME one the engine tested against.
+            breakout_band_lag=2,
+        ),
+    )
+
+
 def reevaluate(
     tickers: Sequence[str],
     prices: Mapping[str, float],
     *,
     config=None,
     at=None,
+    account=None,
 ) -> dict[str, dict[str, Any]]:
     """Direction and confidence per instrument, as of the live price.
+
+    Computed over the engine's own live configuration and universe
+    (`engine_check_config`), with ``prices`` standing in as the bar in
+    progress for every instrument it covers -- pass a quote for the whole
+    traded universe, not only ``tickers``, or the market-level regimes are
+    read over a panel half of which has no current bar. Readings are
+    returned for ``tickers`` only.
 
     Returns ``{}`` when it cannot be computed -- an unreadable lake, an empty
     universe, a failure anywhere in the pipeline. An empty result means *not
     checked*, and the caller must treat that as unchecked rather than as
     approval: a gate that opens when it fails is not a gate.
     """
-    import dataclasses
-
     try:
         import pandas as pd
 
-        from cfdinvest.backtest import BacktestConfig
         from cfdinvest.config import load_config
         from cfdinvest.preprocessing import analysis_frame_from_repository
         from cfdinvest.regimes import classify_regimes
         from cfdinvest.repository import DataRepository
         from cfdinvest.signals import generate_signals
-        from cfdinvest.signals.frame import SignalConfig
 
         settings = config or load_config()
         wanted = [str(t) for t in tickers if str(t)]
@@ -372,41 +428,14 @@ def reevaluate(
         if moment.tzinfo is None:
             moment = moment.tz_localize("UTC")
 
-        strategy = settings.strategy
-        signal_config = dataclasses.replace(
-            SignalConfig(),
-            regime_mode=strategy.regime_mode,
-            use_volume=strategy.use_volume,
-            volume_heavy_ratio=strategy.volume_heavy_ratio,
-            volume_heavy_multiplier=strategy.volume_heavy_multiplier,
-            environment_in_confidence=strategy.environment_in_confidence,
-            # Off deliberately -- see the module docstring.
-            hold_across_session_open=False,
-            # THE ONE CALLER THAT SETS THIS, and the reason is the extra bar.
-            #
-            # This panel carries a provisional bar for the hour in progress,
-            # so its last row is one bar PAST the bar the engine decided on.
-            # At the engine's lag of 1 the breakout band then includes the
-            # decision bar's own high -- and for a name that just broke out
-            # that high IS the band top, so the component reads zero even on
-            # an unchanged price. A third of the score, deterministically,
-            # on exactly the names a 0.75 gate admits.
-            #
-            # Measured 2026-09-24: six of nine names clearing the gate lost
-            # a component of implied magnitude 1.009-1.116 against a
-            # saturation of 1.000, with nothing between them and the three
-            # that lost nothing. At lag 2 the band is the SAME one the
-            # engine tested against, so an unchanged price reproduces the
-            # engine's reading and a genuine fall back inside the band still
-            # refuses -- which is the distinction this check exists to make.
-            breakout_band_lag=2,
-        )
-        backtest = BacktestConfig(
-            tickers=wanted, interval=settings.market.interval, signal=signal_config
-        )
+        backtest = engine_check_config(settings, account=account)
+        signal_config = backtest.signal
+        universe = list(dict.fromkeys([*(backtest.tickers or ()), *wanted]))
 
         repository = ProvisionalRepository(
-            DataRepository(settings), {t: prices.get(t) for t in wanted}, moment
+            DataRepository(settings),
+            {t: prices.get(t) for t in universe if prices.get(t) is not None},
+            moment,
         )
         # The macro series come too. Without them the macro classifier has
         # nothing to read, every regime resolves to unknown, and
@@ -414,8 +443,10 @@ def reevaluate(
         # return flat for the entire universe and refuse every trade,
         # which looks exactly like a check working very well.
         analysis = analysis_frame_from_repository(
-            repository, wanted, list(settings.macro.series_ids or ()),
-            interval=settings.market.interval,
+            repository, universe,
+            list(backtest.series_ids or settings.macro.series_ids or ()),
+            interval=backtest.interval or settings.market.interval,
+            start=backtest.start,
             config=backtest.preprocess,
         )
         if analysis is None or analysis.close.empty:
@@ -423,18 +454,17 @@ def reevaluate(
 
         regimes = classify_regimes(analysis, backtest.regime)
         signals = generate_signals(analysis, regimes, signal_config)
-        if getattr(strategy, "news_mode", "off") == "trade":
+        if getattr(backtest, "news_mode", "off") == "trade" and backtest.news_events is not None:
             # The same news the run the dealer reads was given, through the
             # same loader and the same step -- otherwise every news trade
             # would be refused here as "no longer a signal". Not in veto
             # mode: a veto only removes opens, so the engine never intends a
             # vetoed one and there is nothing here to re-check.
-            from cfdinvest.persist.headline_labels import news_events
             from cfdinvest.signals.news import apply_news, news_sign_panel
 
             signals = apply_news(
                 signals,
-                news_sign_panel(news_events(settings), signals.direction.index,
+                news_sign_panel(backtest.news_events, signals.direction.index,
                                 signals.direction.columns),
                 min_size=signal_config.min_size,
             )
