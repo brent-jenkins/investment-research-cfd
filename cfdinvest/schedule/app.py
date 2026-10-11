@@ -2424,6 +2424,25 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
 
     order_store.record_plan(report, app_config, account_name, now=now)
 
+    # Keep what the last look SAW when a fresh entry is refused far below
+    # the engine's reading, so the moment can be replayed. 2026-10-08 could
+    # not be: the quotes it priced against were overwritten by the next poll.
+    from cfdinvest.persist import last_look as last_look_store
+
+    far_apart = last_look_store.disagreements(report.intents)
+    if far_apart:
+        last_look_store.record_snapshot(
+            at=now, candidates=candidates, prices=prices, readings=rechecked,
+            disagreeing=far_apart, config=app_config, account=account_name,
+        )
+        logger.warning(
+            "Capital: the last look read %d fresh entr%s far below the engine "
+            "(%s); snapshot kept for replay",
+            len(far_apart), "y" if len(far_apart) == 1 else "ies",
+            ", ".join(f"{d['ticker']} {d['engine_confidence']:.2f}->{d['live_confidence']:.2f}"
+                      for d in far_apart),
+        )
+
     if report.halted:
         # Announced exactly as before -- and no longer a return.
         #

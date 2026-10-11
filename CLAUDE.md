@@ -558,7 +558,41 @@ account is paused and flat: **a position held that day could not have been
 closed.** Now batched at `MAX_EPICS_PER_REQUEST = 50`, a failed batch no
 longer takes the others with it, and failures are logged. M2020-M2021.
 
-**Thursday 2026-10-08 is real and UNEXPLAINED.** 84 fresh (age 0) refusals,
+**EXPLAINED THE SAME DAY: the last look is a second implementation of the
+engine's configuration, and on Thursday the two disagreed.** Replayed from
+the plan rows' own prices with the lake cut at each moment (Wednesday
+reproduced to 0.01, Thursday's 0.000 exactly):
+
+    COP, 2026-10-08 14:00   engine's own run          live re-check
+    correlation regime      diversified               BREAKDOWN
+    labour overlay          not applied               labor_risk_off
+    result                  long 0.83                 flat 0.000, below_min_size
+
+`livecheck.reevaluate` builds its own `BacktestConfig`: its panel is the
+handful of CANDIDATES rather than the traded universe -- six energy-heavy
+longs, which move together, so the market-level correlation regime reads
+breakdown -- and it does not take `for_live_intent`'s macro dating, so a
+labour cut the engine's live run does not apply is applied here. Stacked,
+every size fell under the minimum and read flat. **My first explanation,
+the panel alone, was wrong**: a replay on the full universe was also flat,
+and a first replay that read the lake to TODAY rather than to the moment
+gave a confident answer about the wrong bar. Both retracted.
+
+**This is "one engine" broken inside the safety check, and it is the fix
+owed before anything is unpaused**: the last look should take the engine's
+own live configuration and universe and differ only by the provisional bar.
+Not built here.
+
+**Snapshots from 2026-10-11.** `persist.last_look` keeps one row whenever a
+FRESH entry is refused at least 0.25 below the engine (chases excluded): the
+moment, every price used, every reading with its new `reason` and `regime`,
+and the names. With the lake that is a full replay. M2030-M2034.
+
+**Also seen, not fixed:** a stale-decision refusal is written as "within the
+opening window" -- the reason the 2026-09-25 split was meant to stop
+borrowing.
+
+**Thursday 2026-10-08 as first written, before the replay.** 84 fresh (age 0) refusals,
 "no longer a signal": the engine opened nine names long at ~0.84 and the
 live re-check read exactly 0.000 on every one, every pass. Wednesday's
 fresh decisions agreed to two decimals (COP 0.774 against 0.768), and

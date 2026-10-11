@@ -462,6 +462,15 @@ def reevaluate(
                 len(immature), MIN_SESSION_MINUTES, ", ".join(sorted(immature)),
             )
 
+        reasons = getattr(signals, "reason", None)
+        combined = getattr(regimes, "combined_regime", None)
+        regime_now = None
+        try:
+            if combined is not None and len(combined):
+                regime_now = str(pd.Series(combined.to_numpy(), index=direction.index).iloc[-1])
+        except Exception:  # noqa: BLE001 - a diagnostic, never a decision
+            regime_now = None
+
         out: dict[str, dict[str, Any]] = {}
         for ticker in wanted:
             if ticker not in direction.columns or ticker in immature:
@@ -469,6 +478,13 @@ def reevaluate(
             out[ticker] = {
                 "direction": str(direction.at[stamp, ticker]),
                 "confidence": float(confidence.at[stamp, ticker]),
+                # WHY, beside the what -- added 2026-10-11. On 2026-10-08 the
+                # check read nine engine longs as exactly flat all day and the
+                # record could say that it disagreed, never why. Diagnostic
+                # only: `holds` reads direction and confidence, nothing else.
+                "reason": (str(reasons.at[stamp, ticker])
+                           if reasons is not None and ticker in reasons.columns else None),
+                "regime": regime_now,
                 "as_of": stamp,
                 # Whether the bar this was computed on is the provisional one
                 # or the last real bar. If the quote was missing or stale the
