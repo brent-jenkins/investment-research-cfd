@@ -2316,7 +2316,9 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
     #
     # Placed HERE, before `plan_orders` is handed `open_allowed`. An earlier
     # draft put it after the planning call, where it would have been inert.
+    decision_stale = False
     if intent_store.decision_is_stale(app_config, account_name, now=now):
+        decision_stale = True
         logger.warning(
             "Capital: the latest run's decision bar is %s old -- opening "
             "nothing until the analysis catches up. Closes are unaffected.",
@@ -2382,6 +2384,8 @@ def _command_trade_capital(args, app_config, smtp=None, transport=None) -> int:
         # Which window blocked an open, so the refusal can say so. Data for
         # the record only -- `open_allowed` above already decided.
         session_ending=no_more_opens,
+        # So a refusal names the analysis being behind, not a window.
+        decision_stale=bool(decision_stale),
         flatten_before_close=bool(
             getattr(app_config.strategy, "flatten_before_close", False)
         ),

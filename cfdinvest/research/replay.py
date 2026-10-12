@@ -97,7 +97,14 @@ DECISION_OVERRIDES: dict = {"leverage_cap_selects": False}
 #: Refusal reasons that are the CLOCK rather than a view. Both windows refuse
 #: an open the engine wanted, and the engine models them itself, so neither
 #: side "wanted" such an entry in a comparable sense.
-_CLOCK_REASONS = ("within the opening window", "too near the session close to open")
+#: The stale-decision reason joins them from 2026-10-12. It was written as
+#: "within the opening window" until then, so every replay already counted
+#: it here; naming it separately must not change what a replay reports.
+_CLOCK_REASONS = (
+    "within the opening window",
+    "too near the session close to open",
+    "the decision is stale; waiting for the analysis",
+)
 
 
 class ReplayError(RuntimeError):

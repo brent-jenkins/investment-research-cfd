@@ -139,6 +139,11 @@ NOT_A_GATE = {
         "session's last bar, which is coarser than either -- the hourly "
         "grid cannot express 30 minutes before a close."
     ),
+    "decision_stale": (
+        "whether the dealer's decision bar was too old to act on. Decides "
+        "nothing: `open_allowed` has already refused, and this only names "
+        "the reason, so a late analysis is not recorded as a session window."
+    ),
     "session_ending": (
         "which instruments are inside the NO-NEW-OPENS window before the "
         "close. Decides nothing: `open_allowed` has already refused the "

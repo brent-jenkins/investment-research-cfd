@@ -225,6 +225,10 @@ def reconcile(
     return tuple(sorted(in_account - in_record)), tuple(sorted(in_record - in_account))
 
 
+#: Why an open was refused when the dealer's decision bar is too old to act
+#: on. Distinct from both session windows; see `plan_orders`.
+STALE_DECISION_REASON = "the decision is stale; waiting for the analysis"
+
 def plan_orders(
     signals: Sequence[Mapping[str, Any]],
     markets: Mapping[str, Any],
@@ -246,6 +250,7 @@ def plan_orders(
     max_margin_usage: float | None = None,
     closing_soon: Mapping[str, bool] | None = None,
     session_ending: Mapping[str, bool] | None = None,
+    decision_stale: bool = False,
     flatten_before_close: bool = False,
     opens_paused: bool = False,
 ) -> BridgeReport:
@@ -370,8 +375,14 @@ def plan_orders(
             and held_units == 0.0
             and not open_allowed.get(ticker, False)
         ):
+            # And a THIRD reason, from 2026-10-12: the dealer clears
+            # `open_allowed` when the analysis is behind (`decision_is_stale`),
+            # and that too was written "within the opening window" -- the
+            # borrowing the split above was meant to end. Label only:
+            # `open_allowed` has already refused.
             intents.append(refuse(
-                "too near the session close to open"
+                STALE_DECISION_REASON if decision_stale
+                else "too near the session close to open"
                 if (session_ending or {}).get(ticker, False)
                 else "within the opening window"
             ))

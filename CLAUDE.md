@@ -604,9 +604,12 @@ FRESH entry is refused at least 0.25 below the engine (chases excluded): the
 moment, every price used, every reading with its new `reason` and `regime`,
 and the names. With the lake that is a full replay. M2030-M2034.
 
-**Also seen, not fixed:** a stale-decision refusal is written as "within the
-opening window" -- the reason the 2026-09-25 split was meant to stop
-borrowing.
+**Also seen, and FIXED 2026-10-12:** a stale-decision refusal was written as
+"within the opening window" -- 114 rows on 2026-10-08 alone, mid-session --
+the borrowing the 2026-09-25 split was meant to end. The dealer now hands
+`decision_stale` to `plan_orders`, which writes
+`bridge.STALE_DECISION_REASON`; the label decides nothing, and the replay
+still groups it with the clock refusals, as it always had. M2050-M2052.
 
 **Thursday 2026-10-08 as first written, before the replay.** 84 fresh (age 0) refusals,
 "no longer a signal": the engine opened nine names long at ~0.84 and the
