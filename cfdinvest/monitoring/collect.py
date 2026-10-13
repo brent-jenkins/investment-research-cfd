@@ -186,6 +186,8 @@ def collect_issues(
     )
     issues += _guarded("lake", "lake freshness", lambda: core.check_lake_freshness(
         _lake_metadata(config), limits, now=moment))
+    issues += _guarded("lake", "price repair", lambda: core.check_price_repairs(
+        _price_repairs(config, moment), now=moment))
     issues += _guarded("livequotes", "live quote freshness",
                        lambda: core.check_live_quote_freshness(
                            _live_quotes(config), now=moment))
@@ -243,6 +245,22 @@ def _last_dealing_at(config, account=None):
         ]
         return rows[-1]["at"] if rows else None
     except Exception:  # noqa: BLE001 - absence is not an outage
+        return None
+
+
+def _price_repairs(config, now):
+    """What repairing the last month of Capital bars found; None if unreadable."""
+    try:
+        from cfdinvest.repository import DataRepository
+
+        repository = DataRepository(config)
+        repository.load_market(
+            interval=config.market.interval,
+            start=now - pd.Timedelta(days=30), columns=["open", "close"],
+        )
+        return list(repository.last_price_repairs)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Could not check Capital's prices for repairs: %s", error)
         return None
 
 

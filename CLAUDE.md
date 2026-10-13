@@ -523,6 +523,49 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### CAPITAL'S HISTORY WAS NOT ALWAYS SPLIT-ADJUSTED, 2026-10-13
+
+Found by running a community "data scrub" checklist against the lake, on
+the owner's question whether Claude Code skills had anything to add. The
+skills themselves add nothing this project does not already do more
+strictly; this one check found a real fault. The daily store (yfinance)
+is clean. Capital's hourly bars, which the engine and the backtest trade
+on, carried seven:
+
+    PANW  2023-01-03..2024-12-13  at 2.0x  the 2-for-1 split left unadjusted
+    AVGO  2024-07-15 13:00        at 0.1x  one bar, on its 10-for-1 split day
+    NOW   2025-12-10              at 0.6x  one whole session, the days either side right
+    MMM   2023-01..2024-03-28     at 1.2x  the Solventum spin-off unadjusted
+    GE    2023-01-03 and to 2024-04-01     the GE HealthCare and Vernova spin-offs
+    DHR   2023-01..2023-09-29     at 1.13x the Veralto spin-off unadjusted
+
+A trend follower reads each as a crash that never happened -- moving
+averages, breakout bands and volatility for weeks -- and because the
+volatility and correlation regimes are market-level, it leaked into every
+name in the panel.
+
+**`ingestion.price_repair`, applied in `DataRepository.load_market`**
+beside the session filter, so every caller gets repaired bars and the raw
+store is untouched. Wherever the ratio of Capital's session close to the
+daily store JUMPS by more than 10%, everything older is rescaled by it;
+the newest bars never move. A day with no daily reference yet -- a split
+today -- is reported `unverified` and left alone.
+`monitoring.check_price_repairs` warns on an unverified jump in the last
+fortnight and notes recent repairs. Ten mutations checked (M2070-M2079).
+
+**My first version was wrong, and real data caught it, not the tests.**
+It compared every stretch with the newest level, and the daily store is
+dividend-adjusted, so for PFE, VZ, UPS and CMCSA the ratio drifts about 3%
+a year: it rescaled their WHOLE history, newest bars included, by about
+0.88 -- which would have put the lake 12% away from every live quote and
+faked a jump in the last look. Only jumps are corrected now, and a test
+holds the drift.
+
+**Every backtest figure in this file was taken on unrepaired prices.**
+Seven names in about a hundred over 3.6 years cannot plausibly turn a
+book losing 0.53% a day; the repaired baseline is re-measured below
+rather than assumed.
+
 ### DAY TRADING OR HOLDING FOR DAYS? PRE-REGISTERED, 2026-10-13
 
 The owner's question: is flattening every evening the right horizon, or

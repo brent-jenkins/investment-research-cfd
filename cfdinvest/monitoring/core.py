@@ -79,6 +79,7 @@ __all__ = [
     "MonitoringThresholds",
     "MonitoringIssue",
     "check_lake_freshness",
+    "check_price_repairs",
     "check_credential_expiry",
     "check_live_quote_freshness",
     "check_scheduler_health",
@@ -1469,6 +1470,68 @@ def check_dealing_liveness(
             ),
         )
     ]
+
+
+def check_price_repairs(
+    repairs: Sequence[Any] | None,
+    *,
+    now: pd.Timestamp | None = None,
+    recent_days: float = 14.0,
+) -> list[MonitoringIssue]:
+    """Has Capital's price history needed repairing lately?
+
+    ``repairs`` is ``DataRepository.last_price_repairs`` after loading the
+    recent lake: what ``ingestion.price_repair`` rescaled, and what it could
+    not verify. ``None`` means the load did not happen, which is reported as
+    unchecked rather than clean.
+
+    An ``unverified`` jump is a WARNING: a move of a quarter or more on a
+    day the daily store does not cover yet -- the shape of a split on the day
+    it happens, which the engine reads as a crash until the nightly ingest
+    lets it be repaired. A recent repair is INFO: it worked, and a person
+    holding that name may want to know its history just moved.
+    """
+    moment = _now(now)
+    if repairs is None:
+        return [_unreadable("lake", "Price repair",
+                            "the recent lake could not be loaded")]
+    cutoff = moment - pd.Timedelta(days=recent_days)
+    recent = [r for r in repairs
+              if _utc(getattr(r, "end", None)) is not None
+              and _utc(getattr(r, "end")) >= cutoff]
+    issues: list[MonitoringIssue] = []
+    unverified = [r for r in recent if r.kind == "unverified"]
+    if unverified:
+        issues.append(MonitoringIssue(
+            type="lake", severity="warning",
+            message=(
+                "Unverified price jump(s) in Capital's bars: "
+                + ", ".join(f"{r.ticker} at {r.start}" for r in unverified)
+                + ". Possibly a split the daily store has not caught up with."
+            ),
+            timestamp=moment,
+            details={"jumps": [r.to_document() for r in unverified]},
+            remedy=(
+                "Compare the name's price with its listing. A split shows as a "
+                "move by a round factor (2x, 3x, 10x); the nightly daily "
+                "ingest lets the repair correct it. Until then the engine "
+                "reads it as a crash, so treat any signal on that name today "
+                "as suspect."
+            ),
+        ))
+    repaired = [r for r in recent if r.kind != "unverified"]
+    if repaired:
+        issues.append(MonitoringIssue(
+            type="lake", severity="info",
+            message=(
+                "Capital's history was repaired: "
+                + ", ".join(f"{r.ticker} {r.kind} x{r.factor:.3f}" for r in repaired)
+            ),
+            timestamp=moment,
+            details={"repairs": [r.to_document() for r in repaired]},
+            remedy="Nothing to do; recorded so a moved history is not a surprise.",
+        ))
+    return issues
 
 
 def check_system_resources(

@@ -92,8 +92,11 @@ def day_rows(pnl: pd.DataFrame, equity: pd.Series, days: Sequence) -> pd.DataFra
     frame = pd.DataFrame(pnl).reindex(equity.index).fillna(0.0)
     gross = frame[[c for c in _GROSS if c in frame.columns]].sum(axis=1)
     cost = frame[[c for c in _COST if c in frame.columns]].sum(axis=1)
+    financing = (frame["financing"] if "financing" in frame.columns
+                 else pd.Series(0.0, index=frame.index))
     gross_by_day = gross.groupby(bar_day).sum()
     cost_by_day = cost.groupby(bar_day).sum()
+    financing_by_day = financing.groupby(bar_day).sum()
 
     rows = []
     for day in _utc_day(days):
@@ -108,13 +111,18 @@ def day_rows(pnl: pd.DataFrame, equity: pd.Series, days: Sequence) -> pd.DataFra
             "net": float(closes[day]) / base - 1.0,
             "gross": float(gross_by_day.get(day, 0.0)) / base,
             "cost": float(cost_by_day.get(day, 0.0)) / base,
+            "financing": float(financing_by_day.get(day, 0.0)) / base,
         })
     return pd.DataFrame(rows).set_index("day") if rows else pd.DataFrame(
-        columns=["net", "gross", "cost"])
+        columns=["net", "gross", "cost", "financing"])
 
 
-def daily_book(repository, app_config, start, end) -> pd.DataFrame:
-    """The faithful backtest, one row per session. Reads the lake only."""
+def daily_book(repository, app_config, start, end, **overrides) -> pd.DataFrame:
+    """The faithful backtest, one row per session. Reads the lake only.
+
+    ``overrides`` are ``ExecutionConfig`` settings, refused by name if the
+    engine has none -- see ``harness.research_backtest``.
+    """
     from cfdinvest.backtest.runner import run_pipeline
     from cfdinvest.research import replay
 
@@ -122,7 +130,7 @@ def daily_book(repository, app_config, start, end) -> pd.DataFrame:
     parts = []
     for i, (universe, days) in enumerate(segments):
         result = run_pipeline(
-            repository, replay.segment_config(app_config, universe, days))
+            repository, replay.segment_config(app_config, universe, days, **overrides))
         execution = result.execution
         parts.append(day_rows(execution.pnl, execution.equity_curve, days))
         if i % 20 == 0:

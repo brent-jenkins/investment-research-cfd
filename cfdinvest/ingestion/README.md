@@ -34,6 +34,13 @@ two sources disagree about what a bar is, and merging them makes a third
 thing that is neither. It is the only source here that carries a bid and an
 ask on every bar.
 
+`price_repair.py` — Capital's history is not always split-adjusted, so
+every Capital load is checked against the split-adjusted daily store and
+rescaled where its level JUMPS against it: PANW at twice its price before
+its 2024 split, AVGO and NOW with broken bars, the MMM, GE and DHR
+spin-offs. Applied in `DataRepository.load_market`, beside the session
+filter; nothing on disk is rewritten.
+
 ## Judgement calls
 
 **Intervals coexist.** The lake is `raw/market/<interval>/<TICKER>.parquet`,
@@ -82,6 +89,13 @@ missing instrument is a universe that quietly shrank.
   server's history begins where it begins — so comparing the two refetches
   three years on every ordinary resume. Widening the window is `refetch=True`,
   asked for rather than guessed.
+- **Capital's history is not always split-adjusted, and dividend drift is
+  not a fault.** The daily store is adjusted for dividends too, so for a
+  high-yielding name its ratio to Capital drifts a few per cent a year. A
+  repair that compared every stretch with the newest level rescaled the
+  whole of PFE, VZ, UPS and CMCSA, the newest bars included -- which would
+  have put the history out of step with every live quote. Only jumps are
+  corrected, and always backwards from the newest bar.
 - **Capital's `volume` is its own clients, not the market** — a few hundred
   contracts on an AAPL hourly bar. It must never reach the universe screen,
   which ranks on turnover and would end up ranking by what one broker's
@@ -103,6 +117,16 @@ missing instrument is a universe that quietly shrank.
 | M326 | A resume that starts over, or drops what is on disk |
 | M327 | A requested end treated as advisory |
 | M328 | One bad instrument taking down the whole backfill |
+| M2070 | Every stretch rescaled to the newest level, dividend drift included |
+| M2071 | Jumps applied forwards, so the newest bars move |
+| M2072 | A day without a reference taking the earlier, pre-split factor |
+| M2073 | A bar off one neighbour treated as broken, agreement not required |
+| M2074 | A jump on an unreferenced day repaired by guess |
+| M2075 | A jump on an unreferenced day not reported |
+| M2076 | The repair computed and never applied by the lake |
+| M2077 | A load without `close` going unrepaired |
+| M2078 | An unverified jump reported as information, not a warning |
+| M2079 | An unreadable lake reported as clean |
 
 ## What it writes
 

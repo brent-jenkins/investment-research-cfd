@@ -239,6 +239,8 @@ class DataRepository:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.paths = config.paths
+        #: What the last Capital load repaired; see ``_repair_capital``.
+        self.last_price_repairs: list = []
 
     # -- discovery --------------------------------------------------------- #
     def available_tickers(self, interval: str | None = None) -> tuple[str, ...]:
@@ -415,6 +417,7 @@ class DataRepository:
         end: str | pd.Timestamp | None = None,
         columns: Sequence[str] | None = None,
         strict: bool = False,
+        repair: bool = True,
     ) -> pd.DataFrame:
         """Load OHLCV bars as a tidy frame indexed by ``(timestamp, ticker)``.
 
@@ -434,6 +437,11 @@ class DataRepository:
             Raise :class:`DataNotFoundError` when a requested ticker has no
             file. Default is to warn and continue, so one un-ingested symbol
             does not break a research run.
+        repair:
+            Rescale Capital bars whose split adjustment is wrong, against the
+            daily store -- see :mod:`cfdinvest.ingestion.price_repair`. What
+            was repaired is kept on ``last_price_repairs``. Off only for the
+            repair's own reads.
 
         Returns
         -------
@@ -492,8 +500,54 @@ class DataRepository:
                     "timestamps rather than treating this as no data",
                     bar_interval,
                 )
+            # Capital's history is not always split-adjusted: PANW sat at
+            # twice its price for 456 sessions, AVGO and NOW carry broken
+            # bars. Repaired here, once, for the same reason as the session
+            # filter above. Found 2026-10-13.
+            if repair:
+                tidy = self._repair_capital(tidy, symbols, bar_interval, start, end)
 
         return tidy.sort_index()
+
+    def _repair_capital(self, tidy, symbols, bar_interval, start, end):
+        """Rescale mis-adjusted Capital bars; record what was done."""
+        from cfdinvest.ingestion import price_repair
+
+        self.last_price_repairs = []
+        prices = [c for c in price_repair.PRICE_COLUMNS if c in tidy.columns]
+        if tidy.empty or not prices:
+            return tidy
+        basis = tidy
+        if "close" not in tidy.columns:
+            basis = self.load_market(
+                symbols, interval=bar_interval, start=start, end=end,
+                columns=["open", "close"], repair=False,
+            )
+            basis = capital_prices.restrict_to_session(basis).reindex(tidy.index)
+        named = [t for t in symbols
+                 if storage.market_path(self.paths, t, "1d").is_file()]
+        daily_start = (pd.Timestamp(start) - pd.Timedelta(days=10)
+                       if start is not None else None)
+        daily = (self.load_market(named, interval="1d", start=daily_start,
+                                  end=end, columns=["close"])["close"]
+                 if named else None)
+        if daily is None or daily.empty:
+            logger.warning(
+                "No daily prices to check %s splits against; Capital's bars "
+                "are used unrepaired", bar_interval)
+            return tidy
+        factors, repairs = price_repair.repair_factors(basis, daily)
+        self.last_price_repairs = repairs
+        changed = factors.to_numpy() != 1.0
+        if changed.any():
+            tidy = tidy.copy()
+            tidy.loc[changed, prices] = tidy.loc[changed, prices].mul(
+                factors[changed], axis=0)
+            logger.info("Repaired %d %s bar(s): %s", int(changed.sum()),
+                        bar_interval,
+                        "; ".join(f"{r.ticker} {r.kind} {r.start.date()}..{r.end.date()} x{r.factor:.3f}"
+                                  for r in repairs if r.kind != "unverified"))
+        return tidy
 
     def load_panel(
         self,
