@@ -523,6 +523,46 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### DAY TRADING OR HOLDING FOR DAYS? PRE-REGISTERED, 2026-10-13
+
+The owner's question: is flattening every evening the right horizon, or
+should the book hold for several days, overnight costs included? The
+signal's inputs describe trends of days to weeks -- 20/100-bar crossover,
+55-bar breakout, 21-bar momentum, about 3 to 14 sessions -- while the
+account holds about five hours, which 2026-09-26 recorded as a horizon
+mismatch. Every earlier answer is unusable as a verdict: the flatten-vs-
+carry arms of 2026-09-14 ran on a harness that did not reproduce the live
+engine, and the six-month holding screen of 2026-09-26 charged no spread
+or financing and held a fixed side. Written down before any run.
+
+    run       the account-faithful backtest, as the weather-vane test,
+              2023-07-03 to 2026-10-09, ON REPAIRED PRICES (the split
+              repair of the same day), Capital's spreads and its overnight
+              long and short rates per instrument
+    A         as shipped: flatten every evening, time stop 0.29 days
+    PRIMARY B carry: no evening flatten, NO time stop -- a position lives
+              until its signal exits, which is what a trend follower's
+              horizon is
+    secondary B3, B5: carry with the time stop at 3 and 5 days. Reported,
+              deciding nothing
+
+    B net positive at t >= 2 over sessions, both halves positive
+        -> holding has an edge: a configuration for the owner to put on
+           the demo account, measured through the engine first
+    B beats A, paired by session, at t >= 2, both halves, but B net is
+      not positive at t >= 2
+        -> holding loses less than day trading; not an edge, and nothing
+           is unpaused on it
+    otherwise
+        -> day trading stays the least bad horizon, and the question is
+           closed on this signal
+
+**Stated in advance.** Carrying adds overnight financing (an equity long
+costs about 8% a year at Capital) and gap risk, which this file's older
+work found to carry most tail losses; it removes about half the spread
+per day held, since a position held two days pays one round trip instead
+of two. Which wins is the question.
+
 ### NO WEATHER VANE: THE BOOK LOSES ON EVERY KIND OF DAY, 2026-10-13
 
 Read the same evening, against the registration below, unchanged. 822
