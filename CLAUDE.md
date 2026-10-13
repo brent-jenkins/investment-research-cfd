@@ -523,6 +523,59 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### A WEATHER VANE: CAN THE GOOD DAYS BE SEEN COMING? PRE-REGISTERED, 2026-10-13
+
+The owner's idea: the book loses when the market does not do what the
+strategy expects, so is there a reading, known before the session, that
+says which days to trade and which to sit out? The account's own record
+says good and bad spells exist -- shorts made about +200 while the market
+fell on 2026-09-08 to 09-17 and the book lost on both sides once it went
+flat -- and every earlier test found the warning signs arrive after the
+event. Written down before any run.
+
+**What a filter can and cannot do.** It selects days; it cannot create an
+edge. The faithful backtest loses BEFORE cost in every year, so a filter
+passes only if it finds a subset of days, knowable in advance, that wins
+by more than the spread. And any rule that trades less loses less, so it
+is judged against picking the same number of days at random.
+
+    run        `replay.history_segments` + `run_segments`, the account-
+               faithful backtest that reproduces the live engine's entries,
+               2023-07-03 to 2026-10-09, weekly re-screens, shipped config
+    per day    net return (chained equity), and gross (intraday + gap) and
+               cost (spread, slippage, financing, fx) as fractions of the
+               previous day's equity, from the engine's own pnl frame
+    decision   yes or no per session, from data complete before the first
+               bar the account can open on (the 10:00 New York bar)
+
+    PRIMARY    trade only when the book's own GROSS return over the
+               previous 10 sessions summed above zero -- "it has been
+               working lately". Nothing else is primary.
+    secondary  reported, deciding nothing, each read as above against
+               below its own trailing 60-session median:
+                 market trendiness, efficiency ratio of the equal-weighted
+                   candidates over the previous 5 sessions' hourly closes
+                 VIX at the previous close (VIXCLS)
+                 cross-sectional dispersion of the candidates' previous
+                   session returns
+                 the equal-weighted market's move from the previous close
+                   to the 10:00 New York bar's open, in absolute size
+
+    pass       traded days net positive at t >= 2, positive in both
+               chronological halves of the traded days, AND their mean
+               net beats at least 95% of 10,000 random draws of the same
+               number of days -> build it as an engine setting and
+               measure it through the engine before anything is adopted
+    otherwise  the good days cannot be told apart in advance from this
+               data, and the idea is closed on it
+
+**Stated in advance.** The daily returns of a book that flattens every
+evening are close to independent of each other, which is what makes
+selecting days from one run fair; it is still a screen, so a pass buys an
+engine build, not an adoption. Headlines and client sentiment are NOT
+used: they have been recorded point-in-time only since 2026-09-27 and
+09-28, about twelve sessions.
+
 ### THE DAILY MAIL'S "PROBLEM" WAS THE PAUSE; FRIDAY'S WAS REAL AND UNSEEN, 2026-10-11
 
 The owner forwarded three daily verifications (10-08, 10-09, 10-10), each
