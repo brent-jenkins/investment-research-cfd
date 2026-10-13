@@ -523,6 +523,43 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### NO WEATHER VANE: THE BOOK LOSES ON EVERY KIND OF DAY, 2026-10-13
+
+Read the same evening, against the registration below, unchanged. 822
+sessions, 2023-07-03 to 2026-10-09, 171 universe segments; the whole book
+reproduces the recorded baseline (-0.527%/day against -0.52%):
+
+    whole book            net -0.527%/day t -7.87   gross -0.085% t -1.28
+                          cost -0.442%/day          days gross > 0: 46.1%
+
+    PRIMARY, own gross over the previous 10 sessions > 0
+      traded 326 days     net -0.606% t -5.46  gross -0.159%  H1 -0.676 H2 -0.536
+      skipped             net -0.471%          gross -0.032%
+      beats 16.1% of random same-size day sets      -> DOES NOT PASS
+
+    secondary, above / below each reading's trailing 60-session median
+                               above: net    gross     below: net    gross
+      market trendiness        -0.576%   -0.116%       -0.444%   -0.035%
+      VIX, previous close      -0.635%   -0.207%       -0.394%   +0.047%
+      dispersion               -0.537%   -0.106%       -0.482%   -0.044%
+      |opening move|           -0.512%   -0.072%       -0.510%   -0.080%
+
+**The "otherwise" branch: the good days cannot be told apart in advance
+from this data.** The primary points the WRONG way -- days after a good
+fortnight did worse than days after a bad one, below five draws in six of
+random selection -- and that inversion is a cut nobody registered, so it
+decides nothing either. No side of any reading is net positive; the best
+cell anywhere, calm-VIX days at +0.047% gross, is a tenth of the 0.442% a
+day the book pays in cost.
+
+**What it says that is new.** A filter selects days and the book's problem
+is not on any particular kind of day: it pays about 0.44% of equity a
+session in cost against a gross that is near zero whatever the weather.
+Sitting out half the days would halve the loss and leave the sign.
+
+`research/day_filter.py`, eight mutations checked (M2060-M2067), each a
+reading that sees the day it decides or a day sized on its own close.
+
 ### A WEATHER VANE: CAN THE GOOD DAYS BE SEEN COMING? PRE-REGISTERED, 2026-10-13
 
 The owner's idea: the book loses when the market does not do what the
