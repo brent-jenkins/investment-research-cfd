@@ -523,6 +523,34 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### HOLDING FOR DAYS LOSES LESS, AND IS NOT AN EDGE, 2026-10-13
+
+Read the same evening, against the registration below, unchanged. 822
+sessions, account-faithful, on repaired prices -- the repair moved the
+shipped baseline from -0.527% to -0.528% a day, nothing:
+
+    arm                  net/day    t     H1      H2     gross    cost   financing  vs A    t
+    A  flatten (shipped) -0.528  -7.88  -0.513  -0.543  -0.086  -0.442
+    B  carry, no stop    -0.299  -2.78  -0.241  -0.358  -0.071  -0.228   -0.013   +0.228 +2.31
+    B3 carry, stop 3d    -0.295  -2.65  -0.271  -0.319  -0.048  -0.247   -0.013   +0.233 +2.34
+    B5 carry, stop 5d    -0.341  -3.20  -0.291  -0.392  -0.109  -0.232   -0.013   +0.186 +1.91
+
+    by year, net    A  2023 -47.6%  2024 -72.9%  2025 -78.6%  2026 -63.7%
+                    B  2023  -2.0%  2024 -53.4%  2025 -64.8%  2026 -64.4%
+
+**The middle branch: holding loses less than day trading, at t 2.3 and in
+both halves, and is not an edge.** It halves the cost -- 0.442% a session
+to 0.228% -- because a position held for days pays one round trip instead
+of one a day, and Capital's overnight financing adds only 0.013% a
+session. What it does not change is the gross, -0.086% against -0.071%:
+the signal is no better at calling the side over days than over hours.
+2023 is the one year B's gross was positive (+0.245% a session), and it is
+net -2.0% there; every year since is a heavy loss either way.
+
+So the overnight costs this file feared are small, the spread saved is
+large, and neither matters while the side is a coin flip. Nothing is
+unpaused on it, as registered.
+
 ### CAPITAL'S HISTORY WAS NOT ALWAYS SPLIT-ADJUSTED, 2026-10-13
 
 Found by running a community "data scrub" checklist against the lake, on
