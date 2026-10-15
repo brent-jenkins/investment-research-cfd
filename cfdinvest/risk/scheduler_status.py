@@ -48,6 +48,7 @@ def compute_scheduler_status(
     scheduler_state: Mapping[str, Any] | None,
     *,
     stale_after_hours: float | None = None,
+    overrun_minutes: float | None = None,
     now: pd.Timestamp | None = None,
 ) -> dict[str, Any]:
     """Classify what the scheduler last did.
@@ -67,10 +68,17 @@ def compute_scheduler_status(
         than folded into it: a run that succeeded three days ago succeeded,
         and conflating that with failure would hide which of the two happened.
 
+    overrun_minutes:
+        How long a run may have been going before "started and not finished"
+        means it died. ``None`` reads ``MonitoringThresholds``. Without it a
+        run still in progress read as dead: on 2026-10-15 the monitor looked
+        at 19:16:42, eleven seconds into a run that finished at 19:16:45,
+        and mailed a RED saying the dashboard was stale.
+
     Returns
     -------
     dict
-        ``run_status``, the two timestamps, a ``message`` written to be read
+        ``run_status`` (``RUNNING`` while a run is within its allowance), the two timestamps, a ``message`` written to be read
         aloud, and the supporting figures.
     """
     state = dict(scheduler_state or {})
@@ -97,9 +105,20 @@ def compute_scheduler_status(
             "failures": int(state.get("failures", 0) or 0),
         }
 
-    # A start with no success after it is the case this file exists for.
-    incomplete = started is not None and (succeeded is None or succeeded < started)
-    status = "FAILED" if (incomplete or error) else "OK"
+    # A start with no success after it is the case this file exists for --
+    # once it has gone on longer than a run takes. Before that it is a run
+    # in progress, which is what the scheduler is doing a minute in every
+    # fifteen during a session.
+    if overrun_minutes is None:
+        from cfdinvest.monitoring.core import MonitoringThresholds
+
+        overrun_minutes = MonitoringThresholds().run_overrun_minutes
+    unfinished = started is not None and (succeeded is None or succeeded < started)
+    running = bool(
+        unfinished and (moment - started).total_seconds() <= 60.0 * overrun_minutes
+    )
+    incomplete = unfinished and not running
+    status = "FAILED" if (incomplete or error) else ("RUNNING" if running else "OK")
 
     if stale_after_hours is None:
         from cfdinvest.monitoring.core import MonitoringThresholds
@@ -134,7 +153,12 @@ def compute_scheduler_status(
         and trading_age > stale_after_hours
     )
 
-    if incomplete:
+    if running:
+        message = (
+            "A run is in progress; what is shown below is from the one "
+            "before it."
+        )
+    elif incomplete:
         message = (
             "Last run started but did not complete. What is shown below is "
             "from an earlier run."
@@ -161,6 +185,7 @@ def compute_scheduler_status(
         "trading_age_hours": trading_age,
         "stale": stale,
         "incomplete": incomplete,
+        "running": running,
         "runs": int(state.get("runs", 0) or 0),
         "failures": int(state.get("failures", 0) or 0),
         "last_duration": state.get("last_duration"),

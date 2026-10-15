@@ -190,6 +190,13 @@ class MonitoringThresholds:
     #: both. Four trading hours is roughly sixteen missed ticks.
     scheduler_stale_hours: float = 4.0
     missed_run_grace_minutes: float = 90.0
+    #: How long a run may have been going before "started and not finished"
+    #: is read as a run that died. A full intraday analysis takes 15-30
+    #: seconds (26s peak, 2026-09-11), so ten minutes is twenty times the
+    #: slowest and still catches a wedged run -- the 2026-09-11 stall sat
+    #: inside one call for fifty minutes -- within one monitoring cycle.
+    #: Without it a run in progress read as dead: a false RED on 2026-10-15.
+    run_overrun_minutes: float = 10.0
     #: How long the account may go unexamined DURING AN OPEN SESSION before
     #: it is a fault. Dealing passes run every 15 minutes, so 45 is three
     #: missed passes -- long enough that a slow pipeline or a restart does
@@ -666,7 +673,8 @@ def check_scheduler_health(
     from cfdinvest.risk.scheduler_status import compute_scheduler_status
 
     status = compute_scheduler_status(
-        scheduler_state, stale_after_hours=limits.scheduler_stale_hours, now=moment
+        scheduler_state, stale_after_hours=limits.scheduler_stale_hours,
+        overrun_minutes=limits.run_overrun_minutes, now=moment,
     )
     issues: list[MonitoringIssue] = []
 
@@ -735,7 +743,7 @@ def check_scheduler_health(
             )
         )
 
-    if status.get("failures") and status["run_status"] == "OK":
+    if status.get("failures") and status["run_status"] in ("OK", "RUNNING"):
         issues.append(
             MonitoringIssue(
                 type="scheduler",

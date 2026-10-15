@@ -523,6 +523,25 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### A RUN IN PROGRESS WAS REPORTED AS A RUN THAT DIED, 2026-10-15
+
+The owner forwarded a RED: "The last run started and never completed."
+Read off the box, it was false. The analysis run 20261015T191633Z started
+at 19:16:31 and finished at 19:16:45; the monitor read the state at
+19:16:42, saw a start with no success after it, and called it dead. Every
+other monitor check that day was green, and the box was healthy
+throughout.
+
+`compute_scheduler_status` -- the one owner, read by the mail and the
+dashboard alike -- had no allowance for a run still going. A run takes
+15-30 seconds and the monitor looks every thirty minutes, so about one
+check in sixty would land inside one: a false alarm on a schedule.
+**`MonitoringThresholds.run_overrun_minutes = 10`**: within it a start
+with no success is `RUNNING`, past it a run that died. Ten minutes is
+twenty times the slowest run and still catches a wedge like 2026-09-11's
+fifty minutes inside one monitoring cycle. A recorded error is never
+excused by being recent. M2090-M2093.
+
 ### HOLDING FOR DAYS LOSES LESS, AND IS NOT AN EDGE, 2026-10-13
 
 Read the same evening, against the registration below, unchanged. 822
