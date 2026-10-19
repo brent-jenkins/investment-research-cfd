@@ -523,6 +523,32 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE WEEKEND WAS REPORTED AS A STALLED DEALER, 2026-10-19
+
+The owner forwarded Monday's RED: "the account has not been examined for
+3935 minutes". Read off the box, false. The last pass of Friday ran at
+19:55; the monitor looked at 13:30:24 on Monday, twenty-four seconds after
+the bell, before the first pass of the session (13:32) could run. Every
+pass since has run on its five-minute timer.
+
+`check_dealing_liveness` measured the gap in WALL-CLOCK minutes, so every
+weekend and every overnight read as a stall the moment the market opened:
+a weekly alarm clock. The lake and scheduler checks were moved to trading
+time weeks ago and this one was left behind. It now counts **open-market
+minutes** (`trading_days_between` x the session length); a dealer that
+stalls mid-session accrues them one for one, so the 2026-09-09 fault is
+caught exactly as before. The message says "minutes of open market" and
+the details carry both figures.
+
+**A second fault, found by a surviving mutation rather than by reading.**
+The first version measured through `trading_age_days`, whose fallback on
+an unreadable calendar is CALENDAR DAYS -- multiplied by a 6.5-hour session
+that reads a two-hour stall as about 32 minutes, the unsafe direction. It
+now calls the calendar directly and falls back to the wall clock, which
+over-reports. M2100-M2103. One existing test compared two passes stamped
+before the bell; in open-market time those are equally old, so its stamps
+moved inside the session.
+
 ### A RUN IN PROGRESS WAS REPORTED AS A RUN THAT DIED, 2026-10-15
 
 The owner forwarded a RED: "The last run started and never completed."

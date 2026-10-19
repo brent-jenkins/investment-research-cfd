@@ -1419,13 +1419,37 @@ def check_dealing_liveness(
             )
         ]
 
-    age = (moment - stamp).total_seconds() / 60.0
+    # Measured in OPEN-MARKET minutes, not wall-clock ones. Friday's last
+    # pass at 19:55 is 3,935 wall-clock minutes old at Monday's bell, and
+    # measuring it that way mailed a critical 24 seconds into the session
+    # on 2026-10-19 -- every Monday, and every morning after a quiet
+    # evening. A dealer stalled mid-session still accrues open minutes one
+    # for one, so the fault this check exists for is caught exactly as
+    # before. The lake and scheduler checks made the same change; this one
+    # had been left on the wall clock. Calendar unreadable -> wall clock,
+    # the direction that over-reports. Deliberately NOT through
+    # `trading_age_days`: its fallback is calendar DAYS, which multiplied by
+    # a 6.5-hour session would read a two-hour stall as half an hour.
+    wall = (moment - stamp).total_seconds() / 60.0
+    try:
+        from cfdinvest.schedule.market_calendar import (
+            SESSION_HOURS, trading_days_between,
+        )
+
+        age = float(trading_days_between(stamp, moment)) * SESSION_HOURS * 60.0
+    except Exception as error:  # noqa: BLE001 - a calendar fault is not an outage
+        logger.warning(
+            "Could not measure open-market minutes (%s); using the wall clock, "
+            "which over-reports across a closed market", error,
+        )
+        age = wall
     if age <= limits.dealing_stale_minutes:
         return []
 
     details = {
         "last_dealing_at": str(stamp),
         "age_minutes": round(age, 1),
+        "wall_clock_minutes": round(wall, 1),
         "threshold_minutes": limits.dealing_stale_minutes,
     }
     blocked_at = _utc(last_blocked[0]) if last_blocked else None
@@ -1440,7 +1464,8 @@ def check_dealing_liveness(
                 severity="critical",
                 message=(
                     f"The market is open and the dealer is running, but it has "
-                    f"not been able to read the account for {age:.0f} minutes: "
+                    f"not been able to read the account for {age:.0f} minutes "
+                    f"of open market: "
                     f"{reason}."
                 ),
                 timestamp=moment,
@@ -1463,7 +1488,7 @@ def check_dealing_liveness(
             severity="critical",
             message=(
                 f"The market is open and the account has not been examined "
-                f"for {age:.0f} minutes."
+                f"for {age:.0f} minutes of open market."
             ),
             timestamp=moment,
             details=details,

@@ -126,8 +126,10 @@ def test_the_age_grows_with_the_gap():
     Subtracting the wrong way, or comparing the reading against itself,
     yields an age that is constant or negative and a check that never fires.
     """
-    older = only(check_dealing_liveness("2026-09-09 12:00:00+00:00", True, now=NOW))
-    newer = only(check_dealing_liveness("2026-09-09 13:00:00+00:00", True, now=NOW))
+    # Both inside the session: the age is measured in open-market minutes
+    # (2026-10-19), so two readings before the bell are equally old.
+    older = only(check_dealing_liveness("2026-09-08 18:00:00+00:00", True, now=NOW))
+    newer = only(check_dealing_liveness("2026-09-09 13:31:00+00:00", True, now=NOW))
 
     assert older.details["age_minutes"] > newer.details["age_minutes"], (
         "an older reading must report a larger age"
@@ -194,3 +196,46 @@ def test_the_dealer_writes_what_the_monitor_reads(tmp_path, monkeypatch):
     live = [line.split("#", 1)[0] for line in inspect.getsource(app._command_trade_capital).splitlines()]
     calls = [line for line in live if "_record_blocked(" in line]
     assert any("balance" in line for line in calls) and any("positions" in line for line in calls), calls
+
+
+def test_the_weekend_is_not_a_stall():
+    """M2100: the false RED of 2026-10-19, at its real timings.
+
+    The last pass of Friday 2026-10-16 ran at 19:55; the monitor looked at
+    13:30:24 on Monday, twenty-four seconds after the bell, and mailed a
+    critical saying the account had gone 3,935 minutes unexamined. Counted
+    in open-market minutes it had gone about five.
+    """
+    now = pd.Timestamp("2026-10-19 13:30:24+00:00")
+    assert check_dealing_liveness("2026-10-16 19:55:35+00:00", True, now=now) == []
+
+
+def test_a_stall_on_monday_is_still_caught():
+    """M2101: the same Friday pass, with Monday's dealer never starting.
+
+    By 14:30 the session has been open an hour and nothing has looked at
+    the account: that is the 2026-09-09 fault, and it must still be loud.
+    """
+    now = pd.Timestamp("2026-10-19 14:30:00+00:00")
+    issue = only(check_dealing_liveness("2026-10-16 19:55:35+00:00", True, now=now))
+    assert issue.severity == "critical"
+    assert 60 <= issue.details["age_minutes"] <= 70
+    assert issue.details["wall_clock_minutes"] > 3900
+
+
+def test_an_unreadable_calendar_falls_back_to_the_wall_clock(monkeypatch):
+    """M2102: the fallback must over-report, never under-report.
+
+    A two-hour stall mid-session with the calendar unreadable must still be
+    reported -- the wall clock says 120 minutes, and a fallback that read
+    calendar days as session-days would have said about 32.
+    """
+    from cfdinvest.schedule import market_calendar
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("calendar unavailable")
+
+    monkeypatch.setattr(market_calendar, "trading_days_between", broken)
+    now = pd.Timestamp("2026-10-19 16:00:00+00:00")
+    issue = only(check_dealing_liveness("2026-10-19 14:00:00+00:00", True, now=now))
+    assert issue.details["age_minutes"] == pytest.approx(120.0, abs=0.5)
