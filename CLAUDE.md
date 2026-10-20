@@ -523,6 +523,28 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### ONE CORRECT REFUSAL WAS MAILED AS A COLLAPSE, 2026-10-20
+
+Monday's daily verification read "PROBLEM last look: refusal rate 100.0%
+... 1 of 1 instrument-days blocked". Read off the box, the check was
+right and the alarm was not. One name was considered all day: MPC, a
+fresh long at 13:00 (engine 0.769, size 0.035, already
+`high_volatility @risk_off`). From 14:17 to 14:57 the last look read it
+flat, `below_min_size|high_volatility @risk_off`, on the 14:00 bar, and
+**the engine's own book went to zero on MPC at 14:00** in every later run.
+The check reached the engine's verdict an hour early, which is its job --
+not a repeat of 2026-10-08, where the two disagreed about a regime.
+
+The fault was the verdict: a rate on a sample of one, under a project rule
+that a number below its floor makes no claim. **`daily.MIN_REFUSAL_SAMPLE
+= 5`**: below it the figures stay in the detail and the finding is ok.
+At five, a gate refusing three in ten reads above 60% about one day in
+twenty; 2026-10-08's real fault was nine of nine and still fires. The
+`not re-checked` branch reads a reason, not a rate, and is not floored.
+M2110-M2112. **A cost, stated:** a collapse on a day with fewer than five
+candidates is no longer flagged by the rate; the snapshots in
+`persist.last_look` still record every fresh refusal 0.25 below the engine.
+
 ### THE WEEKEND WAS REPORTED AS A STALLED DEALER, 2026-10-19
 
 The owner forwarded Monday's RED: "the account has not been examined for

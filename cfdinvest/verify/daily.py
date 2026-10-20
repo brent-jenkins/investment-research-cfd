@@ -47,6 +47,12 @@ UNCHECKED = "unchecked"
 #: colour: this is read in an email and in a terminal.
 MARKS = {OK: "  ok  ", PROBLEM: "PROBLEM", UNCHECKED: "  ??  "}
 
+#: Instrument-days the last look must have considered before its refusal
+#: RATE is read as a verdict. At five, a gate that truly refuses three in ten
+#: shows above 60% about one day in twenty; at one, every single correct
+#: refusal is a 100% alarm. 2026-10-08's real fault was nine of nine.
+MIN_REFUSAL_SAMPLE = 5
+
 
 @dataclasses.dataclass(frozen=True)
 class Finding:
@@ -274,6 +280,17 @@ def _check_refusals(config, account, day=None) -> Finding:
         return Finding("last look", PROBLEM,
                        "'not re-checked' dominates -- the check is failing to "
                        f"form an opinion, not refusing trades. {detail}")
+
+    # A rate needs a sample. On 2026-10-19 one name was considered, the
+    # check refused it, and the engine's own book went flat on it at the
+    # next bar -- a correct refusal mailed as "refusing nearly everything".
+    # Below the floor the figures stay in the detail and no claim is made.
+    # The broken-check branch above is deliberately NOT floored: it reads a
+    # reason, not a rate.
+    if considered < MIN_REFUSAL_SAMPLE:
+        return Finding("last look", OK,
+                       f"too few to judge a rate (fewer than "
+                       f"{MIN_REFUSAL_SAMPLE} instrument-days). {detail}")
 
     # No baseline is quoted. The 20.7% this used to cite was measured on the
     # 0.35 gate, and CLAUDE.md forbids comparing it with the 0.75 gate. What
