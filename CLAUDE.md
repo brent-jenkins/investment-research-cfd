@@ -523,6 +523,28 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### THE KEY'S EXPIRY WARNING NEVER REACHED AN INBOX, 2026-10-20
+
+Asked whether the Capital account could lapse unattended. Capital API keys
+are valid a year by default; ours expires **2027-08-27**, recorded as
+`CFD_CAPITAL_KEY_EXPIRES`. `check_credential_expiry` warned seven days
+ahead -- and monitoring mails only on RED, so that warning reached the
+dashboard and never an inbox.
+
+On the owner's decision: **`KEY_EXPIRY_WARNING_DAYS = 28`**, and the daily
+verification carries a `credentials` line reading the same check. It
+mails WEEKLY through the window (28, 21 and 14 days left) and DAILY for
+the last `KEY_EXPIRY_DAILY_DAYS = 7`; on the days between it reports ok
+with the reading, so nothing is hidden, only not mailed. An unrecorded
+date is unchecked, never ok. M2120-M2125.
+
+**Demo inactivity is unconfirmed.** Capital publishes nothing found on
+whether an API-only demo with no trades is archived; one third-party
+source says it stays open "as long as you keep trading". No trade since
+2026-10-01. The owner's plan: Capital would warn by email first, and then
+one minimum-size open and close THROUGH THE DEALING PATH keeps it active
+for a spread -- not an unpause, and not an order placed round the app.
+
 ### ONE CORRECT REFUSAL WAS MAILED AS A COLLAPSE, 2026-10-20
 
 Monday's daily verification read "PROBLEM last look: refusal rate 100.0%

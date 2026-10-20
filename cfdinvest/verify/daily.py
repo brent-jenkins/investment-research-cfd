@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -355,6 +356,49 @@ def _check_flat_at_close(config, account) -> Finding:
     )
 
 
+def _check_credentials(now=None) -> Finding:
+    """Is the broker key close to lapsing?
+
+    Monitoring already asks this, through ``check_credential_expiry``, and
+    mails only on RED -- so a key inside its warning window reached the
+    dashboard and never an inbox. This carries the same answer to the daily
+    mail: one owner for the rule and the window, read here, not restated.
+    """
+    import os
+
+    import pandas as pd
+
+    from cfdinvest.monitoring import core
+
+    expires = os.environ.get("CFD_CAPITAL_KEY_EXPIRES")
+    issues = core.check_credential_expiry(expires, now=now)
+    if not issues:
+        moment = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+        expiry = pd.Timestamp(str(expires).strip())
+        if expiry.tz is None:
+            expiry = expiry.tz_localize("UTC")
+        days = (expiry - moment).total_seconds() / 86_400.0
+        return Finding("credentials", OK,
+                       f"Capital API key expires {expiry:%Y-%m-%d}, "
+                       f"in {days:.0f} days")
+    issue = issues[0]
+    # An unrecorded or unreadable date carries no days_remaining: that is not
+    # a key about to lapse, it is a lifetime nobody wrote down.
+    if "days_remaining" not in (issue.details or {}):
+        return Finding("credentials", UNCHECKED, issue.message)
+    # The owner's cadence: weekly through the window, daily in its last week.
+    # A PROBLEM is what makes the daily mail send, so on the days between the
+    # weekly reminders the same reading is reported ok -- still in the
+    # report, and still on the dashboard, just not mailed.
+    left = math.ceil(float(issue.details["days_remaining"]))
+    reminder = (left <= core.KEY_EXPIRY_DAILY_DAYS
+                or (left - core.KEY_EXPIRY_DAILY_DAYS) % 7 == 0)
+    text = f"{issue.message} {issue.remedy or ''}".strip()
+    if reminder:
+        return Finding("credentials", PROBLEM, text)
+    return Finding("credentials", OK, f"{text} (weekly reminder; not mailed today)")
+
+
 def verify_day(config=None, account: str | None = None, day=None) -> DayReport:
     """Check the day end to end and report every answer, including absent ones.
 
@@ -385,6 +429,7 @@ def verify_day(config=None, account: str | None = None, day=None) -> DayReport:
               lambda: _check_account_matches_record(config, account)),
         _safe("flat at the close",
               lambda: _check_flat_at_close(config, account)),
+        _safe("credentials", _check_credentials),
         # Last, and never a PROBLEM: it measures rather than guards. A day of
         # poor signals is not a fault, and a verification that shouts on an
         # ordinary bad session is one nobody reads by the end of the month.

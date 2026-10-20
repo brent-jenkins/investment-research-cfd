@@ -435,10 +435,18 @@ def _unreadable(kind: str, what: str, why: str = "") -> MonitoringIssue:
 # --------------------------------------------------------------------------- #
 #: How long before a broker credential expires the system starts saying so.
 #:
-#: Seven days, because a key is replaced by a person logging into a web
-#: interface with two-factor authentication, and that is not a thing that
-#: happens at 03:00 on the morning it stops working.
-KEY_EXPIRY_WARNING_DAYS = 7
+#: Four weeks, on the owner's decision 2026-10-20 (it was seven). A key is
+#: replaced by a person logging into a web interface with two-factor
+#: authentication, which is not a thing that happens at 03:00 on the morning
+#: it stops working -- and a week is short notice for someone away for one.
+#:
+#: Monitoring mails only on RED, so this warning alone reaches the dashboard
+#: and never an inbox. The daily verification carries it to the inbox, once a
+#: WEEK until the last seven days and then every day (see
+#: KEY_EXPIRY_DAILY_DAYS), by reading the same function and these constants.
+KEY_EXPIRY_WARNING_DAYS = 28
+#: Inside this many days the daily mail speaks every day; before it, weekly.
+KEY_EXPIRY_DAILY_DAYS = 7
 
 
 def check_credential_expiry(
