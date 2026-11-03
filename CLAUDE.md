@@ -523,6 +523,65 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### SIGNED ORDER FLOW AGAINST THE REST OF THE DAY: PRE-REGISTERED, 2026-11-03
+
+The owner opened a Databento account ($125 of free credit). Every direction
+test here has read mid-quote prices, and every one sat at a coin flip; the
+input this file has named since 2026-09-27 as missing is SIGNED ORDER FLOW
+-- whether trades hit the bid or lifted the offer -- because Capital's
+volume is a tick count. Databento's trade records carry the aggressor
+side. Written down before any order-flow data was fetched or priced.
+
+**The question.** Does the opening half-hour's aggressor imbalance call
+the direction of a loud name from 10:00 New York to the last bar, net of
+Capital's spread -- and does it add anything the opening half-hour's PRICE
+move does not, which has already been measured as nothing (2026-09-27)?
+
+    data       Databento trades with aggressor side, for each session's
+               loudest fifth of the 100 candidates ONLY (trailing
+               20-session realised volatility to the previous close, the
+               definition every recent test used), 09:30-10:00 New York.
+               Only those name-windows are fetched, which is what keeps it
+               inside the credit. Dataset and span are fixed from the cost
+               quote alone, before any trade is read, and recorded here:
+               widest venue coverage the credit buys, then the longest span
+               back from 2026-10-30. Trades the feed marks with no
+               aggressor are dropped and their share reported.
+    reading    imbalance = (buyer-initiated - seller-initiated shares) /
+               (all signed shares), 09:30-10:00, per name per session
+    side       the sign of the imbalance; zero is no call
+    outcome    Capital hourly, the 10:00 bar's open to the last bar's open,
+               signed by the side, net of each end's measured spread_bp --
+               the account's window and costs, as in every recent test
+    statistic  per-session mean over the calls, t across sessions
+    control    the sign of the same names' 09:30-10:00 PRICE move, same
+               days, same outcome and cost; and imbalance signs shuffled
+               within each session
+
+    pass   net positive at t >= 2, positive in both chronological halves,
+           AND beating the price-move control paired by session at t >= 2
+             -> a real direction source: build it as an engine input and
+                measure it through the engine; trading it would also need
+                a LIVE order-flow feed, which is a cost decision for the
+                owner, and nothing is unpaused on a backtest
+    gross positive, net negative, or passing without beating the control
+             -> real or redundant, and not tradeable on Capital's spreads
+    otherwise
+             -> opening order flow does not call the rest of the day on
+                these names; the lead is closed
+
+**Secondary, deciding nothing:** the imbalance's strongest third alone;
+all 100 names rather than the loudest fifth (only if the credit allows
+after the primary); the hit rate.
+
+**Stated in advance.** One historical run, no forward collection, no
+futility look -- it either passes or it does not. Order flow is
+documented strongest over minutes and contested at hours, so the most
+likely branch is the last. The loudest names are where a small edge is
+worth most against a fixed spread, which is why the test is there. No key
+or credential enters the repository: the key is read from
+`/etc/cfdinvest/env` as `DATABENTO_API_KEY`.
+
 ### THE KEY'S EXPIRY WARNING NEVER REACHED AN INBOX, 2026-10-20
 
 Asked whether the Capital account could lapse unattended. Capital API keys
