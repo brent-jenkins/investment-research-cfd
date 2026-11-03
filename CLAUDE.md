@@ -585,6 +585,23 @@ the loudest fifth is chosen from the panel rather than by the fetch.
 Unstated by Databento's page: whether off-exchange (TRF) trades are in it;
 the share of trades with no aggressor is reported, as registered.
 
+**AMENDED the same day, before any outcome was read: XNAS.ITCH, not
+EQUS.MINI.** "Widest coverage" assumed the aggressor side is filled in.
+Two minutes of MSFT just after 09:30, the only trades read:
+
+    EQUS.MINI    B 571 sh   A 281 sh    N 19,259 sh   signed ~4% of volume
+    DBEQ.BASIC   no A or B              N 19,176 sh   signed 0%
+    XNAS.ITCH    B 17,521   A 15,403    N 27,316      signed ~55%
+
+A test on 4% of the volume measures the unmarked remainder's absence, so
+the consolidated feed cannot answer the question. **XNAS.ITCH, Nasdaq's
+own feed, 2023-03-28 to 2026-10-30, each session's loudest fifth ONLY**
+-- the primary exactly as registered, about $70-110 of the credit. The
+all-100 secondary is dropped (it decides nothing and would exceed the
+credit). One venue, not the market: what is tested is Nasdaq's signed
+flow, and a null says nothing about consolidated flow, which this credit
+cannot buy signed.
+
 **Secondary, deciding nothing:** the imbalance's strongest third alone;
 all 100 names rather than the loudest fifth (only if the credit allows
 after the primary); the hit rate.
