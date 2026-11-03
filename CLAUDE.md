@@ -523,6 +523,49 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### A SMALL BOOK IN QUIET, MIDDLING OR LOUD NAMES: PRE-REGISTERED, 2026-11-03
+
+The owner's question, after the order-flow null: keep the strategy as it
+is and change only what it trades -- 10-20 names, spread across sectors,
+drawn from the least volatile, the middling or the most volatile -- and
+see whether any band wins. The loud end is already measured (screen 5 to
+50, 2026-09-27: less bad as it narrows, never positive net); the quiet
+and middle bands have never been run through the account-faithful
+backtest. Written down before any run.
+
+    run        `replay.segment_config` per weekly segment, the shipped
+               configuration, flatten and all, on repaired prices, Capital's
+               spreads and overnight rates, 2023-07-03 to 2026-10-30
+    bands      at each weekly re-screen (Sunday), the screen's OWN
+               volatility reading -- `rank_candidates` as of that date,
+               annualised daily-return volatility over its 120-session
+               lookback, nothing after the date -- splits the ranked
+               candidates into thirds: LOW, MID, HIGH
+    names      within each third, the screen's own score order, 15 names,
+               at most 3 per sector (`select_within_sector_cap`); a band
+               that cannot fill 15 trades what it has, and its fill is
+               reported
+    reading    per session net, gross and cost as fractions of the day's
+               opening equity (`day_filter.day_rows`)
+
+    pass, per band   net positive at t >= 2.4 over sessions (raised from 2
+                     for three looks) AND positive in both chronological
+                     halves -> a configuration worth building for the demo
+                     account, measured through the engine first; nothing is
+                     unpaused on a backtest
+    otherwise        volatility banding of a small book is closed on this
+                     signal
+
+    secondary, deciding nothing: gross and cost by band, cost as a share of
+    |gross|, net by year, mean names held, the paired difference between
+    bands
+
+**Stated in advance.** Expected: all three lose net; the quiet band loses
+most, because a quiet name moves about half as far for the same spread
+(0.75% against 1.53%, 2026-09-26), and the gross is near zero on every
+kind of day already measured. A null says the problem is the signal, not
+which names it is pointed at.
+
 ### OPENING ORDER FLOW DOES NOT CALL THE DAY, 2026-11-03
 
 Read the same evening, against the registration below, unchanged. XNAS.ITCH,
