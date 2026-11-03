@@ -523,6 +523,29 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### AN EARLY FUTILITY LOOK AT THE THREE EXPERIMENTS, 2026-11-03
+
+On the owner's question while deciding whether to end the project. A
+futility look may stop an experiment early and can adopt nothing, so it
+is permitted before 2026-12-28; it reads only the registered statistic,
+the signed gross mean on the loudest fifth. 26 sessions, 2026-09-28 to
+2026-11-02, `research/forward_reads.py` (M2150-M2153 checked):
+
+    experiment          calls  sessions  gross     t     net      t     hit   long
+    headlines             475     26    -0.168%  -0.85  -0.380%  -1.92  47.8%  90%
+    headline events       408     26    -0.011%  -0.09  -0.222%  -1.81  46.1%  82%
+    client sentiment      100      5    +0.088%  +0.31  -0.135%  -0.49  47.0%  43%
+
+**Headlines and headline events read at or below zero: the registered
+futility branch says both stop.** Client sentiment reads above zero on
+FIVE sessions -- its 20-session baseline consumed the rest -- which
+decides nothing either way; under its registration it runs on. Nothing
+is stopped or deleted by this entry: that is the owner's call, taken
+with the decision about the project as a whole.
+
+Also seen: the median round trip on these loud names over the window is
+0.215%, against 0.125% over 2023-2026. Not investigated.
+
 ### NO VOLATILITY BAND WINS: EVERY ONE LOSES BEFORE COST, 2026-11-03
 
 Read the same evening, against the registration below, unchanged. 837
