@@ -523,6 +523,44 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### NO VOLATILITY BAND WINS: EVERY ONE LOSES BEFORE COST, 2026-11-03
+
+Read the same evening, against the registration below, unchanged. 837
+sessions, 2023-07-03 to 2026-10-30, 174 weekly segments a band:
+
+    band   names  held   net/day    t     H1      H2     gross    t     cost    CAGR   maxDD
+    low     15.0  0.90   -0.173%  -5.56  -0.137  -0.208  -0.041  -1.33  -0.132  -36.0%  -77.5%
+    mid     15.0  1.13   -0.215%  -7.23  -0.173  -0.257  -0.034  -1.19  -0.181  -42.4%  -84.3%
+    high    11.3  0.88   -0.115%  -3.06  -0.159  -0.070  +0.005  +0.14  -0.120  -26.2%  -63.6%
+
+    by year, net   low   2023 -12.5%  2024 -31.5%  2025 -38.0%  2026 -38.9%
+                   mid   2023 -22.3%  2024 -32.3%  2025 -46.8%  2026 -42.9%
+                   high  2023 -23.2%  2024 -32.2%  2025 -20.4%  2026 -12.0%
+
+    paired, net/day   high - mid +0.100% t +2.50   high - low +0.058% t +1.33
+                      mid - low  -0.042% t -1.27
+
+**The "otherwise" branch: volatility banding of a small book is closed on
+this signal.** No band is positive before cost, let alone after it; every
+band loses in every year. The loud band loses least, as the screen of
+2026-09-27 already found, because its gross is zero rather than negative --
+and zero gross is not an edge. High beating mid at t 2.5 is a secondary
+and decides nothing: it is "loses less".
+
+**My stated prediction was half wrong**: the quiet band did NOT lose most;
+the middle did. The mechanism I gave (a quiet name moves half as far for
+the same spread) is real in the cost column -- mid pays the most, low
+less, since quiet names are also the cheapest to deal -- but the ordering
+of the losses is not what I wrote down.
+
+**Also visible, and worth knowing.** On 15 names at the 0.75 gate the
+book holds about ONE position on an average bar. The gate selects so few
+signals that a small universe is mostly flat; what it trades, it trades
+at a coin flip. A null here says, as registered, that the problem is the
+signal rather than the names it is pointed at.
+
+`research/vol_bands.py`, six mutations checked (M2140-M2145).
+
 ### A SMALL BOOK IN QUIET, MIDDLING OR LOUD NAMES: PRE-REGISTERED, 2026-11-03
 
 The owner's question, after the order-flow null: keep the strategy as it
