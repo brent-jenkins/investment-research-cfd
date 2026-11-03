@@ -570,6 +570,21 @@ move does not, which has already been measured as nothing (2026-09-27)?
              -> opening order flow does not call the rest of the day on
                 these names; the lead is closed
 
+**Fixed from the cost quote, 2026-11-03, before any trade was read.**
+Databento's free metadata calls only (no credit spent):
+
+    dataset      venues                                    from        one session, 09:30-10:00
+    EQUS.MINI    consolidated, "ATS and RegNMS venues"     2023-03-28  $0.013-0.031 (20 names), $0.044 (all 100)
+    DBEQ.BASIC   four smaller exchanges                    2023-03-28  $0.031-0.068 (20 names)
+    XNAS.ITCH    Nasdaq alone                              2018-04-30  $0.075-0.124 (20 names)
+
+**EQUS.MINI, its whole range, 2023-03-28 to 2026-10-30, all 100
+candidates** -- widest coverage, and the full span costs roughly $25-45,
+inside the credit, so the secondary all-names reading is affordable and
+the loudest fifth is chosen from the panel rather than by the fetch.
+Unstated by Databento's page: whether off-exchange (TRF) trades are in it;
+the share of trades with no aggressor is reported, as registered.
+
 **Secondary, deciding nothing:** the imbalance's strongest third alone;
 all 100 names rather than the loudest fifth (only if the credit allows
 after the primary); the hit rate.
