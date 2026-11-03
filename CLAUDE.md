@@ -523,6 +523,49 @@ uses the shared root, exactly as before it existed. See
 process and alerts. Exactly one of them places orders, and **all three are
 `Type=oneshot` on timers** — nothing is resident, so nothing accumulates.
 
+### OPENING ORDER FLOW DOES NOT CALL THE DAY, 2026-11-03
+
+Read the same evening, against the registration below, unchanged. XNAS.ITCH,
+896 sessions, 2023-03-28 to 2026-10-30, each session's loudest fifth:
+17,878 name-days, one with no signed trade. $51.06 of the credit.
+
+    data checks, read before any outcome
+      unsigned share of Nasdaq volume, 09:30-10:00     43.8%
+      rank corr, imbalance against the window's own
+        price move (the sign convention)               +0.353
+
+    arm                  calls   gross    t    H1      H2      net      t     hit
+    PRIMARY, flow sign  17,877  +0.022  1.55  +0.017  +0.027  -0.141  -9.71  50.5%
+    CONTROL price move  17,840  +0.047  2.14  +0.034  +0.059  -0.117  -5.35  51.1%
+    CONTROL shuffled    17,877  +0.024  1.77  +0.040  +0.009  -0.139 -10.20  50.9%
+    strongest third      5,960  -0.001 -0.05  -0.011  +0.008  -0.168  -6.21  49.7%
+
+    flow minus price, paired by session   -0.024  t -1.15  (H1 -0.017, H2 -0.031)
+    (% a call; median round trip 0.126%; primary net negative in every year)
+
+**The "otherwise" branch: opening order flow does not call the rest of the
+day on these names, and the lead is closed.** The flow's sign scores the
+same as the same signs shuffled within each session (+0.022 against
++0.024 gross), so what little gross there is comes from the day's mix of
+sides, not from which name was bought. It does WORSE than the opening
+price move it was meant to beat, and the strongest third is a coin flip.
+Net it loses the spread, as every direction reading here has.
+
+**The price-move control reading t 2.14 gross decides nothing**: it is a
+control, it is a quarter of one round trip, and it is net -0.117% at
+t -5.35. Nothing here reopens the 2026-09-27 result.
+
+**What a null here covers, and what it does not.** It is Nasdaq's signed
+flow, 56% of the window's volume on that venue, and the 09:30-10:00
+window against the 10:00-to-close move. It says nothing about
+consolidated flow, which this credit could not buy signed, and nothing
+about flow over minutes, where the literature finds it strongest. Seventh
+independent route to a coin flip on the side.
+
+`research/order_flow.py`; the per-day flows stay in
+`research/order_flow/days` under the account root, decide nothing further
+and may be deleted.
+
 ### SIGNED ORDER FLOW AGAINST THE REST OF THE DAY: PRE-REGISTERED, 2026-11-03
 
 The owner opened a Databento account ($125 of free credit). Every direction
