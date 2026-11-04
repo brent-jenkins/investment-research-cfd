@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -47,6 +48,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "FILINGS_DIR",
     "USER_AGENT",
+    "user_agent",
     "fetch_filings",
     "store_filings",
     "load_filings",
@@ -58,7 +60,22 @@ SCHEMA_VERSION = 1
 
 #: The SEC requires a contact address in the User-Agent and rate-limits to
 #: ten requests a second. Both are conditions of use rather than etiquette.
-USER_AGENT = "cfdinvest research <contact>"
+#: The address is read from the environment rather than written here, so the
+#: repository carries nobody's email; with none set, fetching is refused
+#: rather than sent anonymously, which the SEC would block anyway.
+CONTACT_ENV = "CFD_SEC_CONTACT"
+USER_AGENT = "cfdinvest research"
+
+
+def user_agent() -> str:
+    """The User-Agent with the operator's contact address. Raises without one."""
+    contact = os.environ.get(CONTACT_ENV, "").strip()
+    if not contact:
+        raise RuntimeError(
+            f"set {CONTACT_ENV} to a contact email address: the SEC requires "
+            "one in the User-Agent of every EDGAR request"
+        )
+    return f"{USER_AGENT} {contact}"
 
 #: Items that are attached as a formality and say nothing about the event:
 #: exhibits, a shareholder vote, a bylaw amendment. Filings carrying only
@@ -69,7 +86,7 @@ FORMAL_ITEMS = frozenset({"9.01", "5.07", "5.03"})
 def _get(url: str) -> bytes:
     import urllib.request
 
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    request = urllib.request.Request(url, headers={"User-Agent": user_agent()})
     return urllib.request.urlopen(request, timeout=30).read()
 
 
