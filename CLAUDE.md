@@ -264,14 +264,22 @@ correctly rather than to lookalike listings.
 
 ### Before every commit
 
-`.env` holds a live FRED API key and is git-ignored. Verify all three:
+`.env` holds secrets when it exists and is git-ignored; `.env.example` is
+the committed template and holds placeholders only. Verify all three:
 
 ```bash
 git check-ignore -v .env                          # must be ignored
 git diff --cached --name-only | grep -x '\.env'   # must find nothing
-KEY=$(grep -oE '[A-Za-z0-9]{32,}' .env | head -1)
-git grep -I --cached -l -F -- "$KEY"              # must find nothing
+if [ -f .env ]; then
+  KEY=$(grep -oE '[A-Za-z0-9]{32,}' .env | head -1)
+  [ -n "$KEY" ] && git grep -I --cached -l -F -- "$KEY"   # must find nothing
+fi
 ```
+
+The guard matters. With no `.env` the key is empty, and searching for an
+empty string matches every file in the index -- which reads as a leak in
+every file rather than as nothing to check. It did exactly that on
+2026-11-04, after the local `.env` had been removed.
 
 The owner's Trading 212 basic-auth password has also been shared in
 conversation. It is not in the repository and must not enter it — the Caddy
@@ -536,7 +544,9 @@ deleted; the VM and its resources deleted, so the
 box above no longer exists; the Capital.com and Databento accounts
 closed; the Anthropic API key deleted; the Brevo (SMTP) account closed;
 the GitHub webhooks deleted. The repository is kept for reference. The
-only credential not revoked is the free FRED key in the local `.env`.
+free FRED key was the only credential not revoked; the local `.env` that
+held it has since been removed, so no credential remains on this machine
+either. `.env.example` is the template a restart copies from.
 
 **What was deliberately NOT done.** The experiments' code
 (`ingestion/news_rss.py`, `persist/headlines.py`,
