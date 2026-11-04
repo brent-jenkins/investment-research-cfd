@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "cfdinvest"
 version = "0.1.0"
 description = "Multi-asset CFD backtesting engine"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 # PINNED, not floors, since 2026-09-12.
 #

@@ -5,6 +5,9 @@
 > edge net of Capital's costs, and no tested alternative found one. See
 > "THE PROJECT IS CLOSED" in `CLAUDE.md`. Everything below describes the
 > system as it was while running.
+>
+> **What it found** is summarised in [FINDINGS.md](FINDINGS.md). The code is
+> MIT-licensed; see [LICENSE](LICENSE).
 
 A multi-asset CFD backtesting engine, an automated dealer on a Capital.com
 demo account, and a manual-trading assistant. It models strategies, measures
@@ -84,7 +87,7 @@ answer, which no simulation of them can be.
 ## Running it
 
 ```bash
-pytest                                  # ~2,830 tests, offline, about two minutes
+pytest                                  # 3,923 tests, offline
 pytest -m live                          # hits the real FRED API; excluded by default
 pytest --cov=cfdinvest                  # needs the dev extra
 
@@ -307,7 +310,7 @@ Secrets live in `/etc/cfdinvest/env` and never in the repository.
 
 ## Testing
 
-Tests are the deliverable, not a formality. **3,528 of them**, offline.
+Tests are the deliverable, not a formality. **3,923 of them**, offline.
 Coverage is **85%**, measured 2026-09-11.
 
 - **Mutation-check every suite.** Reintroduce each property as a bug and
