@@ -122,7 +122,7 @@ def test_the_bar_in_progress_is_updated_rather_than_appended():
     """The bar the lake is already building is the bar in progress.
 
     Appending a second bar at the same session point gives it zero range by
-    construction, which is what collapsed strong signals before ab182c6.
+    construction, which is what collapsed strong signals before 4ac0cbe.
     """
     at = newest() + pd.Timedelta(minutes=20)
     before = panel()

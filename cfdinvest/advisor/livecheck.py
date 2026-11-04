@@ -161,7 +161,7 @@ class ProvisionalRepository:
         # early return below discards `working` -- and once every name takes
         # the update branch, `rows` is empty on every pass, so the whole
         # check silently returns the lake untouched. That is what it did
-        # between ab182c6 and this commit: measured on 2026-09-10, moving
+        # between 4ac0cbe and this commit: measured on 2026-09-10, moving
         # every quote by 5% moved 0 of 50 readings. A check that cannot move
         # is not a check, whatever number it reports.
         touched = False

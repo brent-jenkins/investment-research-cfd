@@ -3656,7 +3656,7 @@ suite, and it is the more serious of the two findings that afternoon.
 **126 is "found but not executable".** Line 188 runs the pulled script as a
 program -- `exec "${REPO_DIR}/deployment/deploy.sh"` -- and
 `deployment/deploy.sh` is mode **100644** in git, at every commit checked,
-INCLUDING 8efc0e9, whose entire subject was fixing this same re-exec. The
+INCLUDING dcd6ad3, whose entire subject was fixing this same re-exec. The
 pinned copy at the top of the file works only because it `chmod +x`es
 itself first.
 
@@ -4102,19 +4102,19 @@ copy, and every mutation was re-run against it.
 
 **RETRACTED WITHIN THE HOUR: "NOT DEPLOYED" IS NOT A STATE THIS PROJECT
 CAN BE IN.** This entry said the fix was committed and not deployed, and the
-commit message for 586f2d4 ends with the words "Not deployed." Both are
+commit message for 0406e1c ends with the words "Not deployed." Both are
 false. `deployment/webhook_listener.py` deploys on **every push to main** --
 `should_deploy` is "a push to main, and nothing else" -- and it had already
 deployed the fix **two seconds after the push**, before either sentence was
 written:
 
     06:41:30  === deploy starting ===        (webhook, ~30s after the push)
-    06:41:32  Now at 586f2d4 (was b329d18)
+    06:41:32  Now at 0406e1c (was 0af7155)
     06:45:04  === deploy starting ===        (the deliberate deploy)
-    06:45:06  Now at 586f2d4 (was 586f2d4)   <- already there
+    06:45:06  Now at 0406e1c (was 0406e1c)   <- already there
 
 The same is true of every commit this week. Checking the box immediately
-after a push and reading `8fb034a` proved nothing except that the webhook
+after a push and reading `021b3b8` proved nothing except that the webhook
 had not fired *yet*; it fired seconds later. So "committed, not deployed,
 your call" -- said repeatedly this week -- was never available, and saying
 it was the assistant describing a workflow the deployment does not have.
@@ -4123,8 +4123,8 @@ it was the assistant describing a workflow the deployment does not have.
 This file states "Do not deploy during a session" as a lesson that cost five
 dealing passes on 2026-09-10. Nothing enforces it. Read off the deploy log:
 
-    2026-09-14T19:25:00Z  a88497b   35 minutes before the close, market OPEN
-    2026-09-14T19:39:33Z  a88497b   21 minutes before the close, market OPEN
+    2026-09-14T19:25:00Z  a25793b   35 minutes before the close, market OPEN
+    2026-09-14T19:39:33Z  a25793b   21 minutes before the close, market OPEN
 
 Both were pushes of a docs-and-tests commit, so nothing behavioural shipped
 into a live session and no pass is known to have been lost -- the units are
@@ -4182,10 +4182,10 @@ the engine turned out to be running a rule nobody described.
 The arithmetic closes to two decimal places. A book doing more trips is a
 book holding more names, and nothing else is happening.
 
-**SECOND, THE RECORDED 577 DESCRIBES A TEN-NAME BOOK.** Commit 56d0b13 is
+**SECOND, THE RECORDED 577 DESCRIBES A TEN-NAME BOOK.** Commit 6386654 is
 docs-only, so the sweep script is gone -- but the configuration at that
 commit is not. `universe.max_target` **did not exist** (added two hours
-later at b6696dd, as 25), so `resolve_target` fell through to the size
+later at 6a36500, as 25), so `resolve_target` fell through to the size
 curve, which peaked at 10 (82.3) with `size_preference = "largest"` and an
 8pp floor putting 12 (73.8) outside it. The reconstruction ran twenty-five.
 
@@ -4213,7 +4213,7 @@ under 1,337 trips and well under 320%. Measured: **1,352 and 332.0%** --
 fractionally *worse* on both. Re-selection is not the remaining cause, and
 recording the failed prediction is the point of having made it.
 
-The sizing sequence in the engine loop is byte-identical between 56d0b13
+The sizing sequence in the engine loop is byte-identical between 6386654
 and today, so what remains are the five engine commits that landed after
 the sweep, the lake having been re-ingested since, and whatever the lost
 script did. **The battery still does not reproduce and is still the top
@@ -4324,7 +4324,7 @@ statement about the corrected engine it is wrong.
 **Today's arms are a new series and must not be compared with the
 2026-09-12 table.** That entry records 1,171 trades for cap5/t25 carry and
 says it was run with `environment_in_confidence` True; the flag reads False
-in `config.toml` at every commit checked, including 56d0b13. The
+in `config.toml` at every commit checked, including 6386654. The
 discrepancy is unexplained and both numbers stay where they are rather than
 one being quietly adopted.
 
@@ -5561,8 +5561,8 @@ the check could not reach.
 instead of appending, and `load_market` then returned on
 `if not rows: return frame` -- so once every name took the update branch,
 `rows` was empty on every pass and the whole check returned the lake
-untouched. **The quote never reached the computation.** Between ab182c6 and
-67518a3 the last look approved whatever the engine proposed, which is
+untouched. **The quote never reached the computation.** Between 4ac0cbe and
+5660ce9 the last look approved whatever the engine proposed, which is
 fail-open in the one place this project has been careful to keep
 fail-closed.
 

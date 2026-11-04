@@ -7,7 +7,7 @@ twenty-one minutes before the close, market open -- because
 `webhook_listener.should_deploy` is "a push to main, and nothing else" and a
 push reaches the box within seconds. Nobody chose that; it was simply what
 the deployment did, and it was discovered only when a deliberate deploy
-reported "Now at 586f2d4 (was 586f2d4)" because the webhook had already been.
+reported "Now at 0406e1c (was 0406e1c)" because the webhook had already been.
 
 THREE PARTS, AND THE THIRD IS THE ONE THAT MAKES IT SAFE.
 
