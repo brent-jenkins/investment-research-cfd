@@ -8,6 +8,10 @@
 >
 > **What it found** is summarised in [FINDINGS.md](FINDINGS.md). The code is
 > MIT-licensed; see [LICENSE](LICENSE).
+>
+> **Want to restart or extend it?** Start with
+> [CONTRIBUTING.md](CONTRIBUTING.md): how to rebuild the data, the rules
+> that keep results honest, and the few places something might remain.
 
 A multi-asset CFD backtesting engine, an automated dealer on a Capital.com
 demo account, and a manual-trading assistant. It models strategies, measures
