@@ -12,6 +12,14 @@
 > **Want to restart or extend it?** Start with
 > [CONTRIBUTING.md](CONTRIBUTING.md): how to rebuild the data, the rules
 > that keep results honest, and the few places something might remain.
+>
+> **The project before this one** was
+> [investment-research-sp500](https://github.com/brent-jenkins/investment-research-sp500):
+> long-only 12-month momentum on the S&P 500, demo-traded through Trading
+> 212, with about sixty pre-registered tests on a point-in-time universe.
+> It did not beat buying and holding the index, and it closed on
+> 2026-08-30. This project changed the market, the horizon and the
+> broker, and did not find an edge either.
 
 A multi-asset CFD backtesting engine, an automated dealer on a Capital.com
 demo account, and a manual-trading assistant. It models strategies, measures
