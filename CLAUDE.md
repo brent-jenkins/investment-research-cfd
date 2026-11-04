@@ -129,9 +129,13 @@ These are standing instructions from the project owner, not preferences.
 
   | experiment | started | futility look | decision |
   | --- | --- | --- | --- |
-  | headlines, `record-headlines` | 2026-09-27 | 2026-12-28 | 2027-03-29 |
-  | client sentiment, `record-client-sentiment` | 2026-09-28 | 2026-12-28 | 2027-03-29 |
-  | headline events, `label-headlines` | 2026-09-30 | 2026-12-28 | 2027-03-29 |
+  | headlines, `record-headlines` | 2026-09-27 | ~~2026-12-28~~ | **stopped 2026-11-04**, futility |
+  | client sentiment, `record-client-sentiment` | 2026-09-28 | ~~2026-12-28~~ | **stopped 2026-11-04**, project closed |
+  | headline events, `label-headlines` | 2026-09-30 | ~~2026-12-28~~ | **stopped 2026-11-04**, futility |
+
+  All three are stopped and their data deleted; see "THE PROJECT IS CLOSED"
+  under Current state. The code that collected them is still in the tree,
+  unrun -- see that entry for why it was not removed.
 
   **Minute bars (`capital_1m`) are a price series, not an experiment**, on
   the owner's decision, 2026-09-28: kept in case they become useful,
@@ -492,6 +496,63 @@ it exists to prevent.
 ---
 
 ## Current state
+
+### THE PROJECT IS CLOSED, 2026-11-04
+
+On the owner's decision, after the order-flow, volatility-band and early
+futility results of 2026-11-03: "I think it's time to bring this to a
+close." Nothing runs, nothing deals, nothing collects. **Read this entry
+before anything below it**: every other entry describes a system that was
+running when it was written.
+
+**Why, in one paragraph.** The engine works and reproduces the live
+account's decisions (2026-09-26). What it trades has no edge: the gross
+return before cost is near zero on every cut measured, and Capital's spread
+takes 0.12-0.44% of equity a day off that. Seven independent routes to the
+side of a trade -- the engine's own inputs, headline sentiment, Claude on
+filings, Claude on the whole picture, a model refitted daily, the last
+hour's minutes, and Nasdaq's signed order flow -- all came out at a coin
+flip. Selection did not help either: universe size, volatility bands,
+per-name skill, day filters, holding for days and trend following on 21
+other markets all lost net. The account was paused on 2026-10-01 and never
+reopened. Final demo balance: **4,531.50 GBP from 5,000.00.**
+
+**What was done on the box, 2026-11-04:**
+
+    stopped and disabled   every cfdinvest timer (analysis, dealer,
+                           ingest, quotes, daily, monitor, pipeline), the
+                           dashboard, the webhook listener, the deploy
+                           path unit, and Caddy -- only SSH listens
+    deleted                headlines/ and client_sentiment/ (the three
+                           experiments, as their registrations require)
+    shredded               /etc/cfdinvest/env -- every credential the
+                           system held
+    archived first         /var/lib/cfdinvest without the experiments,
+                           485MB, sha256 2241fb76...68af18, kept by the
+                           owner off-box. The code is this repository.
+
+**Left to the owner, outside this project's reach:** revoking the keys at
+their sources (Capital.com, Anthropic, Databento, the SMTP app password,
+the GitHub webhook), closing the Capital and Databento accounts, deleting
+the DNS record for cfd.example.com, and deleting the VM. The repository is
+kept for reference.
+
+**What was deliberately NOT done.** The experiments' code
+(`ingestion/news_rss.py`, `persist/headlines.py`,
+`persist/client_sentiment.py`, `ingestion/headline_labels.py` and their
+jobs) was not removed, though the rule for a stopped experiment says it
+should be. With nothing running it does nothing, and removing it from a
+closed project would be a large edit across the scheduler and its tests
+that nobody will run. If this project is ever restarted, remove those jobs
+BEFORE re-enabling a timer, or they will begin collecting again with no
+registration behind them.
+
+**If it is restarted**, the order is: restore `/etc/cfdinvest/env` with
+fresh keys, restore the data from the archive, re-enable the units, and
+leave `strategy.opens_paused = true` until a strategy has passed a
+pre-registered test. Nothing measured to date qualifies.
+
+### Before the close
 
 All queued layers are built, tested and pushed. The suite is green.
 

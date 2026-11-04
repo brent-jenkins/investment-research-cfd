@@ -1,5 +1,11 @@
 # cfdinvest
 
+> **Closed on 2026-11-04.** Nothing runs or deals; the deployment is shut
+> down and its credentials destroyed. The strategy was measured to have no
+> edge net of Capital's costs, and no tested alternative found one. See
+> "THE PROJECT IS CLOSED" in `CLAUDE.md`. Everything below describes the
+> system as it was while running.
+
 A multi-asset CFD backtesting engine, an automated dealer on a Capital.com
 demo account, and a manual-trading assistant. It models strategies, measures
 risk, deals, and tells you what it did.
