@@ -113,7 +113,7 @@ deploy_steps() {
   #
   # That is not hypothetical: on 2026-09-14 a commit changed deploy.sh and
   # pyproject.toml together, the script re-exec'd itself, the reinstall test
-  # compared 27b1006 against 27b1006, and psutil was never installed. The
+  # compared 8d36415 against 8d36415, and psutil was never installed. The
   # deploy reported success throughout. Found because the package was absent
   # afterwards, not because anything said so.
   before="${CFDINVEST_DEPLOY_BEFORE:-$(git rev-parse HEAD 2>/dev/null || echo none)}"

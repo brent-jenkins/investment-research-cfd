@@ -399,7 +399,7 @@ def require_login(st) -> str | None:
         )
         st.stop()
 
-    # The wordmark above the form, as the other CFDINVEST app does it. The
+    # The wordmark above the form, as a sibling app did it. The
     # logo slot is not used here: it lives above the navigation, and there
     # is no navigation on this screen.
     st.markdown(
@@ -447,7 +447,7 @@ def require_login(st) -> str | None:
 def render_sign_out(st) -> None:
     """The signed-in user and a way out, at the foot of the sidebar.
 
-    Below the navigation, as the other CFDINVEST app has it: the page list is
+    Below the navigation, as a sibling app had it: the page list is
     what you use constantly and signing out is what you use once, so the
     thing you reach for least sits furthest down.
     """

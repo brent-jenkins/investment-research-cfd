@@ -165,7 +165,7 @@ def test_the_reexec_actually_executes() -> None:
     verification block.
 
     `deployment/deploy.sh` is mode **100644** in git and has been at every
-    commit checked, including dcd6ad3, the commit whose whole subject was
+    commit checked, including 6618a01, the commit whose whole subject was
     fixing this re-exec. So the re-exec path has almost certainly never
     worked, and the fix recorded for it was verified by asserting on the
     script's TEXT -- a check on what went in, where the failure was in what
