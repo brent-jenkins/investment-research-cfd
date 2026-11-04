@@ -93,6 +93,28 @@ not results.
   trend following was positive before costs, almost all of it in
   2005-2015, and it lost after Capital's carry. A venue without overnight
   CFD financing might change that last step.
+- **Ranking stocks against each other daily, with the market hedged out.**
+  Every test here asked whether a stock would go up or down. None ranked a
+  broad universe against itself and held the top slice against an index,
+  which is what most institutional equity quant does. The market-neutral
+  readings taken along the way were about zero over hours, but daily
+  cross-sectional ranking was never tested on its own terms.
+
+## Related projects
+
+- [microsoft/qlib](https://github.com/microsoft/qlib): an ML research
+  platform for daily cross-sectional ranking, and the obvious starting
+  point for the last lead above. Its published results are backtests with
+  no forward record, so the rules above still apply.
+- [Limex-com/ziplime](https://github.com/Limex-com/ziplime): a backtester
+  with look-ahead checks built in, and futures with proper contract rolls.
+  It suits the futures trend-following lead. It is AGPL-licensed, so don't
+  copy its code into this MIT repository.
+- [skuldlabsdev/refutation-harness](https://github.com/skuldlabsdev/refutation-harness),
+  [snipergoate/backtests](https://github.com/snipergoate/backtests) and the
+  sister project
+  [investment-research-sp500](https://github.com/brent-jenkins/investment-research-sp500):
+  other null results reached independently, by different routes.
 
 ## Contributing back
 
