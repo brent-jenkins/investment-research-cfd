@@ -531,11 +531,12 @@ reopened. Final demo balance: **4,531.50 GBP from 5,000.00.**
                            485MB, sha256 2241fb76...68af18, kept by the
                            owner off-box. The code is this repository.
 
-**Left to the owner, outside this project's reach:** revoking the keys at
-their sources (Capital.com, Anthropic, Databento, the SMTP app password,
-the GitHub webhook), closing the Capital and Databento accounts, deleting
-the DNS record for cfd.example.com, and deleting the VM. The repository is
-kept for reference.
+**Done by the owner the same day, outside the box:** the DNS record for
+cfd.example.com deleted; the VM and its resources deleted, so the
+box above no longer exists; the Capital.com and Databento accounts
+closed; the Anthropic API key deleted; the Brevo (SMTP) account closed;
+the GitHub webhooks deleted. The repository is kept for reference. The
+only credential not revoked is the free FRED key in the local `.env`.
 
 **What was deliberately NOT done.** The experiments' code
 (`ingestion/news_rss.py`, `persist/headlines.py`,
